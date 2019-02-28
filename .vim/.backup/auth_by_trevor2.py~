@@ -1,0 +1,2451 @@
+# -*- coding: utf-8 -*-
+"""
+Auth* related model.
+
+This is where the models used by the authentication stack are defined.
+
+It's perfectly fine to re-use this definition in the testapp application,
+though.
+
+"""
+import os
+from datetime import datetime
+from hashlib import sha256
+__all__ = ['User', 'Group', 'Permission']
+
+from sqlalchemy import Table, ForeignKey, Column
+from sqlalchemy.types import Unicode, Integer, DateTime, Enum, Numeric, Date
+from sqlalchemy.orm import relation, synonym
+
+from testapp.model import DeclarativeBase, metadata, DBSession
+
+
+# This is the association table for the many-to-many relationship between
+# groups and permissions.
+group_permission_table = Table('tg_group_permission', metadata,
+                               Column('group_id', Integer,
+                                      ForeignKey('tg_group.group_id',
+                                                 onupdate="CASCADE",
+                                                 ondelete="CASCADE"),
+                                      primary_key=True),
+                               Column('permission_id', Integer,
+                                      ForeignKey('tg_permission.permission_id',
+                                                 onupdate="CASCADE",
+                                                 ondelete="CASCADE"),
+                                      primary_key=True))
+
+
+# This is the association table for the many-to-many relationship between
+# groups and members - this is, the memberships.
+user_group_table = Table('tg_user_group', metadata,
+                         Column('user_id', Integer,
+                                ForeignKey('tg_user.user_id',
+                                           onupdate="CASCADE",
+                                           ondelete="CASCADE"),
+                                primary_key=True),
+                         Column('group_id', Integer,
+                                ForeignKey('tg_group.group_id',
+                                           onupdate="CASCADE",
+                                           ondelete="CASCADE"),
+                                primary_key=True))
+
+
+class Group(DeclarativeBase):
+    """
+    Group definition
+
+    Only the ``group_name`` column is required.
+
+    """
+
+    __tablename__ = 'tg_group'
+
+    group_id = Column(Integer, autoincrement=True, primary_key=True)
+    group_name = Column(Unicode(16), unique=True, nullable=False)
+    display_name = Column(Unicode(255))
+    created = Column(DateTime, default=datetime.now)
+    users = relation('User', secondary=user_group_table, backref='groups')
+
+    def __repr__(self):
+        return '<Group: name=%s>' % repr(self.group_name)
+
+    def __unicode__(self):
+        return self.group_name
+
+
+class User(DeclarativeBase):
+    """
+    User definition.
+
+    This is the user definition used by :mod:`repoze.who`, which requires at
+    least the ``user_name`` column.
+
+    """
+    __tablename__ = 'tg_user'
+
+    user_id = Column(Integer, autoincrement=True, primary_key=True)
+    user_name = Column(Unicode(16), unique=True, nullable=False)
+    email_address = Column(Unicode(255), unique=True, nullable=False)
+    display_name = Column(Unicode(255))
+    _password = Column('password', Unicode(128))
+    created = Column(DateTime, default=datetime.now)
+
+    def __repr__(self):
+        return '<User: name=%s, email=%s, display=%s>' % (
+            repr(self.user_name),
+            repr(self.email_address),
+            repr(self.display_name)
+        )
+
+    def __unicode__(self):
+        return self.display_name or self.user_name
+
+    @property
+    def permissions(self):
+        """Return a set with all permissions granted to the user."""
+        perms = set()
+        for g in self.groups:
+            perms = perms | set(g.permissions)
+        return perms
+
+    @classmethod
+    def by_email_address(cls, email):
+        """Return the user object whose email address is ``email``."""
+        return DBSession.query(cls).filter_by(email_address=email).first()
+
+    @classmethod
+    def by_user_name(cls, username):
+        """Return the user object whose user name is ``username``."""
+        return DBSession.query(cls).filter_by(user_name=username).first()
+
+    @classmethod
+    def _hash_password(cls, password):
+        salt = sha256()
+        salt.update(os.urandom(60))
+        salt = salt.hexdigest()
+
+        hash = sha256()
+        # Make sure password is a str because we cannot hash unicode objects
+        hash.update((password + salt).encode('utf-8'))
+        hash = hash.hexdigest()
+
+        password = salt + hash
+
+        # Make sure the hashed password is a unicode object at the end of the
+        # process because SQLAlchemy _wants_ unicode objects for Unicode cols
+        password = password.decode('utf-8')
+
+        return password
+
+    def _set_password(self, password):
+        """Hash ``password`` on the fly and store its hashed version."""
+        self._password = self._hash_password(password)
+
+    def _get_password(self):
+        """Return the hashed version of the password."""
+        return self._password
+
+    password = synonym('_password', descriptor=property(_get_password,
+                                                        _set_password))
+
+    def validate_password(self, password):
+        """
+        Check the password against existing credentials.
+
+        :param password: the password that was provided by the user to
+            try and authenticate. This is the clear text version that we will
+            need to match against the hashed one in the database.
+        :type password: unicode object.
+        :return: Whether the password is valid.
+        :rtype: bool
+
+        """
+        hash = sha256()
+        hash.update((password + self.password[:64]).encode('utf-8'))
+        return self.password[64:] == hash.hexdigest()
+
+
+class Permission(DeclarativeBase):
+    """
+    Permission definition.
+
+    Only the ``permission_name`` column is required.
+
+    """
+
+    __tablename__ = 'tg_permission'
+
+    permission_id = Column(Integer, autoincrement=True, primary_key=True)
+    permission_name = Column(Unicode(63), unique=True, nullable=False)
+    description = Column(Unicode(255))
+
+    groups = relation(Group, secondary=group_permission_table,
+                      backref='permissions')
+
+    def __repr__(self):
+        return '<Permission: name=%s>' % repr(self.permission_name)
+
+    def __unicode__(self):
+        return self.permission_name
+
+"""
+#############################################################################################################
+TGJ - From here on is the system tables as created by Trevor :-(
+#############################################################################################################
+"""
+
+class Status(DeclarativeBase):
+    """
+    Status definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'status'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    value = Column(Unicode(20), unique=True, nullable=False)
+    display_order = Column(Integer, autoincrement=False )
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<Status: value=%s>' % repr(self.value)
+
+    def __unicode__(self):
+        return self.value
+
+class AccountType(DeclarativeBase):
+    """
+    AccountType definition
+
+    This is the accounttype definition used by :mod:`repoze.who`, which requires at
+    least the ``accountnumber`` column.
+
+    """
+
+    __tablename__ = 'accounttype'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    accountnumber = Column(Unicode(12), unique=True, nullable=True)
+    accounttype = Column(Unicode(30), nullable=False)
+    generalledgerkey = Column(Unicode(20), nullable=True)
+    statusid = Column(Integer, ForeignKey('status.id'), index=True)
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<AccountType: accountnumber=%s, accounttype=%s, generalledgerkey=%s>' % (
+            repr(self.accountnumber),
+            repr(self.accounttype),
+            repr(self.generalledgerkey)
+        )
+
+    def __unicode__(self):
+        return self.accountnumber
+
+
+class ActiveInActive(DeclarativeBase):
+    """
+    ActiveInActive definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'activeinactive'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    value = Column(Unicode(10), unique=True, nullable=False)
+    display_order = Column(Integer, autoincrement=False )
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<ActiveInActive: value=%s>' % repr(self.value)
+
+    def __unicode__(self):
+        return self.value
+
+class AgeUnit(DeclarativeBase):
+    """
+    AgeUnit definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'ageunit'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    value = Column(Unicode(10), unique=True, nullable=False)
+    display_order = Column(Integer, autoincrement=False )
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<AgeUnit: value=%s>' % repr(self.value)
+
+    def __unicode__(self):
+        return self.value
+
+class AuditAction(DeclarativeBase):
+    """
+    AuditAction definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'auditaction'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    value = Column(Unicode(10), unique=True, nullable=False)
+    display_order = Column(Integer, autoincrement=False )
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<AuditAction: value=%s>' % repr(self.value)
+
+    def __unicode__(self):
+        return self.value
+
+class AuditPatient(DeclarativeBase):
+    """
+    AuditPatient definition
+
+    Dunno what will be returned for now.!!!!
+
+    """
+
+    __tablename__ = 'auditpatient'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    record = Column(Unicode(20), nullable=False)
+    account = Column(Unicode(12), nullable=True)
+    visit = Column(Unicode(14), nullable=True)
+    laboratorynumber = Column(Unicode(8), nullable=True)
+    auditactionid = Column(Integer, ForeignKey('auditaction.id'), index=True)
+    auditmessage = Column(Unicode(254), nullable=False)
+    auditamount = Column(Numeric(14, 2), nullable=True)
+    auditwhen = Column(DateTime, default=datetime.now)
+    auditwho = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<AuditPatient: id=%s>' % repr(self.id)
+
+    def __unicode__(self):
+        return self.id
+
+class AuditSystem(DeclarativeBase):
+    """
+    AuditSystem definition
+
+    Dunno what will be returned for now.!!!!
+
+    """
+
+    __tablename__ = 'auditsystem'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    auditwhat = Column(Unicode(20), nullable=False)
+    AuditKey = Column(Unicode(20), nullable=False)
+    auditactionid = Column(Integer, ForeignKey('auditaction.id'), index=True)
+    auditmessage = Column(Unicode(254), nullable=False)
+    auditamount = Column(Numeric(14, 2), nullable=True)
+    auditwhen = Column(DateTime, default=datetime.now)
+    auditwho = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<AuditSystem: id=%s>' % repr(self.id)
+
+    def __unicode__(self):
+        return self.id
+
+class BodySite(DeclarativeBase):
+    """
+    BodySite definition
+
+    Only the ``bodysite`` column is required.
+
+    """
+
+    __tablename__ = 'bodysite'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    bodysite = Column(Unicode(50), unique=True, nullable=False)
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<BodySite: bodysite=%s>' % repr(self.bodysite)
+
+    def __unicode__(self):
+        return self.bodysite
+
+class CalculationType(DeclarativeBase):
+    """
+    CalculationType definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'calculationtype'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    value = Column(Unicode(12), unique=True, nullable=False)
+    display_order = Column(Integer, autoincrement=False )
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<CalculationType: value=%s>' % repr(self.value)
+
+    def __unicode__(self):
+        return self.value
+
+class Calculation(DeclarativeBase):
+    """
+    Calculation definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'calculation'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    code = Column(Unicode(6), unique=True, nullable=False)
+    position = Column(Integer, autoincrement=False )
+    calculationkey = Column(Unicode(20), nullable=True)
+    calculationtypeid = Column(Integer, ForeignKey('calculation.id'), index=True)
+    usage = Column(Unicode(40), nullable=True)
+    formula = Column(Unicode(100), nullable=True)
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<Calculation: code=%s, position=%s, calculationkey=%s, calculationtypeid=%s, usage=%s, formula=%s>' % (
+            repr(self.code),
+            repr(self.position),
+            repr(self.calculationkey),
+            repr(self.calculationtypeid),
+            repr(self.usage),
+            repr(self.formula)
+        )
+
+    def __unicode__(self):
+        return self.code
+
+class ReportType(DeclarativeBase):
+    """
+    ReportType definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'reporttype'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    value = Column(Unicode(10), unique=True, nullable=False)
+    display_order = Column(Integer, autoincrement=False )
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<ReportType: value=%s>' % repr(self.value)
+
+    def __unicode__(self):
+        return self.value
+
+class Discipline(DeclarativeBase):
+    """
+    Discipline definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'discipline'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    code = Column(Unicode(6), unique=True, nullable=False)
+    discipline = Column(Unicode(30), nullable=False)
+    sequence = Column(Integer, autoincrement=False )
+    reportdescription = Column(Unicode(30), nullable=True)
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<Discipline: code=%s, discipline=%s, sequence=%s, reportdescription=%s>' % (
+            repr(self.code),
+            repr(self.discipline),
+            repr(self.sequence),
+            repr(self.reportdescription)
+        )
+
+    def __unicode__(self):
+        return self.id
+
+class CannedComment(DeclarativeBase):
+    """
+    CannedComment definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'cannedcomment'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    code = Column(Unicode(6), unique=True, nullable=False)
+    cannedcomment = Column(Unicode(5000), nullable=True)
+    disciplineid = Column(Integer, ForeignKey('discipline.id'), index=True)
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<CannedComment: code=%s, cannedcomment=%s, disciplineid=%s>' % (
+            repr(self.code),
+            repr(self.cannedcomment),
+            repr(self.disciplineid)
+        )
+
+    def __unicode__(self):
+        return self.code
+
+class Country(DeclarativeBase):
+    """
+    Country definition
+
+    Only the ``country`` column is required.
+
+    """
+
+    __tablename__ = 'country'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    country = Column(Unicode(50), unique=True, nullable=False)
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<Country: country=%s>' % repr(self.country)
+
+    def __unicode__(self):
+        return self.country
+
+class Region(DeclarativeBase):
+    """
+    Region definition
+
+    Only the ``region`` column is required.
+
+    """
+    __tablename__ = 'region'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    countryid = Column(Integer, ForeignKey('country.id'), index=True)
+    region = Column(Unicode(50), unique=True, nullable=False)
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<Region: region=%s>' % repr(self.region)
+
+    def __unicode__(self):
+        return self.region
+
+class District(DeclarativeBase):
+    """
+    District definition
+
+    Only the ``region`` column is required.
+
+    """
+    __tablename__ = 'district'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    regionid = Column(Integer, ForeignKey('region.id'), index=True)
+    district = Column(Unicode(50), unique=True, nullable=False)
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<District: district=%s>' % repr(self.district)
+
+    def __unicode__(self):
+        return self.district
+
+class Cantre(DeclarativeBase):
+    """
+    Cantre definition
+
+    Only the ``region`` column is required.
+
+    """
+    __tablename__ = 'centre'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    districtid = Column(Integer, ForeignKey('district.id'), index=True)
+    centre = Column(Unicode(50), unique=True, nullable=False)
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<Cantre: centre=%s>' % repr(self.cantre)
+
+    def __unicode__(self):
+        return self.centre
+
+
+class CommentType(DeclarativeBase):
+    """
+    CommentType definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'commenttype'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    value = Column(Unicode(10), unique=True, nullable=False)
+    display_order = Column(Integer, autoincrement=False )
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<CommentType: value=%s>' % repr(self.value)
+
+    def __unicode__(self):
+        return self.value
+
+class Currency(DeclarativeBase):
+    """
+    Currency definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'currency'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    code = Column(Unicode(3), unique=True, nullable=False)
+    name = Column(Unicode(50), nullable=True)
+    symbol = Column(Unicode(3), nullable=True)
+    ratedate = Column(Date, default=datetime.now)
+    buy = Column(Numeric(14, 2), nullable=True)
+    sell = Column(Numeric(14, 2), nullable=True)
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<Currency: code=%s, name=%s, symbol=%s, ratedate=%s, buy=%s, sell=%s>' % (
+            repr(self.code),
+            repr(self.name),
+            repr(self.symbol),
+            repr(self.ratedate),
+            repr(self.buy),
+            repr(self.sell)
+        )
+
+    def __unicode__(self):
+        return self.code
+
+class CurrencyHistory(DeclarativeBase):
+    """
+    CurrencyHistory definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'currencyhistory'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    currencyid = Column(Integer, ForeignKey('currency.id'), index=True)
+    ratedate = Column(Date, default=datetime.now)
+    buy = Column(Numeric(14, 2), nullable=True)
+    sell = Column(Numeric(14, 2), nullable=True)
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<CurrencyHistory: currencyid=%s, ratedate=%s, buy=%s, sell=%s>' % (
+            repr(self.currencyid),
+            repr(self.ratedate),
+            repr(self.buy),
+            repr(self.sell)
+        )
+
+    def __unicode__(self):
+        return self.currencyid
+
+class UporDown(DeclarativeBase):
+    """
+    UporDown definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'upordown'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    value = Column(Unicode(5), unique=True, nullable=False)
+    display_order = Column(Integer, autoincrement=False )
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<UporDown: value=%s>' % repr(self.value)
+
+    def __unicode__(self):
+        return self.value
+
+class InvoiceFrequency(DeclarativeBase):
+    """
+    InvoiceFrequency definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'invoicefrequency'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    value = Column(Unicode(10), unique=True, nullable=False)
+    display_order = Column(Integer, autoincrement=False )
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<InvoiceFrequency: value=%s>' % repr(self.value)
+
+    def __unicode__(self):
+        return self.value
+
+class Client(DeclarativeBase):
+    """
+    Client definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'client'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    code = Column(Unicode(10), unique=True, nullable=False)
+    account = Column(Unicode(14), nullable=True)
+    name = Column(Unicode(50), nullable=True)
+    statusid = Column(Integer, ForeignKey('status.id'), index=True)
+    startdate = Column(Date, default=datetime.now)
+    enddate = Column(Date, default=datetime.now)
+    address1 = Column(Unicode(30), nullable=True)
+    address2 = Column(Unicode(30), nullable=True)
+    address3 = Column(Unicode(30), nullable=True)
+    address4 = Column(Unicode(30), nullable=True)
+    phonenumber = Column(Unicode(30), nullable=True)
+    faxnumber = Column(Unicode(30), nullable=True)
+    emailaddress = Column(Unicode(250), nullable=True)
+    invoicefrequencyid = Column(Integer, ForeignKey('invoicefrequency.id'), index=True)
+    laststatement = Column(Date, default=datetime.now)
+    upordownid = Column(Integer, ForeignKey('upordown.id'), index=False)
+    tariffpercentage = Column(Numeric(6, 2), nullable=True)
+    currencyid = Column(Integer, ForeignKey('currency.id'), index=True)
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<Client: code=%s, account=%s, name=%s, statusid=%s, startdate=%s, enddate=%s, address1=%s, address2=%s, address3=%s, address4=%s, phonenumber=%s, faxnumber=%s, emailaddress=%s, invoicefrequencyid=%s, laststatement=%s, upordownid=%s, tariffpercentage=%s, currencyid=%s>' % (
+            repr(self.code),
+            repr(self.account),
+            repr(self.name),
+            repr(self.statusid),
+            repr(self.startdate),
+            repr(self.enddate),
+            repr(self.address1),
+            repr(self.address2),
+            repr(self.address3),
+            repr(self.address4),
+            repr(self.phonenumber),
+            repr(self.faxnumber),
+            repr(self.emailaddress),
+            repr(self.invoicefrequencyid),
+            repr(self.laststatement),
+            repr(self.upordownid),
+            repr(self.tariffpercentage),
+            repr(self.currencyid)
+        )
+
+    def __unicode__(self):
+        return self.code
+
+class CollectionPoint(DeclarativeBase):
+    """
+    CollectionPoint definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'collectionpoint'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    code = Column(Unicode(10), unique=True, nullable=False)
+    collectionpoint = Column(Unicode(50), nullable=True)
+    officer = Column(Unicode(50), nullable=True)
+    address1 = Column(Unicode(30), nullable=True)
+    address2 = Column(Unicode(30), nullable=True)
+    address3 = Column(Unicode(30), nullable=True)
+    address4 = Column(Unicode(30), nullable=True)
+    phonenumber = Column(Unicode(30), nullable=True)
+    faxnumber = Column(Unicode(30), nullable=True)
+    emailaddress = Column(Unicode(250), nullable=True)
+    website = Column(Unicode(250), nullable=True)
+    countryid = Column(Integer, ForeignKey('country.id'), index=True)
+    regionid = Column(Integer, ForeignKey('region.id'), index=True)
+    districtid = Column(Integer, ForeignKey('district.id'), index=True)
+    centreid = Column(Integer, ForeignKey('centre.id'), index=True)
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<CollectionPoint: code=%s, collectionpoint=%s, officer=%s, address1=%s, address2=%s, address3=%s, address4=%s, phonenumber=%s, faxnumber=%s, emailaddress=%s, website=%s, countryid=%s, regionid=%s, districtid=%s, centreid=%s>' % (
+            repr(self.code),
+            repr(self.collectionpoint),
+            repr(self.officer),
+            repr(self.address1),
+            repr(self.address2),
+            repr(self.address3),
+            repr(self.address4),
+            repr(self.phonenumber),
+            repr(self.faxnumber),
+            repr(self.emailaddress),
+            repr(self.website),
+            repr(self.countryid),
+            repr(self.regionid),
+            repr(self.districtid),
+            repr(self.centreid)
+        )
+
+    def __unicode__(self):
+        return self.code
+
+class Container(DeclarativeBase):
+    """
+    Container definition
+
+    Only the ``container`` column is required.
+
+    """
+
+    __tablename__ = 'container'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    container = Column(Unicode(50), unique=True, nullable=False)
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<Container: container=%s>' % repr(self.container)
+
+    def __unicode__(self):
+        return self.container
+
+class Specimen(DeclarativeBase):
+    """
+    Specimen definition
+
+    Only the ``specimen`` column is required.
+
+    """
+
+    __tablename__ = 'specimen'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    specimen = Column(Unicode(50), unique=True, nullable=False)
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<Specimen: specimen=%s>' % repr(self.specimen)
+
+    def __unicode__(self):
+        return self.specimen
+
+class Department(DeclarativeBase):
+    """
+    Department definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'department'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    value = Column(Unicode(10), unique=True, nullable=False)
+    display_order = Column(Integer, autoincrement=False )
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<Department: value=%s>' % repr(self.value)
+
+    def __unicode__(self):
+        return self.value
+
+class DiseaseCodeType(DeclarativeBase):
+    """
+    DiseaseCodeType definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'diseasecodetype'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    value = Column(Unicode(10), unique=True, nullable=False)
+    display_order = Column(Integer, autoincrement=False )
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<DiseaseCodeType: value=%s>' % repr(self.value)
+
+    def __unicode__(self):
+        return self.value
+
+class DiseaseCode(DeclarativeBase):
+    """
+    DiseaseCode definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'diseasecode'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    code = Column(Unicode(10), unique=True, nullable=False)
+    disease = Column(Unicode(5000), nullable=True)
+    diseasecodetypeid = Column(Integer, ForeignKey('diseasecodetype.id'), index=True)
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<CollectionPoint: code=%s, disease=%s, diseasecodetypeid=%s>' % (
+            repr(self.code),
+            repr(self.disease),
+            repr(self.diseasecodetypeid)
+        )
+
+    def __unicode__(self):
+        return self.code
+
+class Gender(DeclarativeBase):
+    """
+    Gender definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'gender'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    value = Column(Unicode(10), unique=True, nullable=False)
+    display_order = Column(Integer, autoincrement=False )
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<Gender: value=%s>' % repr(self.value)
+
+    def __unicode__(self):
+        return self.value
+
+class Instrument(DeclarativeBase):
+    """
+    Instrument definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'instrument'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    code = Column(Unicode(10), unique=True, nullable=False)
+    instrument = Column(Unicode(50), nullable=True)
+    disciplineid = Column(Integer, ForeignKey('discipline.id'), index=True)
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<Instrument: code=%s, instrument=%s, disciplineid=%s>' % (
+            repr(self.code),
+            repr(self.instrument),
+            repr(self.disciplineid)
+        )
+
+    def __unicode__(self):
+        return self.code
+
+class InstrumentBAUDRate(DeclarativeBase):
+    """
+    InstrumentBAUDRate definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'instrumentbaudrate'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    value = Column(Unicode(5), unique=True, nullable=False)
+    display_order = Column(Integer, autoincrement=False )
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<InstrumentBAUDRate: value=%s>' % repr(self.value)
+
+    def __unicode__(self):
+        return self.value
+
+class InstrumentBitRate(DeclarativeBase):
+    """
+    InstrumentBitRate definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'instrumentbitrate'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    value = Column(Unicode(2), unique=True, nullable=False)
+    display_order = Column(Integer, autoincrement=False )
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<InstrumentBitRate: value=%s>' % repr(self.value)
+
+    def __unicode__(self):
+        return self.value
+
+class InstrumentCommPort(DeclarativeBase):
+    """
+    InstrumentCommPort definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'instrumentcommport'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    value = Column(Unicode(2), unique=True, nullable=False)
+    display_order = Column(Integer, autoincrement=False )
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<InstrumentCommPort: value=%s>' % repr(self.value)
+
+    def __unicode__(self):
+        return self.value
+
+class InstrumentHandShake(DeclarativeBase):
+    """
+    InstrumentHandShake definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'instrumenthandshake'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    value = Column(Unicode(10), unique=True, nullable=False)
+    display_order = Column(Integer, autoincrement=False )
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<InstrumentHandShake: value=%s>' % repr(self.value)
+
+    def __unicode__(self):
+        return self.value
+
+class InstrumentInterface(DeclarativeBase):
+    """
+    InstrumentInterface definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'instrumentinterface'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    value = Column(Unicode(20), unique=True, nullable=False)
+    display_order = Column(Integer, autoincrement=False )
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<InstrumentInterface: value=%s>' % repr(self.value)
+
+    def __unicode__(self):
+        return self.value
+
+class InstrumentLabnoChar(DeclarativeBase):
+    """
+    InstrumentLabnoChar definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'instrumentlabnochar'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    value = Column(Unicode(2), unique=True, nullable=False)
+    display_order = Column(Integer, autoincrement=False )
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+    def __repr__(self):
+
+        return '<InstrumentLabnoChar: value=%s>' % repr(self.value)
+
+    def __unicode__(self):
+        return self.value
+
+class InstrumentParity(DeclarativeBase):
+    """
+    InstrumentParity definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'instrumentparity'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    value = Column(Unicode(1), unique=True, nullable=False)
+    display_order = Column(Integer, autoincrement=False )
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<InstrumentParity: value=%s>' % repr(self.value)
+
+    def __unicode__(self):
+        return self.value
+
+class InstrumentRawCapture(DeclarativeBase):
+    """
+    InstrumentRawCapture definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'instrumentrawcapture'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    value = Column(Unicode(10), unique=True, nullable=False)
+    display_order = Column(Integer, autoincrement=False )
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<InstrumentRawCapture: value=%s>' % repr(self.value)
+
+    def __unicode__(self):
+        return self.value
+
+class InstrumentStopBits(DeclarativeBase):
+    """
+    InstrumentStopBits definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'instrumentstopbits'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    value = Column(Unicode(3), unique=True, nullable=False)
+    display_order = Column(Integer, autoincrement=False )
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<InstrumentStopBits: value=%s>' % repr(self.value)
+
+    def __unicode__(self):
+        return self.value
+
+class InstrumentCOMMType(DeclarativeBase):
+    """
+    InstrumentCOMMType definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'instrumentcommtype'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    value = Column(Unicode(20), unique=True, nullable=False)
+    display_order = Column(Integer, autoincrement=False )
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<InstrumentCOMMType: value=%s>' % repr(self.value)
+
+    def __unicode__(self):
+        return self.value
+
+class InstrumentParameter(DeclarativeBase):
+    """
+    InstrumentParameter definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'instrumentparameter'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    pcname = Column(Unicode(50), nullable=False)
+    keepresultsfor = Column(Integer, autoincrement=False )
+    instrumentid = Column(Integer, ForeignKey('instrument.id'), index=True)
+    instrumentcommportid = Column(Integer, ForeignKey('instrumentcommport.id'), index=True)
+    instrumentbaudrateid = Column(Integer, ForeignKey('instrumentbaudrate.id'), index=True)
+    instrumentparityid = Column(Integer, ForeignKey('instrumentparity.id'), index=True)
+    instrumentbitrateid = Column(Integer, ForeignKey('instrumentbitrate.id'), index=True)
+    instrumentstopbitsid = Column(Integer, ForeignKey('instrumentstopbits.id'), index=True)
+    instrumenthandshakeid = Column(Integer, ForeignKey('instrumenthandshake.id'), index=True)
+    instrumentinterfaceid = Column(Integer, ForeignKey('instrumentinterface.id'), index=True)
+    instrumentrawid = Column(Integer, ForeignKey('instrumentrawcapture.id'), index=True)
+    instrumentlabnocharid = Column(Integer, ForeignKey('instrumentlabnochar.id'), index=True)
+    instrumentcommtypeid = Column(Integer, ForeignKey('instrumentcommtype.id'), index=True)
+    promptforoverwriteid = Column(Integer, ForeignKey('yesno.id'), index=True)
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<InstrumentParameter: pcname=%s, keepresultsfor=%s, instrumentid=%s, instrumentcommportid=%s, instrumentbaudrateid=%s, instrumentparityid=%s, instrumentbitrateid=%s, instrumentstopbitsid=%s, instrumenthandshakeid=%s, instrumentinterfaceid=%s, instrumentrawid=%s, instrumentlabnocharid=%s, promptforoverwriteid=%s>' % (
+            repr(self.pcname),
+            repr(self.keepresultsfor),
+            repr(self.instrumentid),
+            repr(self.instrumentcommportid),
+            repr(self.instrumentbaudrateid),
+            repr(self.instrumentparityid),
+            repr(self.instrumentbitrateid),
+            repr(self.instrumentstopbitsid),
+            repr(self.instrumenthandshakeid),
+            repr(self.instrumentinterfaceid),
+            repr(self.instrumentrawid),
+            repr(self.instrumentlabnocharid),
+            repr(self.instrumentcommtypeid),
+            repr(self.promptforoverwriteid)
+        )
+
+    def __unicode__(self):
+        return self.pcname
+
+class MedicalFund(DeclarativeBase):
+    """
+    MedicalFund definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'medicalfund'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    name = Column(Unicode(50), nullable=False)
+    address1 = Column(Unicode(30), nullable=True)
+    address2 = Column(Unicode(30), nullable=True)
+    address3 = Column(Unicode(30), nullable=True)
+    address4 = Column(Unicode(30), nullable=True)
+    registrationnumber = Column(Unicode(30), nullable=True)
+    numberformat = Column(Unicode(20), nullable=True)
+    upordownid = Column(Integer, ForeignKey('upordown.id'), index=True)
+    tariffpercentage = Column(Numeric(6.2), nullable=True)
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<MedicalFund: name=%s, address1=%s, address2=%s, address3=%s, address4=%s, registrationnumber=%s, numberformat=%s, upordownid=%s, tariffpercentage=%s>' % (
+            repr(self.name),
+            repr(self.address1),
+            repr(self.address2),
+            repr(self.address3),
+            repr(self.address4),
+            repr(self.registrationnumber),
+            repr(self.numberformat),
+            repr(self.upordownid),
+            repr(self.tariffpercentage)
+        )
+
+    def __unicode__(self):
+        return self.name
+
+class MailPreference(DeclarativeBase):
+    """
+    MailPreference definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'mailpreference'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    value = Column(Unicode(10), unique=True, nullable=False)
+    display_order = Column(Integer, autoincrement=False )
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<MailPreference: value=%s>' % repr(self.value)
+
+    def __unicode__(self):
+        return self.value
+
+class ResultRelop(DeclarativeBase):
+    """
+    ResultRelop definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'resultrelop'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    value = Column(Unicode(1), unique=True, nullable=False)
+    display_order = Column(Integer, autoincrement=False )
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<ResultRelop: value=%s>' % repr(self.value)
+
+    def __unicode__(self):
+        return self.value
+
+class OverOutUnit(DeclarativeBase):
+    """
+    OverOutUnit definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'overoutunits'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    value = Column(Unicode(10), unique=True, nullable=False)
+    display_order = Column(Integer, autoincrement=False )
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<OverOutUnit: value=%s>' % repr(self.value)
+
+    def __unicode__(self):
+        return self.value
+
+class PatientStatus(DeclarativeBase):
+    """
+    PatientStatus definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'patientstatus'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    value = Column(Unicode(10), unique=True, nullable=False)
+    display_order = Column(Integer, autoincrement=False )
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<PatientStatus: value=%s>' % repr(self.value)
+
+    def __unicode__(self):
+        return self.value
+
+class PatientType(DeclarativeBase):
+    """
+    PatientType definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'patienttype'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    value = Column(Unicode(10), unique=True, nullable=False)
+    display_order = Column(Integer, autoincrement=False )
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<PatientType: value=%s>' % repr(self.value)
+
+    def __unicode__(self):
+        return self.value
+
+class TransactionType(DeclarativeBase):
+    """
+    TransactionType definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'transactiontype'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    value = Column(Unicode(10), unique=True, nullable=False)
+    display_order = Column(Integer, autoincrement=False )
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<TransactionType: value=%s>' % repr(self.value)
+
+    def __unicode__(self):
+        return self.value
+
+class PaymentType(DeclarativeBase):
+    """
+    PaymentType definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'paymenttype'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    value = Column(Unicode(10), unique=True, nullable=False)
+    description = Column(Unicode(40), nullable=False)
+    display_order = Column(Integer, autoincrement=False )
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<PaymentType: value=%s>' % repr(self.value)
+
+    def __unicode__(self):
+        return self.value
+
+class ResultFlag(DeclarativeBase):
+    """
+    ResultFlag definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'resultflag'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    value = Column(Unicode(20), unique=True, nullable=False)
+    display_order = Column(Integer, autoincrement=False )
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<ResultFlag: value=%s>' % repr(self.value)
+
+    def __unicode__(self):
+        return self.value
+
+class ResultQueue(DeclarativeBase):
+    """
+    ResultQueue definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'resultqueue'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    value = Column(Unicode(20), unique=True, nullable=False)
+    display_order = Column(Integer, autoincrement=False )
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<ResultQueue: value=%s>' % repr(self.value)
+
+    def __unicode__(self):
+        return self.value
+
+class ResultReleaseOption(DeclarativeBase):
+    """
+    ResultReleaseOption definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'resultreleaseoption'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    value = Column(Unicode(20), unique=True, nullable=False)
+    display_order = Column(Integer, autoincrement=False )
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<ResultReleaseOption: value=%s>' % repr(self.value)
+
+    def __unicode__(self):
+        return self.value
+
+class ResultSignoffOption(DeclarativeBase):
+    """
+    ResultSignoffOption definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'resultsignoffoption'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    value = Column(Unicode(20), unique=True, nullable=False)
+    display_order = Column(Integer, autoincrement=False )
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<ResultSignoffOption: value=%s>' % repr(self.value)
+
+    def __unicode__(self):
+        return self.value
+
+class ResultTestStatus(DeclarativeBase):
+    """
+    ResultTestStatus definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'resultteststatus'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    value = Column(Unicode(20), unique=True, nullable=False)
+    display_order = Column(Integer, autoincrement=False )
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<ResultTestStatus: value=%s>' % repr(self.value)
+
+    def __unicode__(self):
+        return self.value
+
+class ResultType(DeclarativeBase):
+    """
+    ResultType definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'resulttype'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    value = Column(Unicode(10), unique=True, nullable=False)
+    display_order = Column(Integer, autoincrement=False )
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<ResultType: value=%s>' % repr(self.value)
+
+    def __unicode__(self):
+        return self.value
+
+class TariffCaptureType(DeclarativeBase):
+    """
+    TariffCaptureType definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'tariffcapturetype'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    value = Column(Unicode(20), unique=True, nullable=False)
+    display_order = Column(Integer, autoincrement=False )
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<TariffCaptureType: value=%s>' % repr(self.value)
+
+    def __unicode__(self):
+        return self.value
+
+class Urgency(DeclarativeBase):
+    """
+    Urgency definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'urgency'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    value = Column(Unicode(10), unique=True, nullable=False)
+    display_order = Column(Integer, autoincrement=False )
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<Urgency: value=%s>' % repr(self.value)
+
+    def __unicode__(self):
+        return self.value
+
+class VisitStatus(DeclarativeBase):
+    """
+    VisitStatus definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'visitstatus'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    value = Column(Unicode(20), unique=True, nullable=False)
+    display_order = Column(Integer, autoincrement=False )
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<VisitStatus: value=%s>' % repr(self.value)
+
+    def __unicode__(self):
+        return self.value
+
+class VisitType(DeclarativeBase):
+    """
+    VisitType definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'visittype'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    value = Column(Unicode(20), unique=True, nullable=False)
+    display_order = Column(Integer, autoincrement=False )
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<VisitType: value=%s>' % repr(self.value)
+
+    def __unicode__(self):
+        return self.value
+
+class YesNo(DeclarativeBase):
+    """
+    YesNo definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'yesno'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    value = Column(Unicode(3), unique=True, nullable=False)
+    display_order = Column(Integer, autoincrement=False )
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<YesNo: value=%s>' % repr(self.value)
+
+    def __unicode__(self):
+        return self.value
+
+class Patient(DeclarativeBase):
+    """
+    Patient definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'patient'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    guarantor = Column(Unicode(50), unique=True, nullable=False)
+    clientid = Column(Integer, ForeignKey('client.id'), index=True)
+    surname = Column(Unicode(30), nullable=False)
+    othernames = Column(Unicode(30), nullable=False)
+    genderid = Column(Integer, ForeignKey('gender.id'), index=True)
+    birthday = Column(Date, nullable=True)
+    age = Column(Integer, nullable=True)
+    ageunitid = Column(Integer, ForeignKey('ageunit.id'), index=True)
+    idnumber = Column(Unicode(20), nullable=True)
+    socialnumber = Column(Unicode(20), nullable=True)
+    account = Column(Unicode(14), unique=True, nullable=False)
+    medicalfundid = Column(Integer, ForeignKey('medicalfund.id'), index=True)
+    medicalfundnumber = Column(Unicode(30), nullable=True)
+    address1 = Column(Unicode(30), nullable=True)
+    address2 = Column(Unicode(30), nullable=True)
+    address3 = Column(Unicode(30), nullable=True)
+    address4 = Column(Unicode(30), nullable=True)
+    phonenumber = Column(Unicode(20), nullable=True)
+    mobilenumber = Column(Unicode(20), nullable=True)
+    faxnumber = Column(Unicode(20), nullable=True)
+    email = Column(Unicode(250), nullable=True)
+    patientstatusid = Column(Integer, ForeignKey('patientstatus.id'), index=True)
+    currencyid = Column(Integer, ForeignKey('currency.id'), index=True)
+    sendsmsid = Column(Integer, ForeignKey('yesno.id'), index=True)
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<Patient: guarantor=%s, clientid=%s, surname=%s, othernames=%s, genderid=%s, birthday=%s, age=%s, ageunitid=%s, idnumber=%s, socialnumber=%s, account=%s, medicalfundid=%s, medicalfundnumber=%s, address1=%s, address2=%s, address3=%s, address4=%s, phonenumber=%s, mobilenumber=%s, faxnumber=%s, email=%s, patientstatusid=%s, currencyid=%s, sendsmsid=%s>' % (
+            repr(self.guarantor),
+            repr(self.clientid),
+            repr(self.surname),
+            repr(self.othernames),
+            repr(self.genderid),
+            repr(self.birthday),
+            repr(self.age),
+            repr(self.ageunitid),
+            repr(self.idnumber),
+            repr(self.socialnumber),
+            repr(self.account),
+            repr(self.medicalfundid),
+            repr(self.medicalfundnumber),
+            repr(self.address1),
+            repr(self.address2),
+            repr(self.address3),
+            repr(self.address4),
+            repr(self.phonenumber),
+            repr(self.mobilenumber),
+            repr(self.faxnumber),
+            repr(self.email),
+            repr(self.patientstatusid),
+            repr(self.currencyid),
+            repr(self.sendsmsid)
+        )
+
+    def __unicode__(self):
+        return self.guarantor
+
+class ServiceProviderType(DeclarativeBase):
+    """
+    ServiceProviderType definition
+
+    Only the ``serviceprovidertype`` column is required.
+
+    """
+
+    __tablename__ = 'serviceprovidertype'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    serviceprovidertype = Column(Unicode(50), unique=True, nullable=False)
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<ServiceProviderType: serviceprovidertype=%s>' % repr(self.serviceprovidertype)
+
+    def __unicode__(self):
+        return self.serviceprovidertype
+
+class ServiceProvider(DeclarativeBase):
+    """
+    ServiceProvider definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'serviceprovider'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    code = Column(Unicode(10), unique=True, nullable=False)
+    name = Column(Unicode(50), nullable=True)
+    practicenumber = Column(Unicode(20), nullable=True)
+    copies = Column(Integer, nullable=False)
+    serviceprovidertypeid = Column(Integer, ForeignKey('serviceprovidertype.id'), index=True)
+    hospitalcodeid = Column(Integer, ForeignKey('serviceprovider.id'), index=True)
+    account = Column(Unicode(14), unique=True, nullable=False)
+    address1 = Column(Unicode(30), nullable=True)
+    address2 = Column(Unicode(30), nullable=True)
+    address3 = Column(Unicode(30), nullable=True)
+    address4 = Column(Unicode(30), nullable=True)
+    countryid = Column(Integer, ForeignKey('country.id'), index=True)
+    regionid = Column(Integer, ForeignKey('region.id'), index=True)
+    districtid = Column(Integer, ForeignKey('district.id'), index=True)
+    centreid = Column(Integer, ForeignKey('centre.id'), index=True)
+    phonenumber = Column(Unicode(20), nullable=True)
+    mobilenumber = Column(Unicode(20), nullable=True)
+    faxnumber = Column(Unicode(20), nullable=True)
+    email = Column(Unicode(250), nullable=True)
+    printalsoid = Column(Integer, ForeignKey('yesno.id'), index=True)
+    currencyid = Column(Integer, ForeignKey('currency.id'), index=True)
+    statusid = Column(Integer, ForeignKey('status.id'), index=True)
+    mailpreferenceid = Column(Integer, ForeignKey('mailpreference.id'), index=True)
+    upordownid = Column(Integer, ForeignKey('upordown.id'), index=True)
+    tarffpercentage = Column(Numeric(6, 2), nullable=True)
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<ServiceProvider: code=%s, name=%s, practicenumber=%s, serviceprovidertypeid=%s, hospitalcodeid=%s, account=%s, address1=%s, address2=%s, address3=%s, address4=%s, countryid=%s, regionid=%s, districtid=%s, centreid=%s, phonenumber=%s, mobilenumber=%s, faxnumber=%s, email=%s, printalsoid=%s, currencyid=%s, statusid=%s, mailpreferenceid=%s, upordownid=%s, tarffpercentage=%s>' % (
+
+            repr(self.code),
+            repr(self.name),
+            repr(self.practicenumber),
+            repr(self.serviceprovidertypeid),
+            repr(self.hospitalcodeid),
+            repr(self.account),
+            repr(self.address1),
+            repr(self.address2),
+            repr(self.address3),
+            repr(self.address4),
+            repr(self.countryid),
+            repr(self.regionid),
+            repr(self.districtid),
+            repr(self.centreid),
+            repr(self.phonenumber),
+            repr(self.mobilenumber),
+            repr(self.faxnumber),
+            repr(self.email),
+            repr(self.printalsoid),
+            repr(self.currencyid),
+            repr(self.statusid),
+            repr(self.mailpreferenceid),
+            repr(self.upordownid),
+            repr(self.tarffpercentage)
+        )
+
+    def __unicode__(self):
+        return self.code
+
+class Visit(DeclarativeBase):
+    """
+    Visit definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'visit'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    visitnumber = Column(Unicode(12), unique=True, nullable=False)
+    patientid = Column(Integer, ForeignKey('patient.id'), index=True)
+    patientfile = Column(Unicode(20), nullable=True)
+    registered = Column(DateTime, nullable=True)
+    serviced = Column(DateTime, nullable=True)
+    admitted = Column(DateTime, nullable=True)
+    discharged = Column(DateTime, nullable=True)
+    visittypeid = Column(Integer, ForeignKey('visittype.id'), index=True)
+    patienttypeid = Column(Integer, ForeignKey('patienttype.id'), index=True)
+    visitstatusid = Column(Integer, ForeignKey('visitstatus.id'), index=True)
+    serviceprviderid = Column(Integer, ForeignKey('serviceprovider.id'), index=True)
+    amount = Column(Numeric(14, 2), nullable=True)
+    discount = Column(Numeric(6, 2), nullable=True)
+    discountamount = Column(Numeric(14, 2), nullable=True)
+    payments = Column(Numeric(14, 2), nullable=True)
+    balance = Column(Numeric(14, 2), nullable=True)
+    paymentlink = Column(Unicode(8), nullable=True)
+    afterhoursid = Column(Integer, ForeignKey('yesno.id'), index=True)
+    urgencyid = Column(Integer, ForeignKey('urgency.id'), index=True)
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<Visit: visitnumber=%s, patientid=%s, patientfile=%s, registered=%s, serviced=%s, admitted=%s, discharged=%s, visittypeid=%s, patienttypeid=%s, visitstatusid=%s, serviceprviderid=%s, amount=%s, discount=%s, discountamount=%s, payments=%s, balance=%s, paymentlink=%s, afterhoursid=%s, urgencyid=%s>' % (
+            repr(self.visitnumber),
+            repr(self.patientid),
+            repr(self.patientfile),
+            repr(self.registered),
+            repr(self.serviced),
+            repr(self.admitted),
+            repr(self.discharged),
+            repr(self.visittypeid),
+            repr(self.patienttypeid),
+            repr(self.visitstatusid),
+            repr(self.serviceprviderid),
+            repr(self.amount),
+            repr(self.discount),
+            repr(self.discountamount),
+            repr(self.payments),
+            repr(self.balance),
+            repr(self.paymentlink),
+            repr(self.afterhoursid),
+            repr(self.urgencyid)
+        )
+
+    def __unicode__(self):
+        return self.visitnumber
+
+class LaboratoryNumber(DeclarativeBase):
+    """
+    LaboratoryNumber definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'laboratorynumber'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    visitid = Column(Integer, ForeignKey('visit.id'), index=True)
+    laboratorynumber = Column(Unicode(8), unique=True, nullable=False)
+    collectionpointid = Column(Integer, ForeignKey('collectionpoint.id'), index=True)
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<LaboratoryNumber: visitid=%s, laboratorynumber=%s, collectionpointid=%s>' % (
+            repr(self.visitid),
+            repr(self.laboratorynumber),
+            repr(self.collectionpointid)
+        )
+
+    def __unicode__(self):
+        return self.laboratorynumber
+
+class LaboratoryNumberDetail(DeclarativeBase):
+    """
+    LaboratoryNumberDetail definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'laboratorynumberdetail'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    laboratorynumberid = Column(Integer, ForeignKey('laboratorynumber.id'), index=True)
+    disciplineid = Column(Integer, ForeignKey('discipline.id'), index=True)
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<LaboratoryNumberDetail: laboratorynumberid=%s, disciplineid=%s>' % (
+            repr(self.laboratorynumberid),
+            repr(self.disciplineid)
+        )
+
+    def __unicode__(self):
+        return self.laboratorynumberid
+
+class InvoicePrintRun(DeclarativeBase):
+    """
+    InvoicePrintRun definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'invoiceprintrun'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    laboratorynumberid = Column(Integer, ForeignKey('laboratorynumber.id'), nullable=True)
+    clientid = Column(Integer, ForeignKey('client.id'), nullable=True)
+    printed = Column(DateTime, default=datetime.now)
+    printedby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<InvoicePrintRun: laboratorynumberid=%s, clientid=%s>' % (
+            repr(self.laboratorynumberid),
+            repr(self.clientid)
+        )
+    def __unicode__(self):
+        return self.laboratorynumberid
+
+class PaymentTransaction(DeclarativeBase):
+    """
+    PaymentTransaction definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'paymenttransaction'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    value = Column(Unicode(10), unique=True, nullable=False)
+    description = Column(Unicode(40), nullable=True)
+    transactiontypeid = Column(Integer, ForeignKey('transactiontype.id'), nullable=True)
+    display_order = Column(Integer, autoincrement=False )
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<PaymentTransaction: value=%s>' % (repr(self.value))
+    def __unicode__(self):
+        return self.value
+
+class Payment(DeclarativeBase):
+    """
+    Payment definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'payment'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    laboratorynumberid = Column(Integer, ForeignKey('laboratorynumber.id'), nullable=False)
+    paylink = Column(Unicode(10), nullable=True)
+    reference = Column(Unicode(10), nullable=True)
+    contrarecordid = Column(Integer, ForeignKey('payment.id'), nullable=True)
+    receiptnumber = Column(Unicode(10), nullable=True)
+    patienttypeid = Column(Integer, ForeignKey('patienttype.id'), nullable=True)
+    paymenttypeid = Column(Integer, ForeignKey('paymenttype.id'), nullable=True)
+    paymenttransactionid = Column(Integer, ForeignKey('paymenttransaction.id'), nullable=True)
+    paymentmessage = Column(Unicode(50), nullable=True)
+    currencyid = Column(Integer, ForeignKey('currency.id'), nullable=True)
+    paymentamount = Column(Numeric(14, 2), nullable=True)
+    currencyrate = Column(Numeric(11, 2), nullable=True)
+    basecurrencyamount = Column(Numeric(14, 2), nullable=True)
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<Payment: laboratorynumberid=%s, paylink=%s, reference=%s, contrarecordid=%s, receiptnumber=%s, patienttypeid=%s, paymenttypeid=%s, paymenttransactionid=%s, paymentmessage=%s, currencyid=%s, paymentamount=%s, currencyrate=%s, basecurrencyamount=%s>' % (
+            repr(self.laboratorynumberid),
+            repr(self.paylink),
+            repr(self.reference),
+            repr(self.contrarecordid),
+            repr(self.receiptnumber),
+            repr(self.patienttypeid),
+            repr(self.paymenttypeid),
+            repr(self.paymenttransactionid),
+            repr(self.paymentmessage),
+            repr(self.currencyid),
+            repr(self.paymentamount),
+            repr(self.currencyrate),
+            repr(self.basecurrencyamount)
+        )
+    def __unicode__(self):
+        return self.laboratorynumberid
+
+class ReportPrintHistory(DeclarativeBase):
+    """
+    ReportPrintHistory definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'reportprinthistory'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    laboratorynumberid = Column(Integer, ForeignKey('laboratorynumber.id'), nullable=False)
+    lastprint = Column(DateTime, default=datetime.now)
+    lastprintby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+    lastmail = Column(DateTime, default=datetime.now)
+    lastmailby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+    lastmessage = Column(DateTime, default=datetime.now)
+    lastmessageby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+    lastinvoice = Column(DateTime, default=datetime.now)
+    lastinvoiceby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<ReportPrintHistory: laboratorynumberid=%s, lastprint=%s, lastprintby=%s, lastmail=%s, astmailby=%s, lastmessage=%s, lastmessageby=%s, lastinvoice=%s, lastinvoiceby=%s>' % (
+            repr(self.laboratorynumberid),
+            repr(self.lastprint),
+            repr(self.lastprintby),
+            repr(self.lastmail),
+            repr(self.lastmailby),
+            repr(self.lastmessage),
+            repr(self.lastmessageby),
+            repr(self.lastinvoice),
+            repr(self.lastinvoiceby)
+        )
+
+    def __unicode__(self):
+        return self.laboratorynumberid
+
+class ReportPrintRun(DeclarativeBase):
+    """
+    ReportPrintRun definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'reportprintrun'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    laboratorynumberid = Column(Integer, ForeignKey('laboratorynumber.id'), nullable=False)
+    printed = Column(DateTime, default=datetime.now)
+    printedby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<ReportPrintRun: laboratorynumberid=%s, printed=%s, printedby=%s>' % (
+            repr(self.laboratorynumberid),
+            repr(self.printed),
+            repr(self.prntedby)
+        )
+
+    def __unicode__(self):
+        return self.laboratorynumberid
+
+class WorkList(DeclarativeBase):
+    """
+    WorkList definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'worklist'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    code = Column(Unicode(10), nullable=False)
+    worklist = Column(Unicode(60), nullable=False)
+    activeinactiveid = Column(Integer, ForeignKey('activeinactive.id'), nullable=False)
+    disciplineid = Column(Integer, ForeignKey('discipline.id'), nullable=False)
+    outstandinglimit = Column(Integer, nullable=True)
+    outstandingunitid = Column(Integer, ForeignKey('overoutunits.id'), nullable=False)
+    overduelimit = Column(Integer, nullable=True)
+    overdueunitid = Column(Integer, ForeignKey('overoutunits.id'), nullable=False)
+    instrumentid = Column(Integer, ForeignKey('instrument.id'), nullable=False)
+    resultsignoffoptionid = Column(Integer, ForeignKey('resultsignoffoption.id'), nullable=False)
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<WorkList: code=%s, worklist=%s, activeinactiveid=%s, disciplineid=%s, outstandinglimit=%s, outstandingunitid=%s, overduelimit=%s, overdueunitid=%s, instrumentid=%s, resultsignoffoptionid=%s>' % (
+            repr(self.code),
+            repr(self.worklist),
+            repr(self.activeinactiveid),
+            repr(self.disciplineid),
+            repr(self.outstandinglimit),
+            repr(self.outstandingunitid),
+            repr(self.overduelimit),
+            repr(self.overdueunitid),
+            repr(self.instrumentid),
+            repr(self.resultsignoffoptionid)
+        )
+    def __unicode__(self):
+        return self.laboratorynumberid
+
+class Tariff(DeclarativeBase):
+    """
+    Tariff definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'tariff'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    code = Column(Unicode(10), nullable=False)
+    reportdescription = Column(Unicode(50), nullable=True)
+    invoicedescription = Column(Unicode(50), nullable=True)
+    disciplineid = Column(Integer, ForeignKey('discipline.id'), nullable=False)
+    departmentid = Column(Integer, ForeignKey('department.id'), nullable=False)
+    governmentcode = Column(Unicode(10), nullable=True)
+    nappicode = Column(Unicode(10), nullable=True)
+    resultunit = Column(Unicode(20), nullable=True)
+    resulttypeid = Column(Integer, ForeignKey('resulttype.id'), nullable=False)
+    superprofieid = Column(Integer, ForeignKey('tariff.id'), nullable=False)
+    decimalplaces = Column(Integer, nullable=True)
+    calculationid = Column(Integer, ForeignKey('calculation.id'), nullable=False)
+    difftariffid = Column(Integer, ForeignKey('tariff.id'), nullable=False)
+    standingcommentid = Column(Integer, ForeignKey('cannedcomment.id'), nullable=False)
+    commentifabnormalid = Column(Integer, ForeignKey('yesno.id'), nullable=False)
+    handlingfeeid = Column(Integer, ForeignKey('tariff.id'), nullable=False)
+    tariffcapturetypeid = Column(Integer, ForeignKey('tariffcapturetype.id'), nullable=False)
+    worklistid = Column(Integer, ForeignKey('worklist.id'), nullable=False)
+    medicalfundid = Column(Integer, ForeignKey('medicalfund.id'), nullable=False)
+    genderid = Column(Integer, ForeignKey('gender.id'), nullable=False)
+    specimenid = Column(Integer, ForeignKey('specimen.id'), nullable=False)
+    containerid = Column(Integer, ForeignKey('container.id'), nullable=False)
+    bodysiteid = Column(Integer, ForeignKey('bodysite.id'), nullable=False)
+    resultrelopid = Column(Integer, ForeignKey('resultrelop.id'), nullable=False)
+    paniclow = Column(Numeric(12, 4), nullable=True)
+    panichigh = Column(Numeric(12, 4), nullable=True)
+    normalrangetext = Column(Unicode(30), nullable=True)
+    disciplinesequence = Column(Unicode(2), nullable=True)
+    reportsequence = Column(Unicode(4), nullable=True)
+    resultreleaseoptionid = Column(Integer, ForeignKey('resultreleaseoption.id'), nullable=False)
+    printresultid = Column(Integer, ForeignKey('yesno.id'), nullable=False)
+    printlinesbefore = Column(Integer, nullable=True)
+    printlinesafter = Column(Integer, nullable=True)
+    printboldid = Column(Integer, ForeignKey('yesno.id'), nullable=False)
+    printnewpageid = Column(Integer, ForeignKey('yesno.id'), nullable=False)
+    units = Column(Numeric(7, 2), nullable=True)
+    price = Column(Numeric(14, 2), nullable=True)
+    afterhourspercentage = Column(Numeric(6, 2), nullable=True)
+    askforunitsid = Column(Integer, ForeignKey('yesno.id'), nullable=False)
+    statusid = Column(Integer, ForeignKey('status.id'), nullable=False)
+    outstandinglimit = Column(Integer, nullable=True)
+    outstandingunitid = Column(Integer, ForeignKey('overoutunits.id'), nullable=False)
+    overduelimit = Column(Integer, nullable=True)
+    overdueunitid = Column(Integer, ForeignKey('overoutunits.id'), nullable=False)
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<Tariff: code=%s, reportdescription=%s, invoicedescription=%s, disciplineid=%s, departmentid=%s>' % (
+            repr(self.code),
+            repr(self.reportdescription),
+            repr(self.invoicedescription),
+            repr(self.disciplineid),
+            repr(self.departmentid)
+        )
+    def __unicode__(self):
+        return self.code
+
+class NormalRange(DeclarativeBase):
+    """
+    NormalRange definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'normalrange'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    tariffid = Column(Integer, ForeignKey('tariff.id'), nullable=False)
+    agehours = Column(Integer, nullable=False)
+    age = Column(Integer, nullable=False)
+    ageunitid = Column(Integer, ForeignKey('ageunit.id'), nullable=False)
+    femalelow = Column(Numeric(12, 4), nullable=True)
+    femalehigh = Column(Numeric(12, 4), nullable=True)
+    malelow = Column(Numeric(12, 4), nullable=True)
+    malehigh = Column(Numeric(12, 4), nullable=True)
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<NormalRange: tariffid=%s, agehours=%s, age=%s, ageunitid=%s, femalelow=%s, femalehigh=%s, malelow=%s, malehigh=%s>' % (
+            repr(self.tariffid),
+            repr(self.agehours),
+            repr(self.age),
+            repr(self.ageunitid),
+            repr(self.femalelow),
+            repr(self.femalehigh),
+            repr(self.malelow),
+            repr(self.malehigh)
+        )
+    def __unicode__(self):
+        return self.tariffid
+
+class TariffProfile(DeclarativeBase):
+    """
+    TariffProfile definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'tariffprofile'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    tariffid = Column(Integer, ForeignKey('tariff.id'), nullable=False)
+    position = Column(Integer, nullable=False)
+    memberid = Column(Integer, ForeignKey('tariff.id'), nullable=False)
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<TariffProfile: tariffid=%s, position=%s, memberid=%s>' % (
+            repr(self.tariffid),
+            repr(self.position),
+            repr(self.memberid)
+        )
+    def __unicode__(self):
+        return self.tariffid
+
+class Result(DeclarativeBase):
+    """
+    Result definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'result'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    laboratorynumberid = Column(Integer, ForeignKey('laboratorynumber.id'), nullable=False)
+    patientfile = Column(Unicode(14), nullable=True)
+    worklistid = Column(Integer, ForeignKey('worklist.id'), nullable=False)
+    instrumentid = Column(Integer, ForeignKey('instrument.id'), nullable=True)
+    tariffid = Column(Integer, ForeignKey('tariff.id'), nullable=False)
+    disciplined = Column(Integer, ForeignKey('discipline.id'), nullable=False)
+    reportsequence = Column(Unicode(6), nullable=True)
+    profileid = Column(Integer, ForeignKey('tariff.id'), nullable=True)
+    issuperprofileid = Column(Integer, ForeignKey('yesno.id'), nullable=True)
+    superprofileid = Column(Integer, ForeignKey('tariff.id'), nullable=False)
+    superprofiledisciplined = Column(Integer, ForeignKey('discipline.id'), nullable=False)
+    superprofilesequence = Column(Unicode(6), nullable=True)
+    resultqueueid = Column(Integer, ForeignKey('resultqueue.id'), nullable=False)
+    urgencyid = Column(Integer, ForeignKey('urgency.id'), nullable=False)
+    resultteststatisid = Column(Integer, ForeignKey('resultteststatus.id'), nullable=False)
+    signoffqueueid = Column(Integer, ForeignKey('tg_user.id'), nullable=False)
+    resulttypeid = Column(Integer, ForeignKey('resultteststatus.id'), nullable=False)
+    reportdescription = Column(Unicode(50), nullable=True)
+    resultrelopid = Column(Integer, ForeignKey('resultrelop.id'), nullable=False)
+    result = Column(Unicode(5000), nullable=True)
+    resultflagid = Column(Integer, ForeignKey('resultflag.id'), nullable=False)
+    resultunit = Column(Unicode(20), nullable=True)
+    decimalplaces = Column(Integer, nullable=True)
+    referencerangerelopid = Column(Integer, ForeignKey('resultrelop.id'), nullable=False)
+    normalrangelow = Column(Numeric(12,4), nullable=True)
+    normalrangehigh = Column(Numeric(12,4), nullable=True)
+    panicrangelow = Column(Numeric(12,4), nullable=True)
+    panicrangehigh = Column(Numeric(12,4), nullable=True)
+    normalrangetext = Column(Unicode(30), nullable=True)
+    specimenid = Column(Integer, ForeignKey('specimen.id'), nullable=True)
+    containerid = Column(Integer, ForeignKey('container.id'), nullable=True)
+    bodysiteid = Column(Integer, ForeignKey('bodysite.id'), nullable=True)
+    calculationid = Column(Integer, ForeignKey('calculation.id'), nullable=True)
+    standingcommentid = Column(Integer, ForeignKey('cannedcomment.id'), nullable=True)
+    commentifabnormalid = Column(Integer, ForeignKey('yesno.id'), nullable=True)
+    resultreleaseoptionid = Column(Integer, ForeignKey('resultreleaseoption.id'), nullable=False)
+    registered = Column(DateTime, default=datetime.now)
+    registeredby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+    collected = Column(DateTime, nullable=False)
+    received = Column(DateTime, nullable=False)
+    resulted = Column(DateTime, nullable=True)
+    resultedby = Column(Integer, ForeignKey('tg_user.user_id'), index=True, nullable=True)
+    signedoff = Column(DateTime, nullable=True)
+    signedoffby = Column(Integer, ForeignKey('tg_user.user_id'), index=True, nullable=True)
+    printed = Column(DateTime, nullable=True)
+    printedby = Column(Integer, ForeignKey('tg_user.user_id'), index=True, nullable=True)
+    yyyymm = Column(Unicode(6), nullable=False)
+    testlinkid = Column(Integer, ForeignKey('tariff.id'), nullable=False)
+    testlink = Column(Unicode(50), nullable=True)
+    textlink1 = Column(Unicode(8), nullable=True)
+    textlink2 = Column(Unicode(10), nullable=True)
+    textlink3 = Column(Unicode(10), nullable=True)
+    def __repr__(self):
+        return '<Result: laboratorynumberid=%s, patientfile=%s, worklistid=%s, instrumentid=%s, tariffid=%s, disciplined=%s>' % (
+            repr(self.laboratorynumberid),
+            repr(self.patientfile),
+            repr(self.worklistid),
+            repr(self.instrumentid),
+            repr(self.tariffid),
+            repr(self.disciplined)
+        )
+    def __unicode__(self):
+        return self.laboratorynumberid
+
+class ResultComment(DeclarativeBase):
+    """
+    ResultComment definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'resultcomment'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    laboratorynumberid = Column(Integer, ForeignKey('laboratorynumber.id'), nullable=False)
+    resultid = Column(Integer, ForeignKey('result.id'), nullable=False)
+    commenttypeid = Column(Integer, ForeignKey('commenttype.id'), nullable=False)
+    comment = Column(Unicode(5000), nullable=True)
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<ResuleComment: laboratorynumberid=%s, resultid=%s, commenttypeid=%s, comment=%s>' % (
+            repr(self.laboratorynumberid),
+            repr(self.resultid),
+            repr(self.commenttypeid),
+            repr(self.comment)
+        )
+    def __unicode__(self):
+        return self.laboratorynumberid
+
+class Transaction(DeclarativeBase):
+    """
+    Transaction definition
+
+    Only the ``value`` column is required.
+
+    """
+
+    __tablename__ = 'transaction'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    laboratorynumberid = Column(Integer, ForeignKey('laboratorynumber.id'), nullable=False)
+    resultid = Column(Integer, ForeignKey('result.id'), nullable=False)
+    transactiontypeid = Column(Integer, ForeignKey('transactiontype.id'), nullable=False)
+    governmentcode = Column(Unicode(10), nullable=True)
+    nappicode = Column(Unicode(10), nullable=True)
+    invoicedescription = Column(Unicode(50), nullable=True)
+    rate = Column(Numeric(14, 2), nullable=True)
+    units = Column(Integer, nullable=True)
+    unitprice = Column(Numeric(14, 2), nullable=True)
+    price = Column(Numeric(14, 2), nullable=True)
+    currencyid = Column(Integer, ForeignKey('currency.id'), nullable=False)
+    departmentid = Column(Integer, ForeignKey('department.id'), nullable=False)
+    created = Column(DateTime, default=datetime.now)
+    createdby = Column(Integer, ForeignKey('tg_user.user_id'), index=True)
+
+    def __repr__(self):
+        return '<Transaction: laboratorynumberid=%s, resultid=%s, governmentcode=%s, nappicode=%s, invoicedescription=%s, rate=%s, units=%s, unitprice=%s, price=%s, currencyid=%s, departmentid=%s>' % (
+            repr(self.laboratorynumberid),
+            repr(self.resultid),
+            repr(self.governmentcode),
+            repr(self.nappicode),
+            repr(self.invoicedescription),
+            repr(self.rate),
+            repr(self.units),
+            repr(self.unitprice),
+            repr(self.price),
+            repr(self.currencyid),
+            repr(self.departmentid)
+        )
+    def __unicode__(self):
+        return self.laboratorynumberid

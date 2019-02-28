@@ -1,0 +1,91 @@
+{% extends "_layout" %}
+
+{% block content %}
+
+    <section class="page-title bg-7">
+        <div class="container">
+            <div class="row">
+                <div class="col-md-12">
+                    <div class="block">
+                        <h1>Get in touch</h1>
+                        <p>Lorem ipsum dolor sit amet, consectetur adipisicing elit. Nisi, quibusdam.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <div class="page-wrapper">
+        <section class="contact-form">
+            <div class="container">
+                <div class="row">
+                    <form id="contact-form" >
+                        <div class="col-md-6 col-sm-12">
+                            <div class="block">
+                                <div class="form-group">
+                                    <input name="user_name" type="text" class="form-control" placeholder="Your Name">
+                                </div>
+                                <div class="form-group">
+                                    <input name="user_email" type="text" class="form-control" placeholder="Email Address">
+                                </div>
+                                <div class="form-group">
+                                    <input name="user_subject" type="text" class="form-control" placeholder="Subject">
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-sm-12">
+                            <div class="block">
+                                <div class="form-group-2">
+                                    <textarea name="user_message" class="form-control" rows="3" placeholder="Your Message"></textarea>
+                                </div>
+                                    <button class="btn btn-default" type="submit">Send Message</button>
+                            </div>
+                        </div>
+                        <div class="error" id="error">Sorry Msg dose not sent</div>
+                        <div class="success" id="success">Message Sent</div>
+                    </form>
+                </div>
+                <div class=" contact-box row">
+                    <div class="col-md-6 col-sm-12">
+                        <div class="block">
+                            <h2>Our Office</h2>
+                            <ul class="address-block">
+                                <li>
+                                    <i class="ion-ios-location-outline"></i>
+                                    Shop F2, The Sanctuary <br>
+                                    Cnr R44 and De Beers Ave<br>
+                                    Somerset West<br>
+                                    Cape Town, South Africa
+                                </li>
+                                <li>
+                                    <i class="ion-ios-email-outline"></i>Email: info@dotxmltech.com
+                                </li>
+                                <li>
+                                    <i class="ion-ios-telephone-outline"></i>Phone: +27 (0)72 729 7914
+                                    <!--i class="ion-ios-telephone-outline"></i>Phone: +27 (0)82 337 1108-->
+                                </li>
+                            </ul>
+                            <ul class="social-icons">
+                                <li>
+                                    <a href=""><i class="ion-social-linkedin-outline"></i></a>
+                                </li>
+                                <li>
+                                    <a href=""><i class="ion-social-twitter-outline"></i></a>
+                                </li>
+                            </ul>
+                        </div>
+                    </div>
+                    <div class="col-md-6 col-sm-12">
+                        <div class="block">
+                            <h2>Find Us On Google Maps</h2>
+                            <div class="google-map">
+                                <iframe src="https://www.google.com/maps/embed?pb=!1m14!1m8!1m3!1d6608.583489095645!2d18.8165923!3d-34.0876659!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x0%3A0xf40243da2995d446!2sThe+Sanctuary+Shopping+Centre!5e0!3m2!1sen!2sza!4v1521806250283" width="100%" height="350" frameborder="0" style="border:0" allowfullscreen></iframe>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </div>
+
+{% endblock %}

@@ -1,0 +1,55 @@
+#!/bin/python
+
+from zeep import Client
+from datetime import datetime
+import random
+import xlwt
+
+book = xlwt.Workbook(encoding='utf-8')
+sheet = book.add_sheet('Sheet 1')
+sheet.write(0, 0, 'Start Time') # column, row, text
+sheet.write(0, 1, 'End Time')
+sheet.write(0, 2, 'Duration')
+sheet.write(0, 3, 'Success')
+sheet.write(0, 4, 'MSISDN')
+
+GroupId = 2
+TenantId = 24
+TestMSISDN = 26876061459
+OtherMSISDN = 26876052182
+MSList = [str(TestMSISDN), str(OtherMSISDN)]
+url = 'http://secure.omvim.com/DotVIMIntegration/MemberService.asmx?wsdl'
+
+for i in xrange(1000):
+
+    start = datetime.now()
+    MSISDN = random.choice(MSList)
+    client = Client(url)
+
+    # Print available
+    # print(dir(client.service))
+
+    choice = random.choice(MSList)
+    service_name = 'CheckMember'
+    result = client.service.CheckMember({
+            'TenantId' : TenantId,
+            'MSISDN' : choice,
+        })
+    end = datetime.now()
+
+    strstart = start.strftime('%d/%m/%Y %H:%m:%s')
+    strend = end.strftime('%d/%m/%Y %H:%m:%s')
+    strduration = (end-start).total_seconds()
+    strresult = result.Success
+
+    sheet.write(i+2, 0, strstart)
+    sheet.write(i+2, 1, strend)
+    sheet.write(i+2, 2, strduration)
+    sheet.write(i+2, 3, strresult)
+    sheet.write(i+2, 4, choice)
+
+    if i % 0 == 10:
+        print(i, strduration, strresult)
+
+book.save('MemberServiceResults.xls')
+print('Done')
