@@ -19,7 +19,6 @@ call vundle#end()
 syntax on
 filetype plugin indent on
 filetype plugin on
-colorscheme spacecamp
 
 set path+=**
 set wildmenu
@@ -106,8 +105,3 @@ let g:UltiSnipsEditSplit="horizontal"
 
 "YouCompleteMe Config
 let g:ycm_autoclose_preview_window_after_completion=1
-
-"Airline Config
-let g:airline_section_b = '%{strftime("%c")}'
-let g:airline_section_y = 'BN: %{bufnr("%")}'
-let g:airline_theme = 'simple'

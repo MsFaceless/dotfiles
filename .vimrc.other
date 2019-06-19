@@ -16,49 +16,51 @@ Bundle 'OmniSharp/omnisharp-vim'
 
 call vundle#end()
 
-syntax on
-filetype plugin indent on
-filetype plugin on
+set tabstop=4
+set softtabstop=4
+set shiftwidth=4
+set expandtab
+"set ai "auto indent
+"set si "smart indent
+"set wrap "wrap lines
+
+" Colors columns past 79 characters (promotes good practice)
+let &colorcolumn="81,".join(range(82,200),",")
+highlight ColorColumn ctermbg=235 guibg=lightgrey
+highlight LineNr term=bold cterm=NONE ctermfg=DarkGrey ctermbg=NONE gui=NONE guifg=DarkGrey guibg=NONE
 colorscheme spacecamp
 
-set path+=**
-set wildmenu
-set shiftwidth=4
-set tabstop=4
-set nocompatible
+set number
+set showcmd
+set wildmenu "visual autocomplete for command menu
+set showmatch "highlight matching brackets
+
+set incsearch "search as chars are typed
+set hlsearch "highlight matches
+set ignorecase "ignore case when searching
+"set smartcase "case sensitive searching
+
 set backspace=indent,eol,start
 set history=5000
 set ruler
 set showcmd
-set incsearch
 set background=dark
-set showmatch
-set nu
-set foldmethod=indent
-set expandtab
-set smarttab
 set tabpagemax=30
 
-if has("vms")
-    set nobackup
-else
-    set backup
-    set undofile
-endif
+"space key opens/closes in normal mode
+nnoremap <space> za
+set foldenable "enable folding
+set foldlevelstart=10 "0 means all folds closed, 99 means all folds open
+set foldnestmax=10 "max number of folds in folds i.e. nested folds
+set foldmethod=indent "use indent level to base folds on
 
-if has("mouse")
-    set mouse=a
-endif
-
-if &t_Co > 2 || has("gui_running")
-  syntax on
-  set hlsearch
-  set t_Co=256
-endif
-
-set undodir=~/.vim/.backup
+set path+=**
+set backup
 set backupdir=~/.vim/.backup
+set undofile
+set undodir=~/.vim/.backup
 set viminfo+=n~/.vim/viminfo
+set writebackup
 
 for prefix in ['i', 'n', 'v']
     for key in ['<Up>', '<Down>', '<Left>', '<Right>']
@@ -74,11 +76,8 @@ nmap <F4> :g/^$/d<CR>
 nmap <F5> :%s/\s\+$//e<CR>
 " Add an empty space after commas
 nmap <F6> :%s/,\(\S\)/, \1/g<CR>
-" Remove spaces in empty strings 
+" Remove spaces in empty strings
 nmap <F7> :%s/' '/''/gc<CR>
-
-" Shows tabs and spaces
-nmap <leader>l :set list!<CR>
 
 if has('autocmd')
     autocmd FileType python nmap <F2> :w\|!python %<cr>

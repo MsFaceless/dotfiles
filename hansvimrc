@@ -1,0 +1,57 @@
+set nocompatible
+filetype off
+set rtp+=~/.vim/bundle/Vundle.vim
+
+call vundle#begin()
+Plugin 'gmarik/Vundle.vim'
+Plugin 'flazz/vim-colorschemes'
+Plugin 'chrisbra/csv.vim'
+Plugin 'Valloric/YouCompleteMe'
+Plugin 'SirVer/ultisnips'
+Plugin 'honza/vim-snippets'
+Plugin 'scrooloose/nerdtree'
+Plugin 'majutsushi/tagbar'
+Plugin 'leafgarland/typescript-vim'
+Plugin 'Lokaltog/powerline'
+Plugin 'bling/vim-airline'
+Plugin 'vim-airline/vim-airline-themes'
+Plugin 'Valloric/MatchTagAlways'
+Plugin 'vim-scripts/LanguageTool'
+Plugin 'beloglazov/vim-online-thesaurus'
+Plugin 'ervandew/supertab'
+Plugin 'terryma/vim-multiple-cursors'
+
+call vundle#end()
+
+syntax on
+filetype plugin indent on
+set number! relativenumber!
+nmap <F2> :!python2 % <cr>
+nmap <F3> :!python3 % <cr>
+nmap <F4> :TagbarToggle<CR>
+map <F8> :NERDTreeToggle<CR>
+
+"UtilSnips Config
+let g:UltiSnipsExpandTrigger="<c-l>"
+let g:UltiSnipsJumpForwardTrigger="<c-j>"
+let g:UltiSnipsListSnippets="<c-tab>"
+let g:UltiSnipsJumpBackwardTrigger="<c-k>"
+
+" If you want :UltiSnipsEdit to split your window.
+let g:UltiSnipsEditSplit="vertical"
+
+"YouCompleteMe Config
+let g:ycm_autoclose_preview_window_after_completion=1
+map <leader>g  :YcmCompleter GoToDefinitionElseDeclaration<CR>
+set wildmenu
+set autoread
+
+if has("mouse")
+    set mouse=
+endif
+
+for prefix in ['i', 'n', 'v']
+    for key in ['<Up>', '<Down>', '<Left>', '<Right>']
+        exe prefix . "noremap " . key . " <Nop>"
+    endfor
+endfor
