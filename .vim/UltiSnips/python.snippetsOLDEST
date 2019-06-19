@@ -1,0 +1,1155 @@
+priority 1
+
+# The smart def and smart class snippets use a global option called
+# "g:ultisnips_python_style" which, if set to "doxygen" will use doxygen
+# style comments in docstrings.
+
+global !p
+
+NORMAL  = 0x1
+DOXYGEN = 0x2
+SPHINX  = 0x3
+GOOGLE  = 0x4
+NUMPY   = 0x5
+
+SINGLE_QUOTES = "'"
+DOUBLE_QUOTES = '"'
+
+
+class Arg(object):
+	def __init__(self, arg):
+		self.arg = arg
+		self.name = arg.split('=')[0].strip()
+
+	def __str__(self):
+		return self.name
+
+	def __unicode__(self):
+		return self.name
+
+	def is_kwarg(self):
+		return '=' in self.arg
+
+	def capitalize(self):
+		return self.arg.title()
+
+
+def get_args(arglist):
+	args = [Arg(arg) for arg in arglist.split(',') if arg]
+	args = [arg for arg in args if arg.name != 'self']
+
+	return args
+
+
+def get_quoting_style(snip):
+	style = snip.opt("g:ultisnips_python_quoting_style", "double")
+	if style == 'single':
+		return SINGLE_QUOTES
+	return DOUBLE_QUOTES
+
+def triple_quotes(snip):
+	style = snip.opt("g:ultisnips_python_triple_quoting_style")
+	if not style:
+		return get_quoting_style(snip) * 3
+	return (SINGLE_QUOTES if style == 'single' else DOUBLE_QUOTES) * 3
+
+def triple_quotes_handle_trailing(snip, quoting_style):
+	"""
+	Generate triple quoted strings and handle any trailing quote char,
+	which might be there from some autoclose/autopair plugin,
+	i.e. when expanding ``"|"``.
+	"""
+	if not snip.c:
+		# Do this only once, otherwise the following error would happen:
+		# RuntimeError: The snippets content did not converge: …
+		_, col = vim.current.window.cursor
+		line = vim.current.line
+
+		# Handle already existing quote chars after the trigger.
+		_ret = quoting_style * 3
+		while True:
+			try:
+				nextc = line[col]
+			except IndexError:
+				break
+			if nextc == quoting_style and len(_ret):
+				_ret = _ret[1:]
+				col = col+1
+			else:
+				break
+		snip.rv = _ret
+	else:
+		snip.rv = snip.c
+
+def get_style(snip):
+	style = snip.opt("g:ultisnips_python_style", "normal")
+
+	if    style == "doxygen": return DOXYGEN
+	elif  style == "sphinx": return SPHINX
+	elif  style == "google": return GOOGLE
+	elif  style == "numpy": return NUMPY
+	else: return NORMAL
+
+
+def format_arg(arg, style):
+	if style == DOXYGEN:
+		return "@param %s TODO" % arg
+	elif style == SPHINX:
+		return ":param %s: TODO" % arg
+	elif style == NORMAL:
+		return ":%s: TODO" % arg
+	elif style == GOOGLE:
+		return "%s (TODO): TODO" % arg
+	elif style == NUMPY:
+		return "%s : TODO" % arg
+
+
+def format_return(style):
+	if style == DOXYGEN:
+		return "@return: TODO"
+	elif style in (NORMAL, SPHINX):
+		return ":returns: TODO"
+	elif style == GOOGLE:
+		return "Returns: TODO"
+
+
+def write_docstring_args(args, snip):
+	if not args:
+		snip.rv += ' {0}'.format(triple_quotes(snip))
+		return
+
+	snip.rv += '\n' + snip.mkline('', indent='')
+
+	style = get_style(snip)
+
+	if style == GOOGLE:
+		write_google_docstring_args(args, snip)
+	elif style == NUMPY:
+		write_numpy_docstring_args(args, snip)
+	else:
+		for arg in args:
+			snip += format_arg(arg, style)
+
+
+def write_google_docstring_args(args, snip):
+	kwargs = [arg for arg in args if arg.is_kwarg()]
+	args = [arg for arg in args if not arg.is_kwarg()]
+
+	if args:
+		snip += "Args:"
+		snip.shift()
+		for arg in args:
+			snip += format_arg(arg, GOOGLE)
+		snip.unshift()
+		snip.rv += '\n' + snip.mkline('', indent='')
+
+	if kwargs:
+		snip += "Kwargs:"
+		snip.shift()
+		for kwarg in kwargs:
+			snip += format_arg(kwarg, GOOGLE)
+		snip.unshift()
+		snip.rv += '\n' + snip.mkline('', indent='')
+
+
+def write_numpy_docstring_args(args, snip):
+	if args:
+		snip += "Parameters"
+		snip += "----------"
+
+	kwargs = [arg for arg in args if arg.is_kwarg()]
+	args = [arg for arg in args if not arg.is_kwarg()]
+
+	if args:
+		for arg in args:
+			snip += format_arg(arg, NUMPY)
+	if kwargs:
+		for kwarg in kwargs:
+			snip += format_arg(kwarg, NUMPY) + ', optional'
+	snip.rv += '\n' + snip.mkline('', indent='')
+
+
+def write_init_body(args, parents, snip):
+	parents = [p.strip() for p in parents.split(",")]
+	parents = [p for p in parents if p != 'object']
+
+	for p in parents:
+		snip += p + ".__init__(self)"
+
+	if parents:
+		snip.rv += '\n' + snip.mkline('', indent='')
+
+	for arg in args:
+		snip += "self._%s = %s" % (arg, arg)
+
+
+def write_slots_args(args, snip):
+	args = ['"_%s"' % arg for arg in args]
+	snip += '__slots__ = (%s,)' % ', '.join(args)
+
+
+def write_function_docstring(t, snip):
+	"""
+	Writes a function docstring with the current style.
+
+	:param t: The values of the placeholders
+	:param snip: UltiSnips.TextObjects.SnippetUtil object instance
+	"""
+	snip.rv = ""
+	snip >> 1
+
+	args = get_args(t[2])
+	if args:
+		write_docstring_args(args, snip)
+
+	style = get_style(snip)
+
+	if style == NUMPY:
+		snip += 'Returns'
+		snip += '-------'
+		snip += 'TODO'
+	else:
+		snip += format_return(style)
+	snip.rv += '\n' + snip.mkline('', indent='')
+	snip += triple_quotes(snip)
+
+def write_model_column(args,snip,prefix):
+	for arg in args:
+		if arg.name == 'id':
+			snip += "{0}_id = Column(Integer, autoincrement=True, primary_key=True)".format(prefix) 
+		else:
+			snip += "%s_%s = Column(Unicode(255))" % (prefix,arg)
+
+def write_outputlist(args,snip,prefix):
+	for arg in args:
+		snip += "'{0}_{1}' : {0}.{0}_{1},".format(prefix,arg)
+
+def write_headers(args,snip,prefix):
+	for arg in args:
+		snip += "'{0}',".format(arg.capitalize())
+
+def write_headerwidths(args,snip,prefix):
+	for i, arg in enumerate(args):
+		if i != 0:
+			snip += "' ',"
+
+def write_headerwidths_pdf(args,snip,prefix):
+	for arg in args:
+		if 'id' in arg.name:
+			snip += '80,' 
+		elif 'date' in arg.name:
+			snip += '80,' 
+		else:
+			snip += '180,' 
+
+def write_tdclassnames(args,snip,prefix):
+	for arg in args:
+		snip += "' ',"
+
+def write_dictstuff(args,snip,prefix):
+	for arg in args:
+		snip += "'{0}_{1}',".format(prefix,arg)
+
+def write_new_inputbox(args,snip,prefix):
+	for i, arg in enumerate(args):
+		if t[13] and t[13] in arg.name:
+			snip +="""<label for="{0}_{1}">{3}:</label><br/>
+				      <input id='{0}_{1}' name='{0}_{1}' value='{{0}}'></input><br/> 
+					""".format(prefix,arg,i+1,arg.capitalize())
+		elif arg.name != 'id':
+			snip += """<label for="{0}_{1}">{2}:</label><br/>
+						<input id='{0}_{1}' name='{0}_{1}' ></input><br/> """.format(prefix,arg,arg.capitalize())
+
+def write_edit_inputbox(args,snip,prefix):
+	for i,arg in enumerate(args):
+		snip += """<label for="{0}_{1}">{3}:</label><br/>
+				   <input id='{0}_{1}' name='{0}_{1}' value='{{{2}}}'></input><br/> 
+				""".format(prefix,arg,i+1,arg.capitalize())
+
+def write_search_inputbox(args,snip,prefix):
+	for i,arg in enumerate(args):
+		if 'date' in arg.name:
+			snip +="""
+						<fieldset>
+						<label for="{0}_{1}">Start {3}:</label><br/>
+					    <input id='{0}_{1}_start' name='{0}_{1}_start'></input><br/> 
+					""".format(prefix,arg,i+1,arg.capitalize())
+			snip +="""<label for="{0}_{1}">End {3}:</label><br/>
+					  <input id='{0}_{1}_end' name='{0}_{1}_end'></input><br/> 
+					  </fieldset>
+					""".format(prefix,arg,i+1,arg.capitalize())
+		elif t[13] and t[13] in arg.name:
+			snip +="""<label for="{0}_{1}">{3}:</label><br/>
+				      <input id='{0}_{1}' name='{0}_{1}' value='{{0}}'></input><br/> 
+					""".format(prefix,arg,i+1,arg.capitalize())
+		else:
+			snip +="""<label for="{0}_{1}">{3}:</label><br/>
+					  <input id='{0}_{1}' name='{0}_{1}'></input><br/> 
+					""".format(prefix,arg,i+1,arg.capitalize())
+
+def write_search_kwarglist(args,snip,prefix):
+	for arg in args:
+		if 'date' in arg.name:
+			snip += """{0}_{1}_start = kwargs.get('{0}_{1}_start',None)""".format(prefix,arg)
+			snip += """{0}_{1}_end = kwargs.get('{0}_{1}_end',None)""".format(prefix,arg)
+		else:
+			snip += """{0}_{1} = kwargs.get('{0}_{1}',None)""".format(prefix,arg)
+
+def write_search_init_datepicker(args,snip,prefix):
+	for arg in args:
+		if 'date' in arg.name:
+			snip += """$("#{0}_{1}_start").datepicker().datepicker( "option", "dateFormat", "yy-mm-dd" );""".format(prefix,arg)
+			snip += """$("#{0}_{1}_end").datepicker().datepicker( "option", "dateFormat", "yy-mm-dd" );""".format(prefix,arg)
+
+def write_init_datepicker_values(args,snip,prefix):
+	for arg in args:
+		if 'date' in arg.name:
+			snip +=""" 
+		 	var {0}_{1} = $("#{0}_{1}").val()	
+		    $("#{0}_{1}").datepicker().datepicker( "option", "dateFormat", "yy-mm-dd" );
+			$("#{0}_{1}").val({0}_{1})
+					""".format(prefix,arg,arg.capitalize())
+
+def write_init_datepicker(args,snip,prefix):
+	for arg in args:
+		if 'date' in arg.name:
+			snip +=""" $("#{0}_{1}").datepicker().datepicker( "option", "dateFormat", "yy-mm-dd" );
+					""".format(prefix,arg,arg.capitalize())
+
+def write_search_dbase_queries_linked(args,snip,prefix,classname,dbsession):
+	snip += """if {0}_{1}: """.format(t[4],t[13],classname,dbsession)
+	snip >> 1
+	for arg in args:
+		if t[13] in arg.name:
+			pass
+		elif 'id' in arg.name:
+			if t[13] in arg.name: continue 
+			snip += """if {0}_{1}: """.format(prefix,arg,classname,dbsession)
+			snip >> 1
+			snip.rv += '\n' + snip.mkline('') 
+			snip +="""dbase_query = {3}.query({2}). \\
+						 filter({2}.{0}_{1}=={0}_{1}). \\""".format(prefix,arg,classname,dbsession)
+			snip >> 3
+			snip +="""filter({2}.{0}_{1}=={0}_{1}). \\""".format(t[4],t[13],classname,dbsession)
+			snip +="""filter({2}.active==1). \\
+					  order_by(desc({2}.{0}_id)).limit(100)""".format(prefix,arg,classname,dbsession)
+			snip << 3
+			snip +="""dbase_query_count_all = {3}.query({2}). \\""".format(prefix,arg,classname,dbsession)
+			snip >> 3
+			snip +="""filter({2}.{0}_{1}=={0}_{1}). \\""".format(t[4],t[13],classname,dbsession)
+			snip +="""filter({2}.active==1). \\
+					  value(func.count())""".format(prefix,arg,classname,dbsession)
+			snip << 3
+			snip +="""kwargs['dbase_query'] = dbase_query"""
+			snip +="""kwargs['dbase_query_count_all'] = dbase_query_count_all"""
+			snip +="""html = self.get_{0}_views(**kwargs)""".format(prefix,arg,classname,dbsession)
+			snip +="""return html"""
+			snip << 1
+
+		elif 'date' in arg.name:
+			snip += """if {0}_{1}_start:""".format(prefix,arg,classname,dbsession)
+			snip >> 1
+			snip.rv += '\n' + snip.mkline('') 
+			snip +="""if not {0}_{1}_end: {0}_{1}_end = datetime.date(datetime.now())""".format(prefix,arg,classname,dbsession)
+			snip +="""dbase_query = {3}.query({2}). \\
+						filter({2}.{0}_{1}>={0}_{1}_start). \\
+						filter({2}.{0}_{1}<={0}_{1}_end).\\""".format(t[4],t[13],classname,dbsession) 
+			snip >> 3
+			snip +="""filter({2}.{0}_{1}=={0}_{1}). \\""".format(t[4],t[13],classname,dbsession)
+			snip +="""filter({2}.active==1). \\
+						order_by(desc({2}.{0}_id)).limit(100)""".format(prefix,arg,classname,dbsession)
+			snip << 3
+			snip +="""dbase_query_count_all = {3}.query({2}). \\""".format(prefix,arg,classname,dbsession)
+			snip >> 3
+			snip +="""filter({2}.{0}_{1}=={0}_{1}). \\""".format(t[4],t[13],classname,dbsession)
+			snip +="""filter({2}.active==1). \\
+						value(func.count())""".format(prefix,arg,classname,dbsession)
+			snip << 3
+			snip +="""kwargs['dbase_query'] = dbase_query"""
+			snip +="""kwargs['dbase_query_count_all'] = dbase_query_count_all"""
+			snip +="""html = self.get_{0}_views(**kwargs)""".format(prefix,arg,classname,dbsession)
+			snip +="""return html"""
+			snip << 1 
+
+		else:
+			snip += """if {0}_{1}:""".format(prefix,arg,classname,dbsession)
+			snip >> 1
+			snip.rv += '\n' + snip.mkline('') 
+			snip +="""searchphrase = "%"+kwargs['{0}_{1}']+"%" """.format(prefix,arg,classname,dbsession)
+			snip +="""dbase_query = {3}.query({2}). \\
+						filter({2}.{0}_{1}.like(searchphrase)). \\""".format(prefix,arg,classname,dbsession)
+			snip >> 3
+			snip +="""filter({2}.{0}_{1}=={0}_{1}). \\""".format(t[4],t[13],classname,dbsession)
+			snip +="""filter({2}.active==1). \\
+						order_by(desc({2}.{0}_{1})).limit(100)""".format(prefix,arg,classname,dbsession)
+			snip << 3
+			snip +="""dbase_query_count_all = {3}.query({2}). \\""".format(prefix,arg,classname,dbsession)
+			snip +="""filter({2}.{0}_{1}=={0}_{1}). \\""".format(t[4],t[13],classname,dbsession)
+			snip +="""filter({2}.active==1).value(func.count())""".format(prefix,arg,classname,dbsession)
+			snip +="""kwargs['dbase_query'] = dbase_query"""
+			snip +="""kwargs['dbase_query_count_all'] = dbase_query_count_all"""
+			snip +="""html = self.get_{0}_views(**kwargs)""".format(prefix,arg,classname,dbsession)
+			snip +="""return html"""
+			snip << 1 
+
+	snip.rv += '\n' + snip.mkline('') 
+	snip +="""dbase_query = {3}.query({2}). \\
+				 filter({2}.{0}_{1}=={0}_{1}). \\""".format(t[4],t[13],classname,dbsession)
+	snip >> 3
+	snip +="""filter({2}.{0}_{1}=={0}_{1}). \\""".format(t[4],t[13],classname,dbsession)
+	snip +="""filter({2}.active==1). \\
+			  order_by(desc({2}.{0}_id)).limit(100)""".format(t[4],t[13],classname,dbsession)
+	snip << 3
+	snip +="""dbase_query_count_all = {3}.query({2}). \\""".format(t[4],t[13],classname,dbsession)
+	snip >> 3
+	snip +="""filter({2}.{0}_{1}=={0}_{1}). \\""".format(t[4],t[13],classname,dbsession)
+	snip +="""filter({2}.active==1). \\
+			  value(func.count())""".format(t[4],t[13],classname,dbsession)
+	snip << 3
+	snip +="""kwargs['dbase_query'] = dbase_query"""
+	snip +="""kwargs['dbase_query_count_all'] = dbase_query_count_all"""
+	snip +="""html = self.get_{0}_views(**kwargs)""".format(t[4],t[13],classname,dbsession)
+	snip +="""return html"""
+	snip << 1
+
+def write_search_dbase_queries(args,snip,prefix,classname,dbsession):
+	for arg in args:
+		if 'id' in arg.name:
+			snip += """if {0}_{1}: """.format(prefix,arg,classname,dbsession)
+			snip >> 1
+			snip.rv += '\n' + snip.mkline('') 
+			snip +="""dbase_query = {3}.query({2}). \\
+						 filter({2}.{0}_{1}=={0}_{1}). \\""".format(prefix,arg,classname,dbsession)
+			snip >> 3
+			snip +="""filter({2}.active==1). \\
+					  order_by(desc({2}.{0}_id)).limit(100)""".format(prefix,arg,classname,dbsession)
+			snip << 3
+			snip +="""dbase_query_count_all = {3}.query({2}). \\""".format(prefix,arg,classname,dbsession)
+			snip >> 3
+			snip +="""filter({2}.active==1). \\
+					  value(func.count())""".format(prefix,arg,classname,dbsession)
+			snip << 3
+			snip +="""kwargs['dbase_query'] = dbase_query"""
+			snip +="""kwargs['dbase_query_count_all'] = dbase_query_count_all"""
+			snip +="""html = self.get_{0}_views(**kwargs)""".format(prefix,arg,classname,dbsession)
+			snip +="""return html"""
+			snip << 1
+
+		elif 'date' in arg.name:
+			snip += """if {0}_{1}_start:""".format(prefix,arg,classname,dbsession)
+			snip >> 1
+			snip.rv += '\n' + snip.mkline('') 
+			snip +="""if not {0}_{1}_end: {0}_{1}_end = datetime.date(datetime.now())""".format(prefix,arg,classname,dbsession)
+			snip +="""dbase_query = {3}.query({2}). \\
+						filter({2}.{0}_{1}>={0}_{1}_start). \\
+						filter({2}.{0}_{1}<={0}_{1}_end). \\""".format(prefix,arg,classname,dbsession) 
+			snip >> 3
+			snip +="""filter({2}.active==1). \\
+						order_by(desc({2}.{0}_id)).limit(100)""".format(prefix,arg,classname,dbsession)
+			snip << 3
+			snip +="""dbase_query_count_all = {3}.query({2}). \\""".format(prefix,arg,classname,dbsession)
+			snip >> 3
+			snip +="""filter({2}.active==1). \\
+						value(func.count())""".format(prefix,arg,classname,dbsession)
+			snip << 3
+			snip +="""kwargs['dbase_query'] = dbase_query"""
+			snip +="""kwargs['dbase_query_count_all'] = dbase_query_count_all"""
+			snip +="""html = self.get_{0}_views(**kwargs)""".format(prefix,arg,classname,dbsession)
+			snip +="""return html"""
+			snip << 1 
+
+		else:
+			snip += """if {0}_{1}:""".format(prefix,arg,classname,dbsession)
+			snip >> 1
+			snip.rv += '\n' + snip.mkline('') 
+			snip +="""searchphrase = "%"+kwargs['{0}_{1}']+"%" """.format(prefix,arg,classname,dbsession)
+			snip +="""dbase_query = {3}.query({2}). \\
+						filter({2}.{0}_{1}.like(searchphrase)). \\""".format(prefix,arg,classname,dbsession)
+			snip >> 3
+			snip +="""filter({2}.active==1). \\
+						order_by(desc({2}.{0}_{1})).limit(100)""".format(prefix,arg,classname,dbsession)
+			snip << 3
+			snip +="""dbase_query_count_all = {3}.query({2}). \\""".format(prefix,arg,classname,dbsession)
+			snip +="""filter({2}.active==1).value(func.count())""".format(prefix,arg,classname,dbsession)
+			snip +="""kwargs['dbase_query'] = dbase_query"""
+			snip +="""kwargs['dbase_query_count_all'] = dbase_query_count_all"""
+			snip +="""html = self.get_{0}_views(**kwargs)""".format(prefix,arg,classname,dbsession)
+			snip +="""return html"""
+			snip << 1 
+
+
+def write_pdf_paragraph_args(args,snip,prefix):
+	for arg in args:
+		if 'id' in arg.name:
+			snip += """
+            {0}.{0}_{1},
+					""".format(prefix,arg)
+		elif 'date' in arg.name:
+			snip += """
+            Paragraph(checknullvalue({0}.{0}_{1}),pdffile.styleNormal),
+						""".format(prefix,arg)
+
+		else:
+			snip += """
+            Paragraph(checknullvalue({0}.{0}_{1}),pdffile.styleNormal),
+						""".format(prefix,arg)
+
+def write_edit_kwarglist(args,snip,prefix):
+	for i,arg in enumerate(args):
+		snip += """this_row.{0}_{1},
+				""".format(prefix,arg,i+1)
+
+def write_savenew_record(args,snip,prefix):
+	for arg in args:
+		if arg.name != 'id':
+			snip += """this_{0}.{0}_{1} = kwargs.get('{0}_{1}',None)""".format(prefix,arg)
+
+def write_saveedit_record(args,snip,prefix):
+	for arg in args:
+		if arg.name != 'id':
+			snip += """this_{0}.{0}_{1} = kwargs.get('{0}_{1}',None)""".format(prefix,arg)
+endglobal
+
+##############
+# Turbogears #
+##############
+
+snippet _crud "Create Crud Operations" b
+class ${1:VanillaController}(BaseController):
+	`!p snip.rv = triple_quotes(snip)`${3:Docstring for $1. }`!p snip.rv = triple_quotes(snip)`
+
+    @expose('jistdocstore.templates.$4')
+    def ${4:things}s_console(self):
+        return dict(page='${4/\w+\s*/\u$0/g} Console')
+
+	$0
+endsnippet
+
+snippet _testNone "Test None" b
+${1}
+It should type: `!p 
+if t[1]: 
+    snip.rv += "{0}_{1}".format(t[1],'finders')
+else:
+    snip.rv += "{0}".format(t[1])
+` 
+$0
+endsnippet
+snippet _tgcreateclass "Create TG' Classes" b
+#class_name = ${1:GenericClassName}
+#table_name =${2}
+#prefix =${3}
+#postfix =${4}
+#columns_to_create = [$5] #id - primary_key autoincrement=True 
+#cont_name =${6}
+#html_template_name =${7}
+#dbsession =${8}
+#controller_name =${9}
+#view_cols_list = [$10]
+#search_cols_list = [$11]
+#pdf_cols_list = [$12]
+#link_to_id_or_None =${13}
+#link_class_name_None =${14}
+
+class $1(DeclarativeBase):
+    __tablename__='tbl$2'`!p 
+snip.rv = ""
+snip >> 1
+args = get_args(t[5])
+write_model_column(args,snip,t[4])
+if args:
+	snip.rv += '\n' + snip.mkline('', indent='') `
+    active = Column(Boolean, default=True)
+    useridnew = Column(Integer, nullable=False)
+    useridedited = Column(Integer, nullable=False)
+    dateadded = Column(DateTime, default=datetime.now)
+    dateedited = Column(DateTime, default=datetime.now)
+
+$0
+class $9(BaseController):
+	`!p snip.rv = triple_quotes(snip)`Docstring for $6.`!p snip.rv = triple_quotes(snip)`
+
+    @expose('jistdocstore.templates.$7')
+    def $4s_console(self):
+        return dict(page='${3/\w+\s*/\u$0/g} ${4/\w+\s*/\u$0/g} Console')
+
+    @expose()
+    def get_all_$4s_active(self, *args, **kwargs):
+        query_outside = kwargs.get('query_outside',None)
+        dbase_query_count_all = kwargs.get('dbase_query_count_all',None)
+        render_view = kwargs.get('render_view',None)
+        print_header_visible = kwargs.get('print_header_visible',None)
+		pdfstring = ''
+		`!p 
+snip >> 2
+snip.rv += "if not query_outside:"
+snip >> 1
+snip.rv += '\n' + snip.mkline('') 
+snip.rv += """dbase_query = {0}.query({1}). \\
+                         filter({1}.active==1). \\
+                         order_by(desc({1}.{2}_id)).limit(100)
+            """.format(t[8],t[1],t[4])
+snip.rv += '\n' + snip.mkline('') 
+snip.rv += """dbase_query_count_all = {0}.query({1}). \\
+                         filter({1}.active==1). \\
+                         value(func.count())
+            """.format(t[8],t[1],t[4])
+`
+			if not dbase_query:
+				dbase_query = query_outside
+        else:
+            dbase_query = query_outside
+			if not print_header_visible:
+				pdfstring = '''<img id='$4_download_pdf' src='/images/pdficon.jpg'></img>''' 
+		`!p if t[13]: snip.rv += """this_{0} = {1}.query({2}).filter({2}.{0}==kwargs['{3}_{0}']).one()""".format(t[13],t[8],t[14],t[4])`
+        outputlist = []
+		for $4 in dbase_query:
+			outputlist.append({ `!p 
+snip >> 4
+args = get_args(t[10])
+write_outputlist(args,snip,t[4]) `
+				'edit':"<img class='$4_edit' $4_id={0} src='/images/editor-48.png'></img>".format($4.$4_id),
+				'open':"<img class='$4_open' $4_id='{0}' src='/images/opensign_48.png'></img>".format($4.$4_id),
+							 })
+		dictlist=[ `!p 
+snip >> 4
+snip.rv = ""
+args = get_args(t[10])
+write_dictstuff(args,snip,t[4]) `
+				'edit',
+				'open',
+					]
+		headers=[ `!p 
+snip >> 4
+snip.rv = ""
+args = get_args(t[10])
+write_headers(args,snip,t[4]) `
+				'Edit',
+				'Open',
+				]
+		headerwidths=[
+				80, `!p 
+snip >> 4
+args = get_args(t[10])
+write_headerwidths(args,snip,t[4]) `
+				50,
+				50,
+				]
+		tdclassnames=[ `!p 
+snip >> 4
+snip.rv = ""
+args = get_args(t[10])
+write_tdclassnames(args,snip,t[4]) `
+				'tdspacer',
+				'tdspacer',
+				'tdrightalign',
+				]
+		tblname = "active_$3_$4_table"
+		htmltbl = build_generic_html_table(dictlist,headers,headerwidths,outputlist,tdclassnames,tblname=tblname)
+		htmlbtn1 = """<fieldset id='searchbar'>"""
+		htmlbtn2 = """<button id='add_$4' `!p if t[13]:snip.rv +="{0}_{1}='{{0}}'".format(t[4],t[13])`>Add New ${4/\w+\s*/\u$0/g}</button>"""`!p if t[13]: snip.rv +=".format(this_{1}.{1})".format(t[4],t[13])`
+		htmlbtn3 = """<button id='search_$4' `!p if t[13]:snip.rv +="{0}_{1}='{{0}}'".format(t[4],t[13])`>Search ${4/\w+\s*/\u$0/g}s</button>"""`!p if t[13]: snip.rv +=".format(this_{1}.{1})".format(t[4],t[13])`
+		htmlbtn4 = """<span class='spanright'>{0}</span></fieldset>""".format(pdfstring)
+		htmlbtn = htmlbtn1 + htmlbtn2 + htmlbtn3 + htmlbtn4
+		header = """{1} <h4 class="modal-content"> Active ${4/\w+\s*/\u$0/g}s (Limit 100) <span class='spanright'> {0} $4s of {2} </span></h4>""".format(len(outputlist),htmlbtn,dbase_query_count_all)
+		javascript = """
+					<script>
+					$("#add_$4").button();
+					$("#search_$4").button();
+					$("#add_$4").click(function(){
+						`!p if t[13]: snip.rv +="var {0}_{1} = $(this).attr('{0}_{1}');".format(t[4],t[13])`
+						$("#dialogdiv").load("/$6/get_$4_dialog_new`!p if t[13]: snip.rv +="?{0}_{1}=".format(t[4],t[13])`"`!p if t[13]: snip.rv +="+{0}_{1}".format(t[4],t[13])`, function(responseTxt, statusTxt, xhr){
+							return false
+						});
+					});
+					$("#search_$4").click(function(){
+						`!p if t[13]: snip.rv +="var {0}_{1} = $(this).attr('{0}_{1}');".format(t[4],t[13])`
+						$("#dialogdiv").load("/$6/get_dialog_search_$4`!p if t[13]: snip.rv +="?{0}_{1}=".format(t[4],t[13])`"`!p if t[13]: snip.rv +="+{0}_{1}".format(t[4],t[13])`, function(responseTxt, statusTxt, xhr){
+							return false
+						});
+					});
+					$(".$4_edit").click(function(){
+						var $4_id = $(this).attr('$4_id');
+						$("#dialogdiv").load("/$6/get_$4_dialog_edit?$4_id="+$4_id, function(responseTxt, statusTxt, xhr){
+							return false
+						});
+					});
+					$(".$4_open").click(function(){
+						var $4_id = $(this).attr('$4_id');
+						//$("#div_$4_unpacked").load("/$6/get_search_$4?$4_id="+$4_id, function(responseTxt, statusTxt, xhr){
+							//$("#$3_$4_tabs").tabs('select', 2);
+							//return false
+						//});
+					});
+					</script>
+					 """
+		return header + htmltbl + javascript
+
+    @expose()
+    def get_$4_dialog_new(self, *args, **kwargs):
+		`!p if t[13]: snip.rv +="{0}_{1} = kwargs.get('{0}_{1}',None)".format(t[4],t[13])`
+        html = """
+               <div id='$4_new_dialog'>
+                   <form id='$4_new_form'>
+                       <fieldset> `!p 
+snip >> 5
+snip.rv = ""
+args = get_args(t[5])
+write_new_inputbox(args,snip,t[4]) `
+                       </fieldset>
+                   </form>
+               </div>
+			   """`!p if t[13]: snip.rv +=""".format({0}_{1})""".format(t[4],t[13])` 
+        javascript = """
+             <style>
+             </style>
+             <script>
+				 `!p if t[13]: snip.rv +="$('#{0}_{1}').prop('disabled',true);".format(t[4],t[13])`
+				 `!p
+snip >> 5
+snip.rv = ""
+args = get_args(t[5])
+write_init_datepicker(args,snip,t[4]) `
+                 $("#$4_new_dialog").dialog({
+                     title: "New ${4/\w+\s*/\u$0/g}",
+                     width: 500,
+                     height: 550,
+                     modal: true,
+                     buttons: {
+                         Save: function(){
+							`!p if t[13]: snip.rv +="$('#{0}_{1}').prop('disabled',false);".format(t[4],t[13])`
+                             var formserial = $("#$4_new_form").serialize();
+                             $.post("/$6/save_$4_new?"+formserial, function(){ 
+                             `!p 
+if t[13]:
+    snip.rv +="""$('#div_{1}_{0}').load("/{2}/get_search_{0}?"+formserial+"&print_header_visible=false",function(data){{""".format(t[4],t[13].split('_')[0],t[6])
+else:
+    snip.rv +="""$('#div_{0}_all').load("/{2}/get_search_{0}?"+formserial+"&print_header_visible=false",function(data){{""".format(t[4],t[13].split('_')[0],t[6])`
+                                    return false;
+                                });
+                             })
+                             $(this).dialog('close'); 
+                         },
+                         Close: function(){
+                             $(this).dialog('close'); 
+                         },
+                     },
+                     close: function(){
+                         $(this).remove();
+                     },
+                 });
+                 $( "#$4_new_dialog" ).dialog("open");
+             </script>
+             """
+        return html + javascript
+
+    @expose()
+    def get_$4_dialog_edit(self, *args, **kwargs):
+        $4_id = kwargs.get('$4_id',None)
+        this_row = $8.query($1). \
+                            filter($1.$4_id==$4_id). \
+                            filter($1.active==1).one()
+        if this_row.active:
+            active_txt = """
+               <select name='$4_active'>
+                   <option value='1' selected="selected">True</option>
+                   <option value="0">False</option>
+               </select>
+               """
+        else:
+            active_txt = """
+                       <select name='$4_active'>
+                           <option value='1'>True</option>
+                           <option value="0" selected="selected">False</option>
+                       </select>
+                       """
+        html = """
+               <div id='$4_edit_dialog'>
+                   <form id='$4_edit_form'>
+                       <fieldset>`!p
+snip >> 6
+args = get_args(t[5])
+write_edit_inputbox(args,snip,t[4]) `
+						<label for="$4_active">Active: </label><br/>
+						{0}
+                       </fieldset>
+                   </form>
+               </div>
+               """.format(active_txt,`!p 
+snip >> 6
+args = get_args(t[5]) 
+write_edit_kwarglist(args,snip,t[4])`)
+        javascript = """
+             <style>
+             </style>
+             <script>
+				 $("#$4_id").prop('disabled',true);
+				`!p if t[13]: snip.rv +="$('#{0}_{1}').prop('disabled',true);".format(t[4],t[13])`
+                 $("#$4_edit_dialog").dialog({
+                     title: "Edit ${4/\w+\s*/\u$0/g}",
+                     width: 500,
+                     height: 550,
+                     modal: true,
+                     buttons: {
+                         Save: function(){
+							 $("#$4_id").prop('disabled',false);
+							`!p if t[13]: snip.rv +="$('#{0}_{1}').prop('disabled',false);".format(t[4],t[13])`
+                             var formserial = $("#$4_edit_form").serialize();
+                             $.post("/$6/save_$4_edit?"+formserial, function(){
+                             `!p 
+if t[13]:
+    snip.rv +="""$('#div_{1}_{0}').load("/{2}/get_search_{0}?"+formserial+"&print_header_visible=false",function(data){{""".format(t[4],t[13].split('_')[0],t[6])
+else:
+    snip.rv +="""$('#div_{0}_all').load("/{2}/get_search_{0}?"+formserial+"&print_header_visible=false",function(data){{""".format(t[4],t[13].split('_')[0],t[6])`
+                                    return false;
+                                });
+                             })
+                             $(this).dialog('close'); 
+                         },
+                         Close: function(){
+                             $(this).dialog('close'); 
+                         },
+                     },
+                     close: function(){
+                         $(this).remove();
+                     },
+                 });
+                 $( "#$4_edit_dialog" ).dialog("open");
+				 `!p
+snip >> 5
+snip.rv = ""
+args = get_args(t[5])
+write_init_datepicker_values(args,snip,t[4])`
+             </script>
+             """
+        return html + javascript
+
+    @expose()
+    def save_$4_new(self, *args, **kwargs):
+        username = request.identity['repoze.who.userid']
+        usernow = User.by_user_name(username)
+        this_$4 = $1()`!p
+snip >> 2
+args = get_args(t[5])
+write_savenew_record(args,snip,t[4]) `
+        this_$4.useridnew = usernow.user_id
+        this_$4.useridedited = usernow.user_id
+        $8.add(this_$4)
+        $8.flush()
+
+    @expose()
+    def save_$4_edit(self, *args, **kwargs):
+        this_$4 = $8.query($1). \
+                         filter($1.$4_id==kwargs['$4_id']).one()
+        username = request.identity['repoze.who.userid']
+        usernow = User.by_user_name(username)`!p
+snip >> 2
+args = get_args(t[5])
+write_saveedit_record(args,snip,t[4]) `
+		this_$4.active = kwargs.get('$4_active',None)
+        this_$4.dateedited = datetime.now() 
+        this_$4.useridedited = usernow.user_id
+        $8.flush()
+
+    @expose()
+    def get_dialog_search_$4(self, **kwargs):
+        username = request.identity['repoze.who.userid']
+        usernow = User.by_user_name(username)
+        #this_$4 = $8.query($1). \
+                         #filter($1.$4_id==kwargs['$4_id']).one()
+		`!p if t[13]: snip.rv += """this_{0} = {1}.query({2}).filter({2}.{0}==kwargs['{3}_{0}']).one()""".format(t[13],t[8],t[14],t[4])`
+		html1 = """ <div id="dialog_search_$4" title="Search ${4/\w+\s*/\u$0/g}">
+					<form id="search_$4_form">
+						<fieldset>`!p
+snip >> 6
+args = get_args(t[11])
+write_search_inputbox(args,snip,t[4]) `
+					</fieldset>	
+					</form>	
+					"""`!p if t[13]: snip.rv += """.format(this_{0}.{0})""".format(t[13])`
+		javascript = """
+					 <style>
+					 </style>
+					 <script> `!p 
+snip >> 6
+args = get_args(t[11])
+write_search_init_datepicker(args,snip,t[4]) `
+						$("#$4_id").prop('disabled',true);
+						`!p if t[13]: snip.rv +="$('#{0}_{1}').prop('disabled',true);".format(t[4],t[13])`
+						$( "#dialog_search_$4" ).dialog({
+							autoOpen: true,
+							height: 630,
+							width: 550,
+							modal: true,
+							buttons: {
+								"Search": function() {
+									var bValid = true;
+									if ( bValid ) {
+										$("#$4_id").prop('disabled',false);
+										`!p 
+if t[13]: snip.rv +="$('#{0}_{1}').prop('disabled',false);".format(t[4],t[13])`
+										var formserial = $("#search_$4_form").serialize();
+										`!p 
+if t[13]:
+	snip.rv +="""$('#div_{1}_{0}').load("/{2}/get_search_{0}?"+formserial,function(data){{""".format(t[4],t[13].split('_')[0],t[6])
+else:
+	snip.rv +="""$('#div_{0}_all').load("/{2}/get_search_{0}?"+formserial,function(data){{""".format(t[4],t[13].split('_')[0],t[6])`
+											$("#$4_download_pdf").click(function(){
+													var xjhr = $.get("/$6/get_search_$4?"+formserial+"&render_view=pdf",function(data){
+														var href = "/$6/get_search_$4?"+formserial+"&render_view=pdf"
+														window.location = href;
+														return false;
+													});
+											});
+										});
+										$( this ).dialog( "close" );
+									}
+								},
+								Close: function() {
+											$( this ).dialog( "close" );
+										}
+							},
+							close: function() {
+										$(this).remove();
+								   }
+						});
+						$( "#dialog_search_$4" ).dialog("open");
+					 </script>
+
+					"""
+		return html1 +javascript
+
+	@expose()
+	def get_search_$4(self, *arg, **kwargs):
+		username = request.identity['repoze.who.userid']
+		usernow = User.by_user_name(username)`!p
+snip >> 2
+args = get_args(t[11])
+write_search_kwarglist(args,snip,t[4])` 
+`!p 
+snip >> 2
+if t[13]: 
+	write_search_dbase_queries_linked(args,snip,t[4],t[1],t[8])
+else: 
+	write_search_dbase_queries(args,snip,t[4],t[1],t[8])`
+		dbase_query = $8.query($1).filter($1.active==1).order_by(desc($1.$4_id)).limit(100)
+		dbase_query_count_all = $8.query($1).filter($1.active==1).value(func.count())
+		kwargs['dbase_query'] = dbase_query
+		kwargs['dbase_query_count_all'] = dbase_query_count_all
+		html = self.get_$4_views(**kwargs)
+		return html
+
+    def get_$4_views(self, **kwargs):
+        print_header_visible = kwargs.get('print_header_visible',None)
+        render_view = kwargs.get('render_view',None)
+        dbase_query = kwargs.get('dbase_query',None)
+        dbase_query_count_all = kwargs.get('dbase_query_count_all',None)`!p
+snip >> 2
+args = get_args(t[11])
+write_search_kwarglist(args,snip,t[4])` 
+        if not render_view:
+            kwargs['print_header_visible'] = print_header_visible
+			kwargs['query_outside'] = dbase_query
+            html = self.get_all_$4s_active(**kwargs)
+            return html						
+        if render_view == 'pdf':
+            html = self.export_$3_$4_list_pdf(**{'query_outside':dbase_query,'render_view':render_view,'dbase_query_count_all':dbase_query_count_all})
+            return html						
+
+    @expose()
+    def export_$3_$4_list_pdf(self, *args, **kwargs):
+        import random
+        username = request.identity['repoze.who.userid']
+        usernow = User.by_user_name(username)
+        rnd = random.random()
+        rnd = str(rnd).split('.')[1]
+        datename = str(datetime.now()).split(' ')[0]
+        fname = "$3_$4-"+ datename +'.pdf'
+        filename = os.path.join(pdf_dirname, str(fname))
+        pdffile = CreatePDFA4(filename)
+        userdata = {}
+        outputlist = []
+        query_outside = kwargs.get('query_outside',None)
+        dbase_query_count_all = kwargs.get('dbase_query_count_all',None)
+		headers=[`!p 
+snip >> 4
+snip.rv = ""
+args = get_args(t[12])
+write_headers(args,snip,t[4])`
+				]
+		headerwidths=[`!p 
+snip >> 4
+snip.rv = ""
+args = get_args(t[12])
+write_headerwidths_pdf(args,snip,t[4])`
+				]
+        for $4 in query_outside:
+            outputlist.append((`!p
+snip >> 7
+args = get_args(t[12])
+write_pdf_paragraph_args(args,snip,t[4])`
+                              ))
+        userdata = {
+                'title1_header':'Report:', 'title1':'${3/\w+\s*/\u$0/g} ${4/\w+\s*/\u$0/g} Report',
+                'title2_header':'Sub Title:', 'title2':'Title2',
+                'title3_header':'Title Three', 'title3':'Title Three',
+                'title4_header':'Title Four', 'title4':'Title Four',
+                'datenow_header': "Date Printed:", 'datenow':datetime.date(datetime.now()),
+                'headerl1_header':'Subject', 'headerl1':'Subject',
+                'headerl2_header':'', 'headerl2':'',
+                'headerl3_header':'', 'headerl3':'',
+                'headerl4_header':'', 'headerl4':'',
+                'id_header_header': "RHSHeader", 'id_header':getcurrency(0),
+                'headerr1_header':'RHS1', 'headerr1':getcurrency(0),
+                'headerr2_header':'RHS2', 'headerr2':getcurrency(0),
+                'headerr3_header':'RHS3', 'headerr3':len(outputlist),
+                'headerr4_header':'', 'headerr4':'',
+                } 
+        pdffile.CreatePDFGenericReport(userdata,outputlist,headers,headerwidths,11)
+        response.headers["Content-Type"] = 'application/pdf'
+        response.headers["Content-Disposition"] = 'attachment; filename="'+fname+'"'
+        filecontent = file(filename, "r")
+        return filecontent
+
+
+############################
+#########Template###########
+############################
+#filename = $7.html 
+
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+                      "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml"
+      xmlns:py="http://genshi.edgewall.org/"
+      xmlns:xi="http://www.w3.org/2001/XInclude">
+
+  <xi:include href="master.html" />
+
+<head>
+  <meta content="text/html; charset=UTF-8" http-equiv="content-type" py:replace="''"/>
+  <title>${page}</title>
+        <!--script type="text/javascript" src="${tg.url(['/javascript/jquery-1.8.2.js'])}"></script>
+        <script type="text/javascript" src="${tg.url(['/javascript/jquery_$4_console.js'])}"></script-->
+<style>
+    #$3_$4_tabs  {min-height: 700px; overflow:auto}
+</style>
+</head>
+
+<body>
+        <div id="active_disable_inputs" style="display: none">
+            <input type="text" name="hidden$4_id" id="hidden$4_id" class="text ui_widget-content ui_corner-all"  disabled="true"/>
+        </div>
+
+        <h2 class='effect6'>\${page}</h2>
+        <div id="warningdiv" style="display:none"></div>
+        <div id="dialogdiv" style="display: none"></div>
+
+<div id="$3_$4_tabs">
+    <ul>
+        <li><a href="#ui_tabs_$4_index"><span></span> ${4/\w+\s*/\u$0/g}Index</a></li>
+        <li><a href="#ui_tabs_$4_all"><span></span>All ${4/\w+\s*/\u$0/g}s</a></li>
+        <li><a href="#ui_tabs_$4_unpacked"><span></span>${4/\w+\s*/\u$0/g} Unpacked</a></li>
+    </ul>
+    <div id="ui_tabs_$4_index">
+        <div id="div_$4_index"></div>
+    </div>
+    <div id="ui_tabs_$4_all">
+        <div id="div_$4_all"></div>
+    </div>
+    <div id="ui_tabs_$4_unpacked">
+        <div id="div_$4_unpacked"></div>
+    </div>
+</div>
+</body>
+
+</html>
+
+###############################################
+Linked div
+###############################################
+$("#div_`!p if t[13]: snip.rv = t[13].split('_')[0]+'_'`$4")
+
+############################
+#########Javascript#########
+############################
+//jquery_$4_console.js
+$(document).ready(function() {
+    $( "#$3_$4_tabs" ).tabs({ 
+        //heightStyle: "fill", 
+        beforeLoad: function( event, ui ) {
+                    ui.jqXHR.error(function() {
+                        ui.panel.html("Couldn't load this tab." + "Its you or the program.... Try Again." );
+                    });
+                },
+        spinner: "<img src ='/images/ui-anim_basic_16x16.gif'></img>",
+        load: function( event, ui ) {
+        }, 
+        disable: function(event,ui){
+            console.log("Disable pressed");
+       },
+       add: function(event,ui){
+            console.log("Tab Added");
+       },
+       beforeActivate: function(event,ui){
+       },
+       select: function(event,ui){
+            if (ui.panel.id == 'ui_tabs_$4_all'){
+                $("#div_$4_all").load("/$6/get_all_$4s_active",function(data){
+                    return false;
+                });
+            }
+
+       }
+
+    });
+    $("#$3_$4_tabs").tabs('select', 1);
+});
+endsnippet
+
+
+##############################
+#######Common#################
+##############################
+snippet _test "test" b
+`!p snip.rv = "Test 1"
+snip.mkline("")
+snip >> 2
+snip += "Test 2"
+
+`
+endsnippet
+
+snippet _dic "Create a dictionary"  
+${1:dictname} = {
+				 '${2:one}':'${3:one}',
+				 '${4:two}':'${5:two}'${0}
+				}
+endsnippet
+
+snippet _dol
+	def ${1:__init__}(self, *args, **kwargs):
+	    super(${0:ClassName}, self).$1(*args, **kwargs)
+endsnippet
+snippet _kwg
+self.${1:var_name} = kwargs.get('$1', ${2:None})
+endsnippet
+snippet _lkwg
+${1:var_name} = kwargs.get('$1', ${2:None})
+endsnippet
+snippet _args
+	*args${1:,}${0}
+endsnippet
+snippet _kwargs
+	**kwargs${1:,}${0}
+endsnippet
+snippet _akw
+	*args, **kwargs${1:,}${0}
+endsnippet
+
+# doesn't expand when there is a word in front
+snippet /(^|(?<=\W))\./ "self." r
+self.
+endsnippet
+#write_init_body(args, t[2], snip)
+#snip += '{0}'.format(triple_quotes(snip))
+#write_docstring_args(args, snip)
