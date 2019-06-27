@@ -1,0 +1,2 @@
+#!/usr/bin/bash
+ssh -CX tjaart@192.168.0.70 "DISPLAY=:0 notify-send -u critical '$1'"
