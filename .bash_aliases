@@ -45,7 +45,7 @@ function dlswp () {
     deltargets=('*.pyc' '__pycache__' '*.i')
     for target in ${deltargets[*]};
     do
-        find . -iname $target -exec rm -r {} \; > /dev/null 2>&1
+        find . -iname $target -print0 -exec rm -r {} \; > /dev/null 2>&1
     done
 }
 
