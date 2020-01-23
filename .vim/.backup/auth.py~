@@ -1,115 +1,103 @@
 # -*- coding: utf-8 -*-
 """
 Auth* related model.
-
-This is where the models used by the authentication stack are defined.
-
-It's perfectly fine to re-use this definition in the DotDMS application,
-though.
-
 """
 import os
 from datetime import datetime
 from hashlib import sha256
-__all__ = ['User', 'Group', 'Permission']
+
+__all__ = ['User', 'Role', 'Permission']
 
 from sqlalchemy import Table, ForeignKey, Column
-from sqlalchemy.types import Unicode, Integer, DateTime
+from sqlalchemy.types import Unicode, Integer, DateTime, Boolean
 from sqlalchemy.orm import relation, synonym
 
-from dotdms.model import DeclarativeBase, metadata, DBSession
+from rocket.model import DeclarativeBase, metadata, DBSession
 
 
 # This is the association table for the many-to-many relationship between
-# groups and permissions.
-group_permission_table = Table('tg_group_permission', metadata,
-                               Column('group_id', Integer,
-                                      ForeignKey('tg_group.group_id',
-                                                 onupdate="CASCADE",
-                                                 ondelete="CASCADE"),
-                                      primary_key=True),
-                               Column('permission_id', Integer,
-                                      ForeignKey('tg_permission.permission_id',
-                                                 onupdate="CASCADE",
-                                                 ondelete="CASCADE"),
-                                      primary_key=True))
+# roles and permissions.
+role_permission_table = Table('role_permission', metadata,
+                               Column('role_id', Integer, ForeignKey('role.id', onupdate="CASCADE", ondelete="CASCADE"), primary_key=True),
+                               Column('permission_id', Integer, ForeignKey('permission.id', onupdate="CASCADE", ondelete="CASCADE"), primary_key=True))
 
 
 # This is the association table for the many-to-many relationship between
-# groups and members - this is, the memberships.
-user_group_table = Table('tg_user_group', metadata,
-                         Column('user_id', Integer,
-                                ForeignKey('tg_user.user_id',
-                                           onupdate="CASCADE",
-                                           ondelete="CASCADE"),
-                                primary_key=True),
-                         Column('group_id', Integer,
-                                ForeignKey('tg_group.group_id',
-                                           onupdate="CASCADE",
-                                           ondelete="CASCADE"),
-                                primary_key=True))
+# roles and members - this is, the memberships.
+user_role_table = Table('user_role', metadata,
+                         Column('user_id', Integer, ForeignKey('user.id', onupdate="CASCADE", ondelete="CASCADE"), primary_key=True),
+                         Column('role_id', Integer, ForeignKey('role.id', onupdate="CASCADE", ondelete="CASCADE"), primary_key=True))
 
 
-class Group(DeclarativeBase):
-    """
-    Group definition
+class Role(DeclarativeBase):
+    """ Role definition """
 
-    Only the ``group_name`` column is required.
+    __tablename__ = 'role'
 
-    """
-
-    __tablename__ = 'tg_group'
-
-    group_id = Column(Integer, autoincrement=True, primary_key=True)
-    group_name = Column(Unicode(16), unique=True, nullable=False)
-    display_name = Column(Unicode(255))
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    name = Column(Unicode(50), unique=True, nullable=False)
+    description = Column(Unicode(255))
+    persistant = Column(Boolean, default=True)
     created = Column(DateTime, default=datetime.now)
-    users = relation('User', secondary=user_group_table, backref='groups')
+    users = relation('User', secondary=user_role_table, backref='roles')
 
     def __repr__(self):
-        return '<Group: name=%s>' % repr(self.group_name)
+        return '<Role: name=%s>' % repr(self.name)
 
     def __unicode__(self):
-        return self.group_name
+        return self.name
 
 
 class User(DeclarativeBase):
-    """
-    User definition.
+    """ User definition. """
 
-    This is the user definition used by :mod:`repoze.who`, which requires at
-    least the ``user_name`` column.
+    __tablename__ = 'user'
 
-    """
-    __tablename__ = 'tg_user'
-
-    user_id = Column(Integer, autoincrement=True, primary_key=True)
-    user_name = Column(Unicode(16), unique=True, nullable=False)
-    email_address = Column(Unicode(255), unique=True, nullable=False)
-    display_name = Column(Unicode(255))
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    username = Column(Unicode(255), unique=True, nullable=False)
+    name = Column(Unicode(255))
+    email = Column(Unicode(255), unique=True)
+    mobile = Column(Unicode(255))
     _password = Column('password', Unicode(128))
+    role_id = Column(Integer)
+    tenant_id = Column(Integer, nullable=False, default=1)
     created = Column(DateTime, default=datetime.now)
+    active = Column(Boolean, default=True)
+    added_by = Column(Integer, nullable=False)
+
+    def __repr__(self):
+        return '<User: name=%s, email=%s, mobile=%s, tenant_id=%s>' % (
+            repr(self.username),
+            repr(self.email),
+            repr(self.mobile),
+            repr(self.tenant_id),
+        )
 
     def __unicode__(self):
-        return self.display_name or self.user_name
+        return self.display_name or self.username
 
     @property
     def permissions(self):
         """Return a set with all permissions granted to the user."""
         perms = set()
-        for g in self.groups:
+        for g in self.roles:
             perms = perms | set(g.permissions)
         return perms
 
     @classmethod
-    def by_email_address(cls, email):
-        """Return the user object whose email address is ``email``."""
-        return DBSession.query(cls).filter_by(email_address=email).first()
+    def by_id(cls, id):
+        """Return the user object whose id address is ``id``."""
+        return DBSession.query(cls).filter_by(id=id).first()
 
     @classmethod
-    def by_user_name(cls, username):
+    def by_email(cls, email):
+        """Return the user object whose email address is ``email``."""
+        return DBSession.query(cls).filter_by(email=email).first()
+
+    @classmethod
+    def by_username(cls, username):
         """Return the user object whose user name is ``username``."""
-        return DBSession.query(cls).filter_by(user_name=username).first()
+        return DBSession.query(cls).filter_by(username=username).first()
 
     @classmethod
     def _hash_password(cls, password):
@@ -123,10 +111,6 @@ class User(DeclarativeBase):
         hash = hash.hexdigest()
 
         password = salt + hash
-
-        # Make sure the hashed password is a unicode object at the end of the
-        # process because SQLAlchemy _wants_ unicode objects for Unicode cols
-        password = password.decode('utf-8')
 
         return password
 
@@ -145,38 +129,65 @@ class User(DeclarativeBase):
         """
         Check the password against existing credentials.
 
-        :param password: the password that was provided by the user to
+        : param password: the password that was provided by the user to
             try and authenticate. This is the clear text version that we will
             need to match against the hashed one in the database.
-        :type password: unicode object.
-        :return: Whether the password is valid.
-        :rtype: bool
+        : type password: unicode object.
+        : return: Whether the password is valid.
+        : rtype: bool
 
         """
         hash = sha256()
-        hash.update((password + self.password[:64]).encode('utf-8'))
-        return self.password[64:] == hash.hexdigest()
+        hash.update((password + self.password[: 64]).encode('utf-8'))
+        return self.password[64: ] == hash.hexdigest()
 
 
 class Permission(DeclarativeBase):
-    """
-    Permission definition.
+    """ Permission definition."""
 
-    Only the ``permission_name`` column is required.
+    __tablename__ = 'permission'
 
-    """
-
-    __tablename__ = 'tg_permission'
-
-    permission_id = Column(Integer, autoincrement=True, primary_key=True)
-    permission_name = Column(Unicode(63), unique=True, nullable=False)
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    name = Column(Unicode(63), unique=True, nullable=False)
     description = Column(Unicode(255))
 
-    groups = relation(Group, secondary=group_permission_table,
-                      backref='permissions')
+    roles = relation(Role, secondary=role_permission_table, backref='permissions')
 
     def __repr__(self):
-        return '<Permission: name=%s>' % repr(self.permission_name)
+        return '<Permission: name=%s>' % repr(self.name)
 
     def __unicode__(self):
-        return self.permission_name
+        return self.name
+
+class SessionKey(DeclarativeBase):
+    __tablename__='tbl_sessionkey'
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    name = Column(Unicode(255), nullable=False)
+
+class SessionValue(DeclarativeBase):
+    __tablename__='tbl_sessionvalue'
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    key_id = Column(Integer, nullable=False)
+    user_id = Column(Integer, nullable=False)
+    value = Column(Unicode(255), nullable=False)
+
+class PasswordHistory(DeclarativeBase):
+    __tablename__='tbl_passwordhistory'
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    tenant_id = Column(Integer, default=1, nullable=False)
+    user_id = Column(Integer, nullable=False)
+    password = Column(Unicode(128), nullable=False)
+    added_by = Column(Integer, nullable=False)
+    added = Column(DateTime, default=datetime.now)
+
+class UserGuid(DeclarativeBase):
+    __tablename__='tbl_userguid'
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    tenant_id = Column(Integer, default=1, nullable=False)
+    user_id = Column(Integer, nullable=False)
+    guid = Column(Unicode(32), nullable=False)
+    expires = Column(DateTime, nullable=False)
+
+    @classmethod
+    def by_guid(cls, guid):
+        return DBSession.query(cls).filter_by(guid=guid).first()

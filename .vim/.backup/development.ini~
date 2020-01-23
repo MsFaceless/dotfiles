@@ -1,11 +1,22 @@
 #
-# testapp - TurboGears 2 development environment configuration
+# rocket - TurboGears 2 development environment configuration
 #
 # The %(here)s variable will be replaced with the parent directory of this file
 #
 # This file is for deployment specific config options -- other configuration
 # that is always required for the app is done in the config directory,
 # and generally should not be modified by end users.
+
+[uwsgi]
+http = 127.0.1.3:1234
+wsgi-file = wsgi.py
+master = true
+processes = 4
+workers = 8
+threads = 8
+uid = 1000
+guid = 1000
+logger = file:log/logrocket.log
 
 [DEFAULT]
 # WARNING: *THE LINE BELOW MUST BE FALSE ON A PRODUCTION ENVIRONMENT*
@@ -36,34 +47,35 @@ trace_errors.smtp_server = localhost
 # REPORT SLOW REQUESTS
 #trace_slowreqs.enable = true
 #trace_slowreqs.interval = 25
+#trace_slowreqs.exclude = /tw2/resources
 
 [server:main]
 use = egg:gearbox#wsgiref
-host = 127.0.0.1
-port = 8080
+#host = 127.0.1.3
+#host = rocket.dotdomain
+host = 0.0.0.0
+port = 1234
 
 [app:main]
-use = egg:testapp
+use = egg:rocket
 
 # Default application language, when available this will be
 # used when none of the browser requested languages is available.
-#lang = en
+#i18n.lang = en
 
 cache_dir = %(here)s/data
-session.key = testapp
-session.secret = 507eb557-33c0-4f7f-b058-cd0cd20bb1fc
+session.key = rocket
+session.secret = 6f35891e-d291-4f83-baa1-59b61dd82ec6
 
 #By default session is store in cookies to avoid the overhead
 #of having to manage a session storage. On production you might
 #want to switch to a better session storage.
 session.type = cookie
-session.validate_key = 507eb557-33c0-4f7f-b058-cd0cd20bb1fc
+session.validate_key = 6f35891e-d291-4f83-baa1-59b61dd82ec6
 
 # If you'd like to fine-tune the individual locations of the cache data dirs
-# for the Cache data, or the Session saves, un-comment the desired settings
-# here:
+# un-comment the desired settings here:
 #cache.data_dir = %(here)s/data/cache
-#session.data_dir = %(here)s/data/sessions
 
 # Disable template autoreload to boost performances in production
 # WARNING: if you want to deploy your application using a zipped egg
@@ -86,7 +98,7 @@ toscawidgets.framework.resource_variant=debug
 # invalidate the URI when specifying a SQLite db via path name
 # sqlalchemy.url=postgres://username:password@hostname:port/databasename
 # sqlalchemy.url=mysql://username:password@hostname:port/databasename
-
+#sqlalchemy.url=mysql://developer:developpass@localhost:3306/rocketdb
 
 # If you have sqlite, here's a simple default to get you started
 # in development
@@ -121,7 +133,7 @@ templating.mako.compiled_templates_dir = %(here)s/data/templates
 # Uses python's logging config file format
 # http://docs.python.org/lib/logging-config-fileformat.html
 [loggers]
-keys = root, testapp, sqlalchemy, auth
+keys = root, rocket, sqlalchemy, auth
 
 [handlers]
 keys = console
@@ -134,19 +146,17 @@ keys = generic
 level = INFO
 handlers = console
 
-[logger_testapp]
+[logger_rocket]
 level = DEBUG
 handlers =
-qualname = testapp
-
+qualname = rocket
 [logger_sqlalchemy]
-level = INFO
+level = WARN
 handlers =
 qualname = sqlalchemy.engine
 # "level = INFO" logs SQL queries.
 # "level = DEBUG" logs SQL queries and results.
 # "level = WARN" logs neither.  (Recommended for production systems.)
-
 # A logger for authentication, identification and authorization
 # this is repoze.who:
 [logger_auth]

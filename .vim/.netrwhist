@@ -1,5 +1,4 @@
 let g:netrw_dirhistmax  =10
-let g:netrw_dirhist_cnt =3
-let g:netrw_dirhist_1='/mnt/c/Users/Developer/Documents/code/python/deep_learning'
-let g:netrw_dirhist_2='/mnt/c/wamp64/www/dotxml/uploads/blog'
-let g:netrw_dirhist_3='/mnt/c/wamp64/www/dotxml/craft/config/redactor'
+let g:netrw_dirhistcnt =2
+let g:netrw_dirhist_2='/home/camilla/enviros/olderenvs/rocket_app/rocket_app/public/javascript'
+let g:netrw_dirhist_1='/home/camilla/.vim'

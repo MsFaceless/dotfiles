@@ -1,0 +1,670 @@
+# -*- coding: utf-8 -*-
+"""Entity Controller"""
+
+from tg import expose, flash, require, url, lurl
+from tg import request, redirect, tmpl_context
+from tg.i18n import ugettext as _, lazy_ugettext as l_
+from tg.exceptions import HTTPFound
+from tg import predicates
+from rocket import model
+from rocket.controllers.secure import SecureController
+from tg.i18n import ugettext as _
+from tg.i18n import lazy_ugettext as l_
+from rocket.model import *
+from rocket.model import DBSession
+
+from rocket.lib.base import BaseController
+from rocket.controllers.error import ErrorController
+
+# CUSTOM IMPORTS FROM HERE#
+from rocket.lib.tg_utils import *
+from rocket.lib.utils import is_user, login_redirect, wrap_master, generate_login_modal, get_login_page, \
+    wrap_card_fullwidth
+from rocket.lib.sidebar import Sidebar
+from rocket.controllers.members import MemberController
+# CUSTOM IMPORTS END HERE#
+
+from sqlalchemy import func, desc, asc
+
+LIMIT = 20
+
+__all__ = ['EntityController']
+
+
+class EntityController(BaseController):
+    """Docstring for entity."""
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    @require(predicates.not_anonymous())
+    @expose('rocket.templates.generic')
+    def index(self, *args, **kwargs):
+        html = self.get_active_tbl_entity_html(*args, **kwargs)
+        javascript = self.get_javascript_tbl_entity_onload()
+        title = "Entity List"
+        return dict(title=title, html=html, javascript=javascript)
+
+    @expose()
+    def get_active_tbl_entity_html(self, *args, **kwargs):
+        usernow = request.identity['user']
+        dbase_query = self.get_active_tbl_entity_list(*args, **kwargs)
+        outputlist = []
+        for item in dbase_query:
+            print(item)
+            outputlist.append({
+                'entity_type_id': "<div class='edit tbl_entity_edit' tbl_entity_id='{1}'>{0}</div>".format(
+                    item.entity_type_id, item.id),
+                'code': item.code,
+                'register_date': item.register_date,
+
+            })
+        theadlist = [
+            'Code',
+            'Name',
+            'Type',
+            'Tax Number',
+            'Registration Number'
+        ]
+        dbcolumnlist = [
+            'entity_type_id',
+            'code',
+            'register_date',
+            'entity_type_id',
+            'code',
+
+        ]
+        tbl_entitytable = build_html_table(outputlist, dbcolumnlist, theadlist, "tbl_entity_table")
+        html = f"""
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                <div class="card-header">
+                    <div class="row d-flex">
+                        <div class="col-md-6">
+                            <h4 class="card-title">{_('Entity List')}</h4>
+                        </div>
+                        <div class="col-md-6 text-right">
+                            <button id="create_new_tbl_entity" class="btn btn-primary ml-auto">New Entity</button>
+                        </div>
+                    </div>
+                    <div class="row d-flex align-items-center">
+                        <div class="col-md-4">
+                            <input type="text" class="form-control search" name="searchphrase" placeholder="Search">
+                        </div>
+                        <div class="col-md-8">
+                            <button class="btn btn-primary action_search">Search</button>
+                            <button class="btn btn-primary">Reset</button>
+                        </div>
+                    </div>
+                    <hr>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        {tbl_entitytable}
+                    </div>
+                </div>
+                </div>
+            </div>
+            <div id='dialogdiv'></div>
+        """
+        return html
+
+    @expose()
+    def get_javascript_tbl_entity_onload(self, *args, **kwargs):
+        javascript = """
+        $("#btn_test").click(function(){
+
+            $.redirect('/entity/my_test_func', {'key1' : 'test kwargs'});
+
+        });
+        $("#create_new_tbl_entity").click(function(){
+            $('#dialogdiv').load('/entity/get_modal_new_tbl_entity?', function(data){
+                return false;
+            });
+        });
+        $(".tbl_entity_edit").click(function(){
+            var kwargs = 'tbl_entity_id='+$(this).attr('tbl_entity_id');
+            $('#dialogdiv').load('/entity/get_modal_edit_tbl_entity?'+kwargs, function(data){
+                return false;
+            });
+        });
+        """
+        return javascript
+
+    @expose()
+    def get_modal_new_tbl_entity(self, *args, **kwargs):
+        dropdown_mail_option_type = self.get_selectbox_mail_option()
+        dropdown_currency = self.get_selectbox_currency()
+        dropdown_entity_organisation = self.get_selectbox_entity_organisation()
+        dropdown_message_batch = self.get_selectbox_message_batch()
+        dropdown_billing_frequency = self.get_selectbox_billing_frequency()
+        html = f"""
+        <div class="modal fade" id="dialog_new_tbl_entity" tabindex="-1" role="dialog" aria-labelledby="mytbl_entityLabel" aria-hidden="true">
+            <div class="modal-dialog  modal-xl ">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <div class="col-md-6">
+                            <h4 class="card-title">Entity Record</h4>
+                        </div>
+                    </div>
+                    <div class="modal-body">
+                        <form id='form_new_tbl_entity'>
+                       <div class='row'>
+                       <div class ="col-md-6">
+                            <div class="col-md-12">
+                            <div class="form-group row">
+                                <label class="col-md-4 col-form-label" required
+                                    for="code">Code</label>
+                                <div class="col-md-8">
+                                    <input id="code" type="text" name="code" class="form-control"
+                                        required='true'>
+                                </div>
+                            </div>
+                        </div>
+                            <div class="col-md-12">
+                            <div class="form-group row">
+                                <label class="col-md-4 col-form-label" required for="code">Tax Number</label>
+                                <div class="col-md-8">
+                                    <input id="tax_number" type="text" name="tax_number" class="form-control" required='true'>
+                                </div>
+                            </div>
+                        </div>
+                            <div class="col-md-12">
+                            <div class="form-group row">
+                                <label class="col-md-4 col-form-label" for="financial_regulatory_number">Financial Registration</label>
+                                <div class="col-md-8">
+                                    <input id="financial_regulatory_number" type="text" name="financial_regulatory_number" class="form-control">
+                                </div>
+                            </div>
+                        </div>
+                            <div class="col-md-12">
+                            <div class="form-group row">
+                                <label class="col-md-4 col-form-label" required
+                                    for="start_date">Start Date</label>
+                                <div class="col-md-8">
+                                    <input id="start_date" type="text" name="start_date" class="form-control"
+                                        required='true'>
+                                </div>
+                            </div>
+                        </div>
+                            <div class="col-md-12">
+                            <div class="form-group row">
+                                <label class="col-md-4 col-form-label" for="">Mail Option</label>
+                                <div class="col-md-8">
+                                 {dropdown_mail_option_type}
+                                </div>
+                            </div>
+                        </div>
+                        </div>
+                       <div class='col-md-6'>
+                           <div class="col-md-12">
+                            <div class="form-group row">
+                                <label class="col-md-4 col-form-label" required
+                                    for="name">Name</label>
+                                <div class="col-md-8">
+                                    <input id="name" type="text" name="" class="form-control"
+                                        required='true'>
+                                </div>
+                            </div>
+                        </div>
+                            <div class="col-md-12">
+                            <div class="form-group row">
+                                <label class="col-md-4 col-form-label" required for="registration_number">Reg Number</label>
+                                <div class="col-md-8">
+                                    <input id="registration_number" type="text" name="registration_number" class="form-control" required='true'>
+                                </div>
+                            </div>
+                        </div>
+                            <div class="col-md-12">
+                            <div class="form-group row">
+                                <label class="col-md-4 col-form-label" for="">Currency</label>
+                                <div class="col-md-8">
+                                {dropdown_currency}
+                                </div>
+                            </div>
+                        </div>
+                            <div class="col-md-12">
+                            <div class="form-group row">
+                                <label class="col-md-4 col-form-label" required
+                                    for="end_date">End Date</label>
+                                <div class="col-md-8">
+                                    <input id="end_date" type="text" name="end_date" class="form-control"
+                                        required='true'>
+                                </div>
+                            </div>
+                        </div>
+                            <div class="col-md-12">
+                            <div class="form-group row">
+                                <label class="col-md-4 col-form-label" for="">Type</label>
+                                <div class="col-md-8">
+                                  {dropdown_entity_organisation}
+                                </div>
+                            </div>
+                        </div>
+                       </div>
+                       </div>
+                       <hr>
+                       <div class="row">
+                         <div class="form-check col-md-12" style=" padding-bottom: 15px;">
+                              <label class="form-check-label">
+                              <input class="form-check-input user_role" name="is_insurer" id="is_insurer" type="checkbox">
+                                <span class="form-check-sign">Is Insurer</span>
+                             </label>
+                        </div>
+                          <div class="form-check col-md-12" style=" padding-bottom: 15px;">
+                              <label class="form-check-label">
+                              <input class="form-check-input user_role" name="is_product_owner" id="is_product_owner" type="checkbox">
+                                <span class="form-check-sign">Is Product Owner</span>
+                             </label>
+                            <div class="row" >
+                              <div class="col-md-4"></div>
+                              <div class="col-md-8">
+                                 <div id="product_owner_fields" style="display: none;">
+                                   <div class="form-group row">
+                                       <label class="col-md-4 col-form-label" for="">Policy Number Prefix</label>
+                                        <div class="col-md-8">
+                                            <input id="" type="text" name="" class="form-control">
+                                        </div>
+                                  </div>
+                                    <div class="form-group row">
+                                       <label class="col-md-4 col-form-label" for="">Message Batch Type</label>
+                                        <div class="col-md-8">
+                                          {dropdown_message_batch}
+                                        </div>
+                                  </div>
+                                </div>
+                               </div>
+                        </div>
+                        </div >
+                        <div class="form-check col-md-12" style=" padding-bottom: 15px;">
+                              <label class="form-check-label">
+                              <input class="form-check-input user_role" name="is_client" id="is_client" type="checkbox">
+                                <span class="form-check-sign">Is Client</span>
+                             </label>
+                              <div class="row" >
+                              <div class="col-md-4"></div>
+                              <div class="col-md-8">
+                                 <div id="is_client_fields" style="display: none;">
+                                   <div class="form-group row">
+                                       <label class="col-md-4 col-form-label" for="">Billing Frequency</label>
+                                        <div class="col-md-8">
+                                          {dropdown_billing_frequency}
+                                        </div>
+                                  </div>
+                                    <div class="form-group row">
+                                       <label class="col-md-4 col-form-label" for="last_payment_date">Last Payment Date</label>
+                                        <div class="col-md-8">
+                                            <input id="last_payment_date" type="text" name="" class="form-control">
+                                        </div>
+                                  </div>
+                                    <div class="form-group row">
+                                       <label class="col-md-4 col-form-label" for="last_invoice_date">Last Invoice Date</label>
+                                        <div class="col-md-8">
+                                            <input id="last_invoice_date" type="text" name="last_invoice_date" class="form-control">
+                                        </div>
+                                  </div>
+                                </div>
+                               </div>
+                              </div>
+                        </div>
+                       </div>
+                    </form>
+                    </div>
+                    <div class="modal-footer">
+                        <button id='save_new_entity' class="btn btn-primary">Save</button>
+                        <button class="btn btn-outline-primary tbl_entity_back">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+         """
+        javascript = """
+        <script>
+        setFormValidation('#form_new_tbl_entity');
+
+        createDatepicker('#end_date');
+        createDatepicker('#start_date');
+        createDatepicker('#last_payment_date');
+        createDatepicker('#last_invoice_date');
+
+        createClickHideShow('#is_client', '#is_client_fields')
+        createClickHideShow('#is_product_owner', '#product_owner_fields')
+
+        $('#save_new_entity').click(function(){
+             var valid = FormIsValid("#form_new_tbl_entity");
+             if(valid){
+
+                var formserial = $('#form_new_tbl_entity').serialize();
+                console.log(formserial);
+
+                $.post('/entity/save_new_entityobj?', formserial, function(data){
+                    var result = JSON.parse(data);
+                    if(result.success === true){
+                        $.redirect('/entity/index');
+                    };
+                    return false;
+                });
+             }
+        });
+        $('.tbl_entity_back').click(function(){
+            $('#dialog_new_tbl_entity').modal('hide');
+        });
+        $('#dialog_new_tbl_entity').modal();
+        </script>
+     	"""
+        return html + javascript
+
+    @expose()
+    def get_modal_edit_tbl_entity(self, *args, **kwargs):
+        tbl_entity_id = kwargs.get('tbl_entity_id', None)
+        if not tbl_entity_id: return ''
+        this = self.get_tbl_entity_by_id(*args, **kwargs)
+        if not this: return ''
+        checked = 'checked' if this.active else ''
+        html = f"""
+        <div class="modal fade" id="dialog_edit_tbl_entity" tabindex="-1" role="dialog" aria-labelledby="mytbl_entityLabel" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <div class="col-md-6">
+                            <h4 class="card-title">New Tbl_entity</h4>
+                        </div>
+                    </div>
+                    <div class="modal-body">
+                        <form id='form_edit_tbl_entity'>
+                            <div style='display: none' class="col-md-6">
+					<div class="form-group row">
+						<label class="col-md-3 col-form-label" required for="tbl_entity_id">Id</label>
+						<div class="col-md-9">
+							<input id="id" type="text" name="tbl_entity_id" value="{this.id}" class="form-control" required='true'>
+						</div>
+					</div>
+				</div>
+                            <div class="col-md-6">
+					<div class="form-group row">
+						<label class="col-md-3 col-form-label" required for="entity_type_id">Entity_Type_Id</label>
+						<div class="col-md-9">
+							<input id="entity_type_id" type="text" name="entity_type_id" value="{this.entity_type_id}" class="form-control" required='true'>
+						</div>
+					</div>
+				</div>
+                            <div class="col-md-6">
+					<div class="form-group row">
+						<label class="col-md-3 col-form-label" required for="code">Code</label>
+						<div class="col-md-9">
+							<input id="code" type="text" name="code" value="{this.code}" class="form-control" required='true'>
+						</div>
+					</div>
+				</div>
+                            <div class="col-md-6">
+					<div class="form-group row">
+						<label class="col-md-3 col-form-label" required for="register_date">Register_Date</label>
+						<div class="col-md-9">
+							<input id="register_date" type="text" name="register_date" value="{this.register_date}" class="form-control" required='true'>
+						</div>
+					</div>
+				</div>
+                            <div class="form-group row">
+                              <label class="col-4 col-form-label" for="active" required>Active</label>
+                              <div class="col-8"><div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="active" id="active" {checked}/></div>
+                              </div>
+                            </div>
+                        </form>
+                    </div>
+                    <div class="modal-footer">
+                        <button id='save_edit_tbl_entity' class="btn btn-primary">Save</button>
+                        <button class="btn btn-outline-primary tbl_entity_back">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        javascript = """
+        <script>
+        setFormValidation('#form_edit_tbl_entity');
+        $("#register_date").datetimepicker({ format: 'DD/MM/YYYY' });
+        $('#save_edit_tbl_entity').click(function(){
+             var valid = FormIsValid("#form_edit_tbl_entity");
+             if(valid){
+                var formserial = getFormData('#form_edit_tbl_entity');
+                var data = {data : JSON.stringify(formserial)};
+
+                $.post('/entity/save_edit_tbl_entity?', data, function(data){
+                    var result = JSON.parse(data);
+                    if(result.success === true){
+                        $.redirect('/entity/index');
+                    };
+                    return false;
+                });
+             }
+        });
+        $('.tbl_entity_back').click(function(){
+            $('#dialog_edit_tbl_entity').modal('hide');
+        });
+        $('#dialog_edit_tbl_entity').modal();
+        </script>
+     	"""
+        return html + javascript
+
+    @expose()
+    def save_new_entityobj(self, *args, **kwargs):
+        #*********************Spot for Entity Type
+        dict_entity = {
+            'code': kwargs.get('code'),
+            'entity_type_id': 1,
+        }
+        entity_id = self.save_new_entity(**dict_entity)
+
+        dict_organisation = {
+            'name' : kwargs.get('name'),
+            'tax_number' : kwargs.get('tax_number'),
+            'registration_number' : kwargs.get('registration_number'),
+            'financial_regulatory_number' : kwargs.get('financial_regulatory_number'),
+        }
+        organisation_id = self.save_new_organisation(**dict_organisation)
+
+        # *********************Spot for Intermediary Type, Entity Organisation, Currency
+        dict_entity_organisation = {
+            'entity_id': entity_id,
+            'entity_organisation_type_id': 1,
+            'organisation_id' : organisation_id,
+            'currency_id' : 1,
+            'intermediary_id': 1,
+            'start_date': kwargs.get('start_date'),
+            'end_date': kwargs.get('end_date'),
+            'mail_option_id': kwargs.get('mail_option'),
+        }
+        entity_organisation_id = self.save_new_entity_organisation(**dict_entity_organisation)
+
+        # ********************* Radio Button fields validation
+
+        is_product_owner = kwargs.get('is_product_owner', False)
+        if is_product_owner:
+            dict_product_owner = {
+                'entity_organisation_id' : entity_organisation_id,
+                'policy_number_prefix' : kwargs.get('policy_number_prefix'),
+                'message_batch_type_id' : kwargs.get('message_batch_type_id'),
+            }
+            self.save_new_product_owner(**dict_product_owner)
+
+        # ********************* Radio Button fields validation
+        is_insurer = kwargs.get('is_insurer', False)
+        if is_insurer:
+            dict_insurer = {
+                'entity_organisation_id' : entity_organisation_id,
+            }
+            self.save_new_insurer(**dict_insurer)
+
+        # ********************* Radio Button fields validation
+        is_client = kwargs.get('is_client', False)
+        if is_client:
+            dict_entity_client = {
+                'entity_organisation_id' : entity_organisation_id,
+                'billing_frequency_id' : 1,
+                'last_payment_date': kwargs.get('last_payment_date'),
+                'last_invoice_date': kwargs.get('last_invoice_date'),
+            }
+            self.save_new_entity_client(**dict_entity_client)
+
+        return json.dumps({'success': True})
+
+    @expose()
+    def save_new_insurer(self, *args, **kwargs):
+        usernow = request.identity['user']
+        this = Insurer()
+        this.entity_organisation_id = kwargs.get('entity_organisation_id', None)
+        this.added_by = usernow.id
+        this.tenant_id = usernow.id
+        DBSession.add(this)
+        DBSession.flush()
+        return this.id
+
+    @expose()
+    def save_new_product_owner(self, *args, **kwargs):
+        usernow = request.identity['user']
+        this = ProductOwner()
+        this.entity_organisation_id = kwargs.get('entity_organisation_id', None)
+        this.policy_number_prefix = kwargs.get('policy_number_prefix', None)
+        this.message_batch_type_id = kwargs.get('message_batch_type_id', None)
+        this.added_by = usernow.id
+        this.tenant_id = usernow.id
+        DBSession.add(this)
+        DBSession.flush()
+        return  this.id
+
+    @expose()
+    def save_new_entity_client(self, *args, **kwargs):
+        usernow = request.identity['user']
+        this = EntityClient()
+        this.entity_organisation_id = kwargs.get('entity_organisation_id', None)
+        this.billing_frequency_id = kwargs.get('billing_frequency_id', None)
+        this.last_payment_date = sane_date(kwargs.get('last_payment_date', None))
+        this.last_invoice_date = sane_date(kwargs.get('last_invoice_date', None))
+        this.added_by = usernow.id
+        this.tenant_id = usernow.id
+        DBSession.add(this)
+        DBSession.flush()
+        return this.id
+
+    @expose()
+    def save_new_organisation(self, *args, **kwargs):
+        usernow = request.identity['user']
+        this = Organisation()
+        this.name = kwargs.get('name', None)
+        this.tax_number = kwargs.get('tax_number', None)
+        this.registration_number = kwargs.get('registration_number', None)
+        this.financial_regulatory_number = kwargs.get('financial_regulatory_number', None)
+        this.added_by = usernow.id
+        DBSession.add(this)
+        DBSession.flush()
+        return this.id
+
+    @expose()
+    def save_new_entity(self, *args, **kwargs):
+        usernow = request.identity['user']
+        this = Entity()
+        this.entity_type_id = kwargs.get('entity_type_id', None)
+        this.code = kwargs.get('code', None)
+        this.register_date = datetime.now()
+        this.added_by = usernow.id
+        this.tenant_id = usernow.id
+        DBSession.add(this)
+        DBSession.flush()
+        return this.id
+
+    @expose()
+    def save_new_entity_organisation(self, *args, **kwargs):
+        usernow = request.identity['user']
+        this = EntityOrganisation()
+        this.entity_id = kwargs.get('entity_id', None)
+        this.entity_organisation_type_id = kwargs.get('entity_organisation_type_id', None)
+        this.organisation_id = kwargs.get('organisation_id', None)
+        this.intermediary_id = kwargs.get('intermediary_id', None)
+        this.currency_id = kwargs.get('currency_id', None)
+        this.start_date =sane_date(kwargs.get('start_date', None))
+        this.end_date = sane_date(kwargs.get('end_date', None))
+        this.mail_option_id = kwargs.get('mail_option_id', None)
+        this.added_by = usernow.id
+        DBSession.add(this)
+        DBSession.flush()
+        return this.id
+
+    @expose()
+    def save_edit_tbl_entity(self, *args, **kwargs):
+        data = json.loads(kwargs.get('data', json.dumps({})))
+        if not data: return json.dumps({'success': False, 'data': 'No data provided'})
+        usernow = request.identity['user']
+        this = self.get_tbl_entity_by_id(**data)
+        if not this: return json.dumps({'success': False, 'data': 'No tbl_entity found for id provided'})
+        this.entity_type_id = data.get('entity_type_id', None)
+        this.code = data.get('code', None)
+        this.register_date = data.get('register_date', None)
+        if not data.get('active', None): this.active = False
+        DBSession.flush()
+        return json.dumps({'success': True, 'data': this.id})
+
+    @expose()
+    def get_tbl_entity_by_id(self, *args, **kwargs):
+        return DBSession.query(Entity). \
+            filter(Entity.id == kwargs.get('tbl_entity_id', None)). \
+            first()
+
+    @expose()
+    def get_active_tbl_entity_list(self, *args, **kwargs):
+        searchphrase = kwargs.get('searchphrase', None)
+
+        tbl_entity_entity_type_id = kwargs.get('tbl_entity_entity_type_id', None)
+        code = kwargs.get('code', None)
+        register_date_start = kwargs.get('register_date_start', None)
+        register_date_end = kwargs.get('register_date_end', None)
+        if tbl_entity_entity_type_id:
+            dbase_query = DBSession.query(Entity). \
+                filter(Entity.tbl_entity_entity_type_id == tbl_entity_entity_type_id). \
+                filter(Entity.active == 1). \
+                order_by(asc(Entity.tbl_entity_id)).limit(LIMIT)
+        if code:
+            searchphrase = "%" + kwargs['code'] + "%"
+            dbase_query = DBSession.query(Entity). \
+                filter(Entity.code.like(searchphrase)). \
+                filter(Entity.active == 1). \
+                order_by(asc(Entity.code)).limit(LIMIT)
+        if register_date_start:
+            if not register_date_end: register_date_end = datetime.date(datetime.now())
+            dbase_query = DBSession.query(Entity). \
+                filter(Entity.register_date >= register_date_start). \
+                filter(Entity.register_date <= register_date_end). \
+                filter(Entity.active == 1). \
+                order_by(asc(Entity.id)).limit(LIMIT)
+        else:
+            dbase_query = DBSession.query(Entity). \
+                filter(Entity.active == 1). \
+                order_by(asc(Entity.id)). \
+                limit(LIMIT)
+        return dbase_query
+
+    def get_selectbox_mail_option(self, *args, **kwargs):
+        mail_option_list = []
+        kwargs['outputlist'] = [{'name': m.name, 'id': m.id} for m in mail_option_list]
+        return create_selectbox_html(**kwargs)
+
+    def get_selectbox_currency(self, *args, **kwargs):
+        currecy_list = []
+        kwargs['outputlist'] = [{'name': m.name, 'id': m.id} for m in currecy_list]
+        return create_selectbox_html(**kwargs)
+
+    def get_selectbox_entity_organisation(self, *args, **kwargs):
+        entity_organisation_list = []
+        kwargs['outputlist'] = [{'name': m.name, 'id': m.id} for m in entity_organisation_list]
+        return create_selectbox_html(**kwargs)
+
+    def get_selectbox_message_batch(self, *args, **kwargs):
+        message_batch = []
+        kwargs['outputlist'] = [{'name': m.name, 'id': m.id} for m in message_batch]
+        return create_selectbox_html(**kwargs)
+
+    def get_selectbox_billing_frequency(self, *args, **kwargs):
+        billing_frequency = []
+        kwargs['outputlist'] = [{'name': m.name, 'id': m.id} for m in billing_frequency]
+        return create_selectbox_html(**kwargs)

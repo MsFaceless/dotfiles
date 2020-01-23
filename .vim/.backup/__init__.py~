@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
 """The application's model objects"""
 
-from zope.sqlalchemy import ZopeTransactionExtension
+import zope.sqlalchemy
 from sqlalchemy.orm import scoped_session, sessionmaker
 from sqlalchemy.ext.declarative import declarative_base
 
 # Global session manager: DBSession() returns the Thread-local
 # session object appropriate for the current web request.
-maker = sessionmaker(autoflush=True, autocommit=False,
-                     extension=ZopeTransactionExtension())
+maker = sessionmaker(autoflush=True, autocommit=False)
 DBSession = scoped_session(maker)
+zope.sqlalchemy.register(DBSession)
 
 # Base class for all of our model classes: By default, the data model is
 # defined with SQLAlchemy's declarative extension, but if you need more
@@ -55,9 +55,19 @@ def init_model(engine):
     # t_reflected = Table("Reflected", metadata,
     #                     autoload=True, autoload_with=engine)
     # mapper(Reflected, t_reflected)
+    return DBSession
 
 # Import your model modules here.
-from testapp.model.auth import User, Group, Permission
-from testapp.model.auth_by_trevor2 import *
+from rocket.model.auth import User, Role, Permission
+from rocket.model.auth import SessionKey, SessionValue
+from rocket.model.auth import PasswordHistory, UserGuid
 
-__all__ = ('User', 'Group', 'Permission')
+from rocket.model.claim import *
+from rocket.model.entity import *
+from rocket.model.member import *
+from rocket.model.policy import *
+from rocket.model.product import *
+from rocket.model.message import *
+from rocket.model.transaction import *
+from rocket.model.intermediary import *
+from rocket.model.batch_import import *

@@ -10,6 +10,7 @@ esac
 
 # don't put duplicate lines or lines starting with space in the history.
 # See bash(1) for more options
+HISTIGNORE='rm :*--clean*' # prevent hg update --clean from being written into history
 HISTCONTROL=ignoreboth:erasedups
 
 # append to the history file, don't overwrite it
@@ -86,10 +87,10 @@ fi
 
 # some more ls aliases
 alias ll='ls -althr'
+alias lll='ls -lthr'
 alias la='ls -lh'
 alias l='ls -CF'
 
-export ANDROID_HOME=~/Android/Sdk
 
 # Add an "alert" alias for long running commands.  Use like so:
 #   sleep 10; alert
@@ -115,5 +116,6 @@ if ! shopt -oq posix; then
   fi
 fi
 
-[ -f /etc/profile.d/autojump.sh ] && . /etc/profile.d/autojump.sh
-
+#[ -f /etc/profile.d/autojump.sh ] && . /etc/profile.d/autojump.sh
+export EDITOR=/usr/bin/vim
+#source /home/camilla/Documents/software/setproxy.sh

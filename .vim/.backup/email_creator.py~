@@ -1,0 +1,169 @@
+#!/bin/python
+# -*- coding: utf-8 -*-
+
+import os
+import re
+import email, smtplib, ssl
+from email import encoders
+from email.mime.base import MIMEBase
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from email.mime.image import MIMEImage
+
+SUPPORTED_MIMETYPES = {
+        '.bmp': 'image/bmp',
+        '.csv': 'text/csv',
+        '.doc': 'application/msword',
+        '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        '.gif': 'image/gif',
+        '.jpeg': 'image/jpeg',
+        '.jpg': 'image/jpeg',
+        '.ods': 'application/vnd.oasis.opendocument.spreadsheet',
+        '.odt': 'application/vnd.oasis.opendocument.text',
+        '.pdf': 'application/pdf',
+        '.png': 'image/png',
+        '.xls': 'application/vnd.ms-excel',
+        '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                        }
+
+# Gmail Settings
+URL = "smtp.gmail.com"
+
+PORT_TLS = 587
+PORT_SSL = 465
+
+FROM_ADDRESS = "dotxmlinternal@gmail.com"
+
+PASSWORD = "9bO4!42Gdf0WonW~oV./"
+USERNAME = FROM_ADDRESS
+
+class EmailCreator():
+
+    def __init__(self, *args, **kwargs):
+        self.url = kwargs.get('url', URL)
+        self.port = kwargs.get('port', PORT_TLS)
+        self.username = kwargs.get('username', USERNAME)
+        self._password = kwargs.get('password', PASSWORD)
+
+        self.email = MIMEMultipart("alternative")
+        self.mimetypes = kwargs.get('mimetypes', SUPPORTED_MIMETYPES)
+
+    def _add_key_value(self, key, value):
+        self.email[key] = value
+
+    def add_subject(self, subject):
+        self._add_key_value('Subject', subject)
+
+    def validate_email(self, email):
+        return re.match("[^@]+@[^@]+\.[^@]+", email)
+
+    def add_from_address(self, email=FROM_ADDRESS):
+        self._add_key_value('From', email)
+
+    def add_to_address(self, email):
+        self._add_key_value('To', email)
+
+    def add_cc_address(self, email):
+        self._add_key_value('Cc', email)
+
+    def add_bcc_address(self, email):
+        self._add_key_value('Bcc', email)
+
+    def _add_attach(self, attach):
+        self.email.attach(attach)
+
+    def _add_text(self, text_type, text):
+        mime_text = MIMEText(text, text_type)
+        self._add_attach(mime_text)
+
+    def add_plain_text(self, text):
+        self._add_text('plain', text)
+
+    def add_rich_text(self, text):
+        self._add_text('html', text)
+
+    def add_attachment(self, filepath):
+        if not os.path.isfile(filepath):
+            return False
+
+        filename = os.path.basename(filepath)
+        _, ext = os.path.splitext(filename)
+        file_mimetype = self.mimetypes.get(ext, 'octet-stream')
+        mime_base = MIMEBase('application', file_mimetype)
+
+        with open(filepath, 'rb') as f:
+            mime_base.set_payload(f.read())
+        encoders.encode_base64(mime_base)
+
+        mime_base.add_header("Content-Disposition", f"attachment; filename={filename}")
+        self._add_attach(mime_base)
+
+    def send(self, verbose=True):
+        if not self.email.get('From'): self.add_from_address()
+        ctx = ssl.create_default_context()
+        server = smtplib.SMTP(self.url, self.port)
+        server.set_debuglevel(verbose)
+        server.starttls(context=ctx)
+        server.login(self.username, self._password)
+        server.sendmail(
+            self.email.get('From'),
+            self.email.get('To'),
+            self.email.as_string()
+        )
+        server.quit()
+
+class RocketEmailCreator(EmailCreator):
+
+    def __init__(self, *args, **kwargs):
+        super(RocketEmailCreator, self).__init__()
+
+    def add_rich_text(self, text):
+        rocket_text = f"""
+        <html>
+        <body>
+            <div style="width: 100%; font-size:50px; color: #000; margin-bottom: 20px;">
+                <div style="padding-left: 20px;">R<span style="color: #F6CD1F;">O</span>CKET</div>
+                <div style="background-color: #F6CD1F; font-size:20px; text-transform:uppercase; color: #000;width: 75%; padding-left: 20px;"> Insurtech </div>
+            </div>
+            <div style="font-size: 16px; padding-left: 20px;">
+                {text}
+            </div>
+            <div style="padding-left: 20px; font-size: 16px;">
+                <p>Kind regards, </p>
+                <p>The ROCKET Team</p>
+            </div>
+
+        </body>
+        </html>
+        """
+        self._add_text('html', rocket_text)
+
+if __name__ == "__main__":
+
+    from datetime import datetime
+
+
+    e = RocketEmailCreator()
+    e.add_subject('Test Email Subject')
+    e.add_to_address('camilla@dotxmltech.com')
+    e.add_cc_address('tjaart@dotxmltech.com')
+    e.add_bcc_address('hannes@dotxmltech.com')
+
+    plain_text = f"""
+    Good day Camilla,
+    This is a test email on {datetime.now()}.
+    Kind Regards, """
+    e.add_plain_text(plain_text)
+
+    rich_text = f"""
+    <html>
+    <h1> Good day Camilla, </h1>
+    <p> This is a test email on {datetime.now()}.  </p>
+    Kind Regards,
+
+    </html>
+    """
+    e.add_rich_text(rich_text)
+
+    #e.add_attachment('public/images/login_rocket.jpg')
+    #e.send(False)

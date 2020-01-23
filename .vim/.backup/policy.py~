@@ -1,0 +1,1150 @@
+# -*- coding: utf-8 -*-
+"""Policy controller module"""
+
+from tg import predicates, require
+from tg import expose, redirect, validate, flash, url, request
+from datetime import datetime, date
+
+from tg.i18n import ugettext as _
+from tg.i18n import lazy_ugettext as l_
+
+from rocket.model import *
+
+from sqlalchemy import func, desc, asc
+
+from rocket.lib.tg_utils import *
+from rocket.lib.base import BaseController
+from rocket.lib.type_utils import TypeDictionary as TypeDict
+from rocket.controllers.members import MemberController
+from rocket.controllers.product import ProductController
+
+MEMBER_CONT = MemberController()
+PRODUCT_CONT = ProductController()
+
+LIMIT = 10
+PRODUCT_LIMIT = 20
+
+class PolicyController(BaseController):
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    @require(predicates.not_anonymous())
+    @expose('rocket.templates.generic')
+    def index(self, *args, **kwargs):
+        html = self.get_policy_list_html(*args, **kwargs)
+        javascript = self.get_javascript_policy_onload()
+        title = _("Policies")
+        return dict(title=title, html=html, javascript=javascript)
+
+##################################################################################################################
+# Start Policy List
+##################################################################################################################
+    @expose()
+    def get_policy_list_html(self, *args, **kwargs):
+        policytable = self.get_policy_list_html_tbl(**kwargs)
+        html = f"""
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                <div class="card-header">
+                    <div class="row d-flex">
+                        <div class="col-md-6">
+                             <h4 class="card-title">{_('Policies')}</h4>
+                        </div>
+                        <div class="col-md-6 text-right">
+                            <button id="create_new_policy" class="btn btn-primary ml-auto">Create a new Policy</button>
+                            <button id="create_new_policy_fake" class="btn btn-primary ml-auto">Create a new Fake Policy</button>
+                            <!--
+                            -->
+                        </div>
+                    </div>
+                    <div class="row d-flex align-items-center">
+                        <div class="col-md-8 d-flex">
+                            <input id='search' type="text" class="form-control mr-2 search" name="searchphrase" placeholder="Search by Code or Description">
+                        </div>
+                        <div class="col-md-4 pl-0">
+                            <button id='btn_search' class="btn btn-primary action_search">Search</button>
+                            <button id='btn_reset' class="btn btn-primary">Reset</button>
+                        </div>
+                    </div>
+                    <hr>
+                </div>
+                <div class="card-body">
+                    <div id='div_policy_table' class="table-responsive">
+                        {policytable}
+                    </div>
+                </div>
+                </div>
+            </div>
+            <div id='dialogdiv'></div>
+        """
+        return html
+
+    @expose()
+    def get_javascript_policy_onload(self, *args, **kwargs):
+        javascript = """
+        $("#create_new_policy").click(function(){
+            $('#dialogdiv').load('/policy/get_modal_select_member?', function(data){
+                return false;
+            });
+        });
+        $("#create_new_policy_fake").click(function(){
+            var data = {product_id : 1, member_id : 1};
+            $.redirect('/policy/create_new_policy_form', data);
+        });
+        """
+        return javascript
+
+    def get_policy_list_html_tbl(self, *args, **kwargs):
+        return 'test'
+        usernow = request.identity.get('user', {})
+        img_active = "<img src='/images/icon_check.png' />"
+        img_inactive = "<img src='/images/icon_cross.png' />"
+        outputlist = []
+        dbase_query = policy.get_all('code')
+        td = TypeDict()
+
+        sandbox = td.get_id_of_name('policy_state_type', 'sandbox')
+        voucher = td.get_id_of_name('policy_type', 'voucher')
+        traditional = td.get_id_of_name('policy_type', 'traditional')
+
+        for item in dbase_query:
+
+            disable_text = 'disable' if item.active else 'enable'
+
+            #code = f"<div class='edit policy_view' policy_id='{item.id}'>{item.code}</div>"
+            #if item.policy_state_id == sandbox:
+            #    code = f"<div class='edit policy_edit' policy_id='{item.id}'>{item.code}</div>"
+            code = f"<div class='edit voucher_policy_edit' policy_id='{item.id}'>{item.code}</div>"
+
+            policy_type_name = td.get_pretty_name('policy_type', item.policy_type_id)
+            policy_state_name = td.get_pretty_name('policy_state_type', item.policy_state_id)
+            policy_life_assured_type_name = td.get_pretty_name('policy_life_assured_type', item.policy_life_assured_type_id)
+
+            outputlist.append({
+                'code' : code,
+                'name' : item.name,
+                'policy_life_assured_type_id' : policy_life_assured_type_name,
+                #'price' : getcurrency(item.price),
+                'policy_type_id' : policy_type_name,
+                'state' : policy_state_name,
+                'active' : img_active if item.active else img_inactive,
+                'disable' : f"<div class='policy_active' active='{item.active}' policy_id='{item.id}' desc='{item.name}'>{disable_text}</div>",
+                })
+            dbcolumnlist=[
+                    'code',
+                    'name',
+                    'policy_life_assured_type_id',
+                    #'price',
+                    'policy_type_id',
+                    'state',
+                    'active',
+                    'disable',
+                    ]
+            theadlist=[
+                    'Code',
+                    'Name',
+                    'Life Assured',
+                    #'Purchase Price',
+                    'policy Type',
+                    'policy State',
+                    'Active',
+                    '',
+                    ]
+            tdclasslist = [
+                    'action_link',
+                    '',
+                    '',
+                    #'',
+                    '',
+                    '',
+                    'text-center',
+                    'action_link text-right',
+                    ]
+            html = build_html_table(outputlist, dbcolumnlist, theadlist, "policy_table", tdclasslist)
+
+        javascript = """
+        <script>
+        $(".voucher_policy_edit").click(function(){
+            var data = {policy_id : $(this).attr('policy_id')};
+            $.redirect('/policy/edit_voucher', data);
+        });
+        $(".policy_edit").click(function(){
+            var data = {policy_id : $(this).attr('policy_id')};
+            $.redirect('/policy/edit', data);
+        });
+        $(".policy_view").click(function(){
+            var data = {policy_id : $(this).attr('policy_id')};
+            $.redirect('/policy/view', data);
+        });
+        $(".policy_active").click(function(){
+            var text = $(this).html();
+            var desc = $(this).attr('desc');
+            var result = window.confirm("Are you sure you want to " + text + " '" + desc + "'?");
+            if(result === true){
+                var data = 'policy_id='+$(this).attr('policy_id');
+                $.post('/policy/save_policy_active?', data, function(data){
+                    var result = JSON.parse(data);
+                    if(result.success === true){
+                        $.redirect('/policy/index');
+                    }
+                    return false;
+                });
+            }
+        });
+        </script>
+        """
+        return html + javascript
+
+##################################################################################################################
+# Start NEW Policy
+##################################################################################################################
+
+    @expose()
+    def get_modal_select_member(self, *args, **kwargs):
+        #TGJ# THis needs to be a Poppup Please
+        usernow = request.identity['user']
+        selectbox_products = self.get_selectbox_products(**{
+            'id' : 'product_id',
+            #'selected' : searchstate,
+            'class_names': 'col-md-4',
+            })
+        kwargs['selectbox_products'] = 'selectbox_products'
+        #Get the HTML table from Member Conrtoller. Add some nioce logic there to remove the unnecessary fields.
+        print('Placeholder: Fake Member and Product')
+        product_id = 1
+        member_id = 1
+        kwargs['product_id'] = product_id
+        kwargs['member_id'] = member_id
+        #END FAKE DATA
+
+        member_list = MEMBER_CONT.get_active_tbl_member_html(*args, **kwargs)
+        html = f"""
+        <div class="modal fade" id="dialog_new_policy" tabindex="-1" role="dialog" aria-labelledby="myproductLabel" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <div class="col-md-6">
+                            <h4 class="card-title">New Policy</h4>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        {member_list}
+                    </div>
+                    <div class="modal-footer">
+                        <button id='btn_create_new_policy' class="btn btn-primary">Create Policy</button>
+                        <button class="btn btn-outline-primary policy_back">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        javascript = """
+        <script>
+        $(".tbl_member_edit").click(function(){
+            var data = {member_id : $(this).attr('member_id'),
+                        product_id : $(this).attr('product_id')};
+            $.redirect('/policy/btn_create_new_policy_form', data);
+        });
+        $("#btn_create_new_policy").click(function(){
+            console.log('Clicked')
+            var data = {member_id : $(this).attr('member_id'),
+                        product_id : $(this).attr('product_id')};
+            $.redirect('/policy/create_new_policy_form', data);
+        });
+        $('.policy_back').click(function(){
+            $('#dialog_new_policy').modal('hide');
+        });
+
+        $('#dialog_new_policy').modal();
+        </script>
+        """
+        return html + javascript
+
+        # this needs to be added to the above save function!!!!
+        # Make sure there is a product id and member id, we can fake/default the rest
+        # setFormValidation('#form_new_product');
+        # $('#save_new_product').click(function(){
+        #      var valid = FormIsValid("#form_new_product");
+        #      if(valid){
+        #         var formserial = $('#form_new_product').serialize();
+        #         $.post('/product/save_new_product?', formserial, function(data){
+        #             var result = JSON.parse(data);
+        #             if(result.success === true){
+        #                 $.redirect(result.redirect, {'product_id' : result.product_id});
+        #             };
+        #             return false;
+        #         });
+        #      }
+        # });
+
+
+    def get_selectbox_products(self, *args, **kwargs):
+        #dbase_query = Product.get_all('code')
+        kwargs['id'] = 'product_id'
+        #SHOULD BE A LIST OF active PRODUCTS!
+        print("Build list of available Products")
+        kwargs['outputdict'] = []
+
+        return create_selectbox_html(**kwargs)
+
+##################################################################################################################
+# Create NEW Policy
+##################################################################################################################
+
+    @require(predicates.not_anonymous())
+    @expose('rocket.templates.generic')
+    def create_new_policy_form(self, *args, **kwargs):
+        member_id = kwargs.get('member_id', None)
+        product_id = kwargs.get('product_id', None)
+        print()
+        print('Product_id', product_id)
+        print('Member_id', member_id)
+        print()
+        if not member_id: return ''
+        member = Member.by_id(member_id)
+        #if not member: return ''
+        if not product_id: return ''
+        product = Product.by_id(product_id)
+        #if not product: return ''
+        print('placeholder: We need initial validation here')
+        #We need to do some initial validation here. Is the person too old to purhcase product or age >= maturity age.
+        html = self.get_new_policy_html(*args, **kwargs)
+        javascript = self.get_javascript_new_policy_onload()
+        title = _("New Policy")
+        return dict(title=title, html=html, javascript=javascript)
+
+    @expose()
+    def get_new_policy_html(self, *args, **kwargs):
+        product_id = kwargs.get('product_id', None)
+        product = Product.by_id(product_id)
+        td = TypeDict()
+        print('Placehodler: Fake date hereunder for removal')
+        if product: # Initial protective code. Testing only.
+            product_type_id = product.product_type_id
+        else:
+            product_type_id = td.get_id_of_name('product_type', 'voucher')
+
+        if product_type_id == td.get_id_of_name('product_type', 'voucher'):
+            #Then do Voucher stuff
+            html = self.get_new_voucher_policy_html(*args, **kwargs)
+
+        # elif product_type_id == td.get_id_of_name('product_type', 'traditional'):
+        #     #Then do Traditional stuff
+        #     html = self.get_new_traditional_policy_html(*args, **kwargs)
+        # elif product_type_id == td.get_id_of_name('product_type', 'term_life'):
+        #     #Then do Term Life stuff
+        #     html = self.get_new_term_life_policy_html(*args, **kwargs)
+        # elif product_type_id == td.get_id_of_name('product_type', 'credit_life'):
+        #     #Then do Credit Life stuff
+        #     html = self.get_new_credit_life_policy_html(*args, **kwargs)
+        else:
+            #Do nothing here.
+            html = ''
+        return html
+
+    @expose()
+    def get_javascript_new_policy_onload(self, *args, **kwargs):
+        javascript = """
+        $("#return_to_policy_list").click(function(){
+            $.redirect('/policy/index');
+        });
+        """
+        return javascript
+
+    @expose()
+    def get_new_voucher_policy_html(self, *args, **kwargs):
+        member_id = kwargs.get('member_id', None)
+        product_id = kwargs.get('product_id', None)
+        member = Member.by_id(member_id)
+        product = Product.by_id(product_id)
+        td = TypeDict()
+        #product_type_id = product.product_type_id
+        product_type_id = td.get_id_of_name('product_type', 'voucher')
+        product_type = td.get_pretty_name('product_type', product_type_id)
+
+        # HEADER
+        card_header = self.get_policy_card_title_html(member_id,product_id)
+        # TAB 1
+        card_product_details = self.get_show_product_details_html(product_id)
+        card_product_pricing = ''
+        #card_product_durations = self.get_edit_product_voucher_durations_html(product_id)
+        card_product_durations = ''
+        #card_product_pricing = self.get_edit_product_pricing_html(product_id)
+        family_benefits_html = ''
+        #family_benefits_html = self.get_family_benefits_html(product_id)
+        card_btn_save = ''
+
+#$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+        form_show_voucher_product = f"""
+        <form id='form_edit_voucher_product'>
+            {card_product_details}
+            {card_product_pricing}
+            {card_product_durations}
+        </form>
+        {card_btn_save}
+        <div id='dialogdiv'></div>
+        """
+
+#$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+        #Selected Product showing type. and Benefit list and Dates and validity periods
+        #Populate Member details as Main Life Assuded
+
+        #Beneficiary(s).
+        #Family Member(s). if needed
+        #Loader(s). if needed
+        #Save Premium and Details
+        #Save Premium Payment SChedule
+        #Save Loader(s)
+        html = f"""
+        {card_header}
+        <div class="row">
+            <div class="col-md-12 ml-auto mr-auto">
+                <div class="col-md-12 ml-auto mr-auto">
+                    <ul class="nav nav-pills nav-pills-primary justify-content-center" role="tablist">
+                        <li class="nav-item">
+                            <a class="nav-link active" data-toggle="tab" href="#tab1" role="tablist">
+                                Product Details
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" data-toggle="tab" href="#tab2" role="tablist">
+                                Tab 2
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" data-toggle="tab" href="#tab3" role="tablist">
+                                Tab 3
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" data-toggle="tab" href="#tab4" role="tablist">
+                                Tab 4
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" data-toggle="tab" href="#tab5" role="tablist">
+                                Tab 5
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" data-toggle="tab" href="#tab6" role="tablist">
+                                Tab 6
+                            </a>
+                        </li>
+                    </ul>
+                </div>
+                <div class="tab-content tab-space tab-subcategories">
+                    <div class="tab-pane active" id="tab1">
+                        {form_show_voucher_product}
+                    </div>
+                    <div class="tab-pane" id="tab2">
+                        TAB2
+                    </div>
+                    <div class="tab-pane" id="tab3">
+                        TAB3
+                    </div>
+                    <div class="tab-pane" id="tab4">
+                        TAB4
+                    </div>
+                    <div class="tab-pane" id="tab5">
+                        TAB5
+                    </div>
+                    <div class="tab-pane" id="tab6">
+                        TAB6
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        return html
+
+#     @expose()
+#     def get_new_traditional_policy_html(self, *args, **kwargs):
+#         member_id = kwargs.get('member_id', None)
+#         product_id = kwargs.get('product_id', None)
+#         member = Member.by_id(member_id)
+#         product = Product.by_id(product_id)
+#         td = TypeDict()
+# $$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+#         #product_type_id = product.product_type_id
+#         product_type_id = td.get_id_of_name('product_type', 'voucher')
+
+#         # HEADER
+#         card_header = self.get_policy_card_title_html(member_id)
+#         product_type = td.get_pretty_name('product_type', product_type_id)
+
+#         # TAB 1
+# #         card_product_details = self.get_show_product_details_html(product_id)
+# #         card_product_age_limits = self.get_show_product_age_limits_html(product_id)
+# #         card_product_group_details = self.get_edit_show_group_details_html(product_id)
+# #         card_product_durations = self.get_edit_product_voucher_durations_html(product_id)
+# #         card_product_pricing = self.get_edit_product_pricing_html(product_id)
+# #         family_benefits_html = self.get_family_benefits_html(product_id)
+
+# # $$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+#         html = f"""
+#         {card_header} | {product_type}
+#         """
+# #$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+#         #Selected Product showing type. and Benefit list and Dates and validity periods
+#         #Populate Member details as Main Life Assuded
+
+#         #Beneficiary(s).
+#         #Family Member(s). if needed
+#         #Loader(s). if needed
+#         #Save Premium and Details
+#         #Save Premium Payment SChedule
+#         #Save Loader(s)
+
+# $$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+#         return html
+
+    def get_policy_card_title_html(self, member_id=None, product_id=None, *args, **kwargs):
+        if not member_id: return ''
+        member = Member.by_id(member_id)
+        #if not member: return ''
+        product = Product.by_id(product_id)
+        #if not product: return ''
+        td = TypeDict()
+
+        #Get the person from Vault
+        print('Placeholder: for vault.')
+
+        print('Placeholder: for fake data removel.')
+        person = 'Placeholder for vault'
+        identity_number = '1234567890123'
+        name = 'Joe'
+        surname = 'Soap'
+
+        this_person = surname+', '+name+' ('+identity_number+')'
+        print('Placeholder: for fake data removel.')
+        if product: # Initial protective code. Testing only.
+            product_type_id = product.product_type_id
+            product_code = product.code
+            product_name = product.name
+            product_owner_id = product.product_owner_id
+            product_insurer_id = product.insurer_id
+            product_life_assured_type_id = product.product_life_assured_type_id
+            currency_id = product.currency_id
+        else:
+            product_type_id = td.get_id_of_name('product_type', 'voucher')
+            product_code = 'TEST001'
+            product_name = 'Test Product Number 001'
+            product_owner_id = 1
+            product_insurer_id = 2
+            product_life_assured_type_id = td.get_id_of_name('product_life_assured_type', 'member_and_family')
+            product_currency_id = 1
+
+        traditional = td.get_id_of_name('product_type', 'traditional')
+        fixed_price = td.get_id_of_name('product_price_initial_setup_type', 'fixed_price')
+        product_type = td.get_pretty_name('product_type', product_type_id)
+        life_assured_type = td.get_pretty_name('product_life_assured_type', product_life_assured_type_id)
+
+        html = f"""
+        <div class="row">
+            <div class="col-md-12">
+            <div class="card">
+                <div class="card-header">
+                    <div class="row d-flex">
+                        <div class="col-md-6">
+                            <h4 class="card-title">Create new Policy for: </h4>
+                            <h3 class="card-title">{this_person}</h3>
+                        </div>
+                        <div class="col-md-6 text-right">
+                            <button id="return_to_policy_list" class="btn btn-primary ml-auto">Return to Policy List</button>
+                        </div>
+                    </div>
+                    <hr>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-7">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label">{product_code} - </label>
+                                    <label class="col-md-3 col-form-label">{product_name}</label>
+                                </div>
+
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label">{_('Life(s) Assured: ')}</label>
+                                    <label class="col-md-3 col-form-label">{life_assured_type}</label>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        return html
+
+
+    def get_show_product_details_html(self, product_id=None, *args, **kwargs):
+        return ''
+        product = Product.by_id(product_id)
+        #if not product: return ''
+        td = TypeDict()
+
+        if product: # Initial protective code. Testing only.
+            product_type_id = product.product_type_id
+            product_code = product.code
+            product_name = product.name
+            product_owner_id = product.product_owner_id
+            product_insurer_id = product.insurer_id
+            product_life_assured_type_id = product.product_life_assured_type_id
+            currency_id = product.currency_id
+            product_state_id = product.product_state_id
+            policy_number_prefix = product.policy_number_prefix
+            product_purchase_type_id = product.product_purchase_type_id
+            purchasable_from_date = product.purchasable_from_date
+            purchasable_to_date = product.purchasable_to_date
+            product_price_initial_setup_type_id = product.product_price_initial_setup_type_id
+            product_premium_rate_table_id = product.product_premium_rate_table_id
+            maturity_age = product.maturity_age
+        else:
+            product_type_id = td.get_id_of_name('product_type', 'voucher')
+            product_code = 'TEST001'
+            product_name = 'Test Product Number 001'
+            product_owner_id = 1
+            product_insurer_id = 2
+            product_life_assured_type_id = td.get_id_of_name('product_life_assured_type', 'member_and_family')
+            product_currency_id = 1
+            policy_number_prefix = 'XYZ'
+            product_purchase_type_id = td.get_id_of_name('product_purchase_type', 'group')
+            purchasable_from_date = date.today()
+            purchasable_to_date = date.today()
+            product_price_initial_setup_type_id = td.get_id_of_name('product_price_initial_setup_type', 'fixed_price')
+            product_premium_rate_table_id = 1
+            maturity_age = 65
+
+        traditional = td.get_id_of_name('product_type', 'traditional')
+        fixed_price = td.get_id_of_name('product_price_initial_setup_type', 'fixed_price')
+        life_assured_type = td.get_pretty_name('product_life_assured_type', product_life_assured_type_id)
+        product_purchase_type = td.get_pretty_name('product_purchase_type', product_purchase_type_id)
+        product_price_initial_setup_type = td.get_pretty_name('product_price_initial_setup_type', product_price_initial_setup_type_id)
+        product_price = self.get_product_price(product_id) if product_price_initial_setup_type_id == fixed_price else ' Select '
+        #Get from Entity_organisation
+        product_owner = self.get_entity_organisation_name(product_owner_id)
+        product_insurer = self.get_entity_organisation_name(product_owner_id)
+
+        maturation_html = ''
+        if int(product_type_id) == traditional and maturity_age:
+            maturation_html = f"""
+            <div class="col-md-6">
+                <div class="form-group row">
+                    <label class="col-md-3 col-form-label">{_('Maturation Age:')}</label>
+                    <label class="col-md-3 col-form-label">{product.maturity_age}</label>
+                </div>
+            </div>
+            """
+
+        html = f"""
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="row d-flex">
+                            <div class="col-md-6">
+                                <h4 class="card-title">{_('Product Details')}</h4>
+                            </div>
+                        </div>
+                        <hr>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-7">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label">{product_code} - </label>
+                                    <label class="col-md-3 col-form-label">{product_name}</label>
+                                </div>
+
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label">{_('Product Owner: ')}</label>
+                                    <label class="col-md-3 col-form-label">{product_owner}</label>
+                                    <label class="col-md-3 col-form-label">{_('Product Insurer: ')}</label>
+                                    <label class="col-md-3 col-form-label">{product_insurer}</label>
+                                </div>
+
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label">{_('Life(s) Assured: ')}</label>
+                                    <label class="col-md-3 col-form-label">{life_assured_type}</label>
+                                    <label class="col-md-3 col-form-label">{_('Purchase Type: ')}</label>
+                                    <label class="col-md-3 col-form-label">{product_purchase_type}</label>
+                                </div>
+
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label">{_('Pricing Type: ')}</label>
+                                    <label class="col-md-3 col-form-label">{product_price_initial_setup_type}</label>
+                                    <label class="col-md-3 col-form-label">{_('Pricing : ')}</label>
+                                    <label class="col-md-3 col-form-label">{product_price}</label>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="row">
+                            {maturation_html}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        return html
+
+    def get_edit_product_group_details_html(self, product_id=None, *args, **kwargs):
+        if not product_id: return ''
+        product = Product.by_id(product_id)
+        if not product: return ''
+        selectbox_product_owner = self.get_selectbox_product_owner()
+        selectbox_insurer = self.get_selectbox_insurer()
+        html = f"""
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="row d-flex">
+                            <div class="col-md-6">
+                                <h4 class="card-title">{_('Group Details')}</h4>
+                            </div>
+                        </div>
+                        <hr>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label" required>{_('Product Owner')}</label>
+                                    <div class="col-md-9">
+                                        {selectbox_product_owner}
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label">{_('Insurer')}</label>
+                                    <div class="col-md-9">
+                                        {selectbox_insurer}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        return html
+
+
+    def get_entity_organisation_name(self, entity_organisation_id=None, *args, **kwargs):
+        if not entity_organisation_id: return ''
+        entity_organisation = EntityOrganisation.by_id(entity_organisation_id)
+        if not entity_organisation: return ''
+        organisation_name = entity_organisation.name
+        return organisation_name
+
+    def get_product_price(self, product_id=None, *args, **kwargs):
+        if not product_id: return ''
+        product_price = ''
+        outputlist = ProductPrice.by_attr_all('product_id', product_id)
+        for item in outputlist: product_price = item.price
+        return product_price
+
+
+#----- Save the Policy Here now.
+# Notes:
+# Save enough detail away from the popuip to create the policy record.
+# Thereafter we have the Policy_id that can be used everytwhere.
+
+    @expose()
+    def save_new_policy(self, *args, **kwargs):
+        product_id = kwargs.get('product_id')
+        td = TypeDict()
+        product = Product.by_id(product_id)
+        policy_number = self.generate_new_policy_number(product_id)
+        policy_type_id = td.get_id_of_name('policy_type', 'individual')
+        product_frequency_type_id = kwargs.get('product_frequency_type_id')
+
+        #Save Policy
+        dict_policy = {
+            'policy_number': policy_number,
+            'policy_type_id':  policy_type_id,
+            'product_id':  policy_id,
+            'policy_owner_id':  kwargs.get('member_id'),
+            'policy_holder_id':  kwargs.get('member_id'),
+            'application_form_serial_no':  kwargs.get('application_form_serial_no'),
+            'intermediary_id':  kwargs.get('intermediary_id'),
+        }
+        policy_id = self.save_new_policy(**dict_policy)
+
+        #Save Policy State
+        dict_policy_state = {
+            'policy_id': policy_id,
+            'policy_state_type_id': td.get_id_of_name('policy_state_type', 'proposal'),
+            #'policy_state_type_id': td.get_id_of_name('policy_state_type', 'policy'),
+            'datetime_set': datetime.now(),
+        }
+        policy_state_id = self.save_new_policy_state(**dict_policy_state)
+
+        #Save Proposal Date
+        proposal_date = date.today()
+        if proposal_date:
+            #Save Policy Date
+            dict_policy_date = {
+                'policy_id': policy_id,
+                'policy_date_type_id': td.get_id_of_name('policy_date_type', 'proposal'),
+                'date': proposal_date,
+            }
+            policy_date_id = self.save_new_policy_date(**dict_policy_date)
+        return json.dumps({'success': True, 'policy_id': policy_id})
+
+#\$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+    @expose()
+    def save_new_policy_dates(self, *args, **kwargs):
+        product_id = kwargs.get('product_id')
+        td = TypeDict()
+        print('Placeholder: for fake data removal.')
+        #product_frequency_type_id = kwargs.get('product_frequency_type_id')
+        product_frequency_type_id = td.get_id_of_name('product_frequency_type', 'monthly')
+
+        #Save Policy Dates
+        wait_period = 0
+        wait_period_type_id = None
+        cover_period = 0
+        cover_period_type_id = None
+        cover_from_date = date.today()
+        cover_to_date = None
+        #Get the periods
+        outputlist = ProductPeriod.by_attr_all('product_id', product_id)
+        for item in outputlist:
+            #Period Effect
+            if item.product_period_effect_type_id == td.get_id_of_name('product_period_effect_type', 'active'):
+                #Cover period can get set here..
+                cover_period = item.time_period
+                cover_period_type_id = item.product_period_type_id
+
+            elif item.product_period_effect_type_id == td.get_id_of_name('product_period_effect_type', 'waiting'):
+                #Set Wait period here
+                wait_period = item.time_period
+                wait_period_type_id = item.product_period_type_id
+
+        #Evaluate the periods
+        cover_from_date =  self.set_cover_from_date(cover_from_date,wait_period,wait_period_type_id)
+        cover_to_date = self.set_cover_to_date(cover_from_date, cover_period)
+
+        #Default vaules
+        accepted_date = date.today()
+        policy_date = date.today()
+        valid_from_date = cover_from_date
+        valid_to_date = cover_to_date
+        maturatity_date = None
+        member_age = kwargs.get("memberage",None)
+
+        # Maturity
+        if product.maturity_age and member_age:
+            #Then we can set the maturity date by obtaining the difference between the mmebers current age and the maturity age
+            maturatity_date = add_months_to_date(date.today(),((product.maturity_age - member_age)+1))
+
+        #Save away the various dates as needed.
+        if accepted_date:
+            policy_date_id = self.build_and_save_policy_date(policy_id,td.get_id_of_name('policy_date_type', 'accepted'),accepted_date)
+
+        if policy_date:
+            policy_date_id = self.build_and_save_policy_date(policy_id,td.get_id_of_name('policy_date_type', 'policy'),policy_date)
+
+        if valid_from_date:
+            policy_date_id = self.build_and_save_policy_date(policy_id,td.get_id_of_name('policy_date_type', 'valid_from'),valid_from_date)
+
+        if valid_to_date:
+            policy_date_id = self.build_and_save_policy_date(policy_id,td.get_id_of_name('policy_date_type', 'valid_to'),valid_to_date)
+
+        if maturatity_date:
+            policy_date_id = self.build_and_save_policy_date(policy_id,td.get_id_of_name('policy_date_type', 'maturatity'),maturatity_date)
+
+        return json.dumps({'success': True})
+
+#\$$$$$$$$$$$$$$$$$$$$$$$$$$$$$ print('Placeholder: for fake data removal.')
+    @expose()
+    def save_new_policy_benefits(self, *args, **kwargs):
+        product_id = kwargs.get('product_id')
+        td = TypeDict()
+        #Save Benefit(s) and details
+
+        #Product Benefit
+        product_benefits = ProductBenefit.by_attr_all('product_id', product_id,)
+        for benefit in product_benefits:
+            dict_policy_benefit = {
+                'policy_id': policy_id,
+                'product_benefit_id': benefit.id,
+                'claims_left': benefit.number_of_claims
+            }
+            policy_benefit_id = self.save_new_policy_benefit(**dict_policy_benefit)
+
+            #Product Benefit Cover
+            benefit_cover_link = ProductBenefitCoverLink.by_id(benefit.product_benefit_cover_link_id)
+            dict_policy_benefit_cover = {
+                'policy_benefit_id': policy_benefit_id,
+                'product_cover_and_exclusion_type_id': benefit_cover_link.product_cover_and_exclusion_type_id
+            }
+            policy_benefit_cover_id = self.save_new_policy_benefit_cover(**dict_policy_benefit_cover)
+
+            #Product Benefit exclusions
+            product_benefit_exclusions = ProductBenefitExclusion.by_attr_all('product_benefit_id', benefit.id)
+            for exclusion in product_benefit_exclusions:
+                dict_policy_benefit_exclusion = {
+                    'policy_benefit_id': policy_benefit_id,
+                    'product_benefit_exclusion_id': exclusion.id,
+                }
+                policy_benefit_exclusion_id = self.save_new_policy_benefit_exclusion(**dict_policy_benefit_exclusion)
+
+                number_of_days = td.get_id_of_name('product_benefit_exclusion_expiry_type', 'number_of_days')
+                number_of_premiums = td.get_id_of_name('product_benefit_exclusion_expiry_type', 'number_of_premiums')
+                infinite = td.get_id_of_name('product_benefit_exclusion_expiry_type', 'infinite')
+
+                if exclusion.product_benefit_exclusion_expiry_type_id == number_of_days:
+                    #Calculate the days from today
+                    product_benefit_exclusion_days = ProductBenefitExclusionExpiryDays.by_attr_all('product_benefit_exclusion_id', exclusion.id)
+                    for exclusion_day in product_benefit_exclusion_days:
+                        exclusion_days = exclusion_day.number_of_days
+                    expiry_date = add_days_to_date(date.today(), exclusion_days)
+
+                elif exclusion.product_benefit_exclusion_expiry_type_id == number_of_premiums:
+                    print('Placeholder: Give this more thought.')
+                    #Calculate the propoised number of premiums from today. Read the selected premium frequency to determine this.
+                    if product_frequency_type_id == td.get_id_of_name('product_frequency_type', 'single'):
+                        #Then what do we do? TODO: Default to Infinite for now till we have clarity
+                        expiry_date = None
+                    elif product_frequency_type_id == td.get_id_of_name('product_frequency_type', 'daily'):
+                        #Then what do we do???
+                        expiry_date = add_days_to_date(date.today(), 1) #TODO: Makes no sense....
+                    elif product_frequency_type_id == td.get_id_of_name('product_frequency_type', 'monthly'):
+                        #Then what do we do???
+                        expiry_date = None
+                        expiry_date = add_months_to_date(date.today(), 1)
+                    elif product_frequency_type_id == td.get_id_of_name('product_frequency_type', 'semi_annually'):
+                        #Then what do we do???
+                        expiry_date = add_months_to_date(date.today(), 6)
+                    elif product_frequency_type_id == td.get_id_of_name('product_frequency_type', 'annually'):
+                        #Then what do we do???
+                        expiry_date = add_months_to_date(date.today(), 12)
+                    else:
+                        #This is infinite
+                        expiry_date = None
+                else:
+                    #This is infinite
+                    expiry_date = None
+                dict_policy_benefit_exclusion_expiry = {
+                    'policy_benefit_exclusion_id': policy_benefit_exclusion_id,
+                    'expiry_date': expiry_date,
+                }
+                policy_benefit_exclusion_expiry_id = self.save_new_policy_benefit_exclusion_expiry(**dict_policy_benefit_exclusion_expiry)
+
+        return json.dumps({'success': True})
+        print('Placeholder: Some message here.')
+
+# ######################################################################################################################
+# #Child Files
+# \$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+# #Save Beneficiary(s)
+    @expose()
+    def save_new_policy_beneficiaryobj(self, *args, **kwargs):
+        #member and person records shouold be saved before we get here.
+        policy_id = kwargs.get('policy_id', None)
+        beneficiary_id = kwargs.get('member_id', None)
+        notify = kwargs.get('notify', False)
+        relationship_type_id = kwargs.get('relationship_type_id', None)
+        share_of_sum_assured = kwargs.get('share_of_sum_assured', 0.00)
+        td = TypeDict()
+        principal = td.get_id_of_name('product_life_assured_relationship_type', 'principal')
+        if relationship_type_id == principal and not share_of_sum_assured:
+            share_of_sum_assured = 100.00 # Default for principal life assured
+        #Save beneficiary
+        dict_beneficiary = {
+            'policy_id':  policy_id,
+            'beneficiary_id': beneficiary_id ,
+            'notify': notify ,
+            'relationship_type_id': relationship_type_id ,
+            'share_of_sum_assured': share_of_sum_assured ,
+        }
+        policy_beneficiary_id = self.save_new_policy_beneficiary(**dict_beneficiary)
+        return json.dumps({'success': True})
+
+
+# \$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+
+# #Save Life Assured(s) and Details
+
+# \$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+
+# #Save Loader(s)
+
+# \$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+
+# #Save Premium and Details
+
+# \$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+
+# #Save Premium Payment SChedule
+
+# \$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+
+#         return json.dumps({'success': True})
+
+    def generate_new_policy_number(product_id, *args, **kwargs):
+        product = Product.by_id(product_id)
+        p_prefix = product.policy_number_prefix.strip()
+        # prefix = product.policy_number_prefix
+        # prefix.strip()
+        owners = ProductOwner.by_attr_limit('entity_organisation_id', product.product_owner_id,1)
+        for owner in owners: product_owner = owner
+
+# \$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+        o_prefix = product_owner.policy_number_prefix.strip()
+        now = datetime.now()
+        body = now.strftime("%y%m%d%H%M%S%f")
+        new_policy_number = o_prefix+p_prefix+body
+        return new_policy_number
+
+    def set_cover_from_date(cover_from_date,wait_period=None,wait_period_type_id=None, *args, **kwargs):
+        if not cover_from_date: cover_from_date = date.today()
+        if wait_period > 0 and wait_period_type_id:
+            #set the cover from date
+            if wait_period_type_id == td.get_id_of_name('product_period_type', 'days'):
+                cover_from_date = add_days_to_date(cover_from_date,wait_period)
+
+            elif wait_period_type_id == td.get_id_of_name('product_period_type', 'months'):
+                cover_from_date = add_months_to_date(cover_from_date,wait_period)
+
+            elif wait_period_type_id == td.get_id_of_name('product_period_type', 'calendar_months'):
+                cover_from_date = add_months_to_date(first_day_of_month(add_months_to_date(cover_from_date,1)),wait_period)
+
+            elif wait_period_type_id == td.get_id_of_name('product_period_type', 'years'):
+                cover_from_date = add_months_to_date(cover_from_date,(wait_period*12))
+
+        return cover_from_date
+
+
+    def set_cover_to_date(cover_from_date=None, cover_period=None, *args, **kwargs):
+        cover_to_date = None
+        if cover_period > 0 and cover_period_type_id:
+            #set the cover to date
+            if wait_period_type_id == td.get_id_of_name('product_period_type', 'days'):
+                cover_to_date = add_days_to_date(cover_from_date,cover_period)
+
+            elif wait_period_type_id == td.get_id_of_name('product_period_type', 'months'):
+                cover_to_date = add_months_to_date(cover_from_date,cover_period)
+
+            elif wait_period_type_id == td.get_id_of_name('product_period_type', 'calendar_months'):
+                cover_to_date = add_months_to_date(first_day_of_month(add_months_to_date(cover_from_date,1)),cover_period)
+
+            elif wait_period_type_id == td.get_id_of_name('product_period_type', 'years'):
+                cover_to_date = add_months_to_date(cover_from_date,(cover_period*12))
+
+        return cover_to_date
+
+    @expose()
+    def save_new_policy(self, *args, **kwargs):
+        usernow = request.identity['user']
+        this = Policy()
+        this.policy_number = kwargs.get('policy_number', '')
+        this.policy_type_id = kwargs.get('policy_type_id', None)
+        this.product_id = kwargs.get('product_id', None)
+        this.policy_owner_id = kwargs.get('policy_owner_id', None)
+        this.policy_holder_id = kwargs.get('policy_holder_id', None)
+        this.application_form_serial_no = kwargs.get('application_form_serial_no', None)
+        this.intermediary_id = kwargs.get('intermediary_id', None)
+        this.added_by = usernow.id
+        DBSession.add(this)
+        DBSession.flush()
+        return this.id
+
+    @expose()
+    def save_new_policy_state(self, *args, **kwargs):
+        usernow = request.identity['user']
+        this = PolicyState()
+        this.policy_id = kwargs.get('policy_id', None)
+        this.policy_state_type_id = kwargs.get('policy_state_type_id', None)
+        this.datetime_set = datetime.now()
+        this.added_by = usernow.id
+        DBSession.add(this)
+        DBSession.flush()
+        return this.id
+
+    @expose()
+    def build_and_save_policy_date(policy_id=None,policy_date_type_id=None,date=None, *args, **kwargs):
+        dict_policy_date = {
+            'policy_id': policy_id,
+            'policy_date_type_id': policy_date_type_id,
+            'date': date,
+        }
+        return self.save_new_policy_date(**dict_policy_date)
+
+    @expose()
+    def save_new_policy_date(self, *args, **kwargs):
+        usernow = request.identity['user']
+        this = PolicyDate()
+        this.product_id = kwargs.get('product_id', None)
+        this.policy_date_type_id = kwargs.get('policy_date_type_id', None)
+        this.date = kwargs.get('date', None)
+        this.added_by = usernow.id
+        DBSession.add(this)
+        DBSession.flush()
+        return this.id
+
+    @expose()
+    def save_new_policy_benefit(self, *args, **kwargs):
+        usernow = request.identity['user']
+        this = PolicyBenefit()
+        this.policy_id = kwargs.get('policy_id', None)
+        this.product_benefit_id = kwargs.get('product_benefit_id', None)
+        this.claims_left = kwargs.get('claims_left', None)
+        this.added_by = usernow.id
+        DBSession.add(this)
+        DBSession.flush()
+        return this.id
+
+    @expose()
+    def save_new_policy_benefit(self, *args, **kwargs):
+        usernow = request.identity['user']
+        this = PolicyBenefitCover()
+        this.policy_benefit_id = kwargs.get('policy_benefit_id', None)
+        this.product_cover_and_exclusion_type_id = kwargs.get('product_cover_and_exclusion_type_id', None)
+        this.added_by = usernow.id
+        DBSession.add(this)
+        DBSession.flush()
+        return this.id
+
+    @expose()
+    def save_new_policy_benefit_exclusion(self, *args, **kwargs):
+        usernow = request.identity['user']
+        this = PolicyBenefitExclusion()
+        this.policy_benefit_id = kwargs.get('policy_benefit_id', None)
+        this.product_benefit_exclusion_id = kwargs.get('product_benefit_exclusion_id', None)
+        this.added_by = usernow.id
+        DBSession.add(this)
+        DBSession.flush()
+        return this.id
+
+    @expose()
+    def save_new_policy_benefit_exclusion_expiry(self, *args, **kwargs):
+        usernow = request.identity['user']
+        this = PolicyBenefitExclusionExpiry()
+        this.product_benefit_exclusion_id = kwargs.get('product_benefit_exclusion_id', None)
+        this.expiry_date = kwargs.get('expiry_date', None)
+        this.added_by = usernow.id
+        DBSession.add(this)
+        DBSession.flush()
+        return this.id
+
+    @expose()
+    def save_new_policy_beneficiary(self, *args, **kwargs):
+        usernow = request.identity['user']
+        this = PolicyBeneficiary()
+        this.policy_id = kwargs.get('policy_id', None)
+        this.beneficiary_id = kwargs.get('beneficiary_id', None)
+        this.notify = kwargs.get('notify', None)
+        this.relationship_type_id = kwargs.get('relationship_type_id', None)
+        this.share_of_sum_assured = kwargs.get('share_of_sum_assured', None)
+        this.added_by = usernow.id
+        DBSession.add(this)
+        DBSession.flush()
+        return this.id

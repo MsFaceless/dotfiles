@@ -1,0 +1,46 @@
+# -*- coding: utf-8 -*-
+"""Report controller module"""
+
+from tg import predicates, require
+from tg import expose, redirect, validate, flash, url, request
+
+from tg.i18n import ugettext as _
+from tg.i18n import lazy_ugettext as l_
+
+from rocket.model import *
+
+from sqlalchemy import func, desc, asc
+
+from rocket.lib.tg_utils import *
+from rocket.lib.base import BaseController
+
+LIMIT = 20
+
+class ReportController(BaseController):
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    @require(predicates.not_anonymous())
+    @expose('rocket.templates.generic')
+    def policy_sales(self, *args, **kwargs):
+        html = ""
+        javascript = "console.log('policy_sales')"
+        title = _("policy_sales")
+        return dict(title=title, html=html, javascript=javascript)
+
+    @require(predicates.not_anonymous())
+    @expose('rocket.templates.generic')
+    def allocations(self, *args, **kwargs):
+        html = ""
+        javascript = "console.log('allocations')"
+        title = _("allocations")
+        return dict(title=title, html=html, javascript=javascript)
+
+    @require(predicates.not_anonymous())
+    @expose('rocket.templates.generic')
+    def glaccounts(self, *args, **kwargs):
+        html = ""
+        javascript = "console.log('glaccounts')"
+        title = _("glaccounts")
+        return dict(title=title, html=html, javascript=javascript)

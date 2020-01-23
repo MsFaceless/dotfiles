@@ -5,13 +5,14 @@ set rtp+=~/.vim/bundle/Vundle.vim
 call vundle#begin()
 
 Plugin 'VundleVim/Vundle.vim'
-Plugin 'Valloric/YouCompleteMe'
 Plugin 'SirVer/ultisnips'
 Plugin 'honza/vim-snippets'
 Plugin 'majutsushi/tagbar'
 Plugin 'leafgarland/typescript-vim'
 Plugin 'vim-airline/vim-airline'
 Plugin 'vim-airline/vim-airline-themes'
+Plugin 'Valloric/YouCompleteMe'
+Bundle 'OmniSharp/omnisharp-vim'
 
 call vundle#end()
 
@@ -64,15 +65,19 @@ for prefix in ['i', 'n', 'v']
     endfor
 endfor
 
+" Open the tagbar toggler
 nmap <F3> :TagbarToggle<CR>
-
-" Removes trailing whitespaces
-nmap <silent><F4> :%s/\s\+$//e<CR>
 " Deletes empty lines
-nmap <silent><F5> :g/^$/d<CR>
+nmap <F4> :g/^$/d<CR>
+" Removes trailing whitespaces
+nmap <F5> :%s/\s\+$//e<CR>
 " Add an empty space after commas
 nmap <F6> :%s/,\(\S\)/, \1/g<CR>
-" Remove spaces in empty strings 
+
+" Add an empty space after colons
+nmap <F8> :%s/:\(\S\)/: \1/g<CR>
+
+" Remove spaces in empty strings
 nmap <F7> :%s/' '/''/gc<CR>
 
 " Shows tabs and spaces
@@ -83,7 +88,8 @@ if has('autocmd')
     autocmd FileType python nmap <F8> :w\|!python3 %<cr>
     autocmd FileType sh nmap <F2> :w\|!sh %<cr>
     autocmd FileType cpp nmap <F2> :w\|!g++ -g -c -o %< % && ./%<<cr>
-    autocmd BufRead *.html nmap <F2> :w\|!chromium-browser %<cr>
+    autocmd FileType cs nmap <F2> :w\|!csc ./%<cr>
+    autocmd BufRead *.html nmap <F2> :w\|!brave ./%<cr>
 
     autocmd BufNewFile *.py 0r ~/.vim/templates/skeleton.py
     autocmd BufNewFile *.sh 0r ~/.vim/templates/skeleton.sh
@@ -103,3 +109,8 @@ let g:UltiSnipsEditSplit="horizontal"
 
 "YouCompleteMe Config
 let g:ycm_autoclose_preview_window_after_completion=1
+
+"Airline Config
+let g:airline_section_b = '%{strftime("%c")}'
+let g:airline_section_y = 'BN: %{bufnr("%")}'
+let g:airline_theme = 'simple'

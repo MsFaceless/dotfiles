@@ -1,0 +1,36 @@
+# -*- coding: utf-8 -*-
+
+import os
+from datetime import datetime
+from hashlib import sha256
+
+from sqlalchemy import Table, ForeignKey, Column
+from sqlalchemy.types import Unicode, Integer, DateTime, Boolean
+from sqlalchemy.orm import relation, synonym
+
+from rocket.model import DeclarativeBase, metadata, DBSession
+from rocket.lib.model_utils import PhatBase, get_type_table, get_phat_table, common_columns
+
+AddressType = get_type_table(model_name="Address", table_name="address")
+
+columns_tbl_address = {
+    '__tablename__': 'tbl_personidentity',
+    'person_id': common_columns.get('integer')(),
+    'identity_type_id': common_columns.get('integer')(),
+    'number': common_columns.get('code')(),
+    'expiry_date': common_columns.get('datetime')(),
+    }
+
+Address = get_phat_table(model_name="Address", columndict=columns_tbl_address)
+
+IdentityType = get_type_table(model_name='Identity', table_name='identity') 
+
+columns_tbl_personidentity = {
+    '__tablename__': 'tbl_personidentity',
+    'person_id': common_columns.get('integer')(),
+    'identity_type_id': common_columns.get('integer')(),
+    'number': common_columns.get('code')(),
+    'expiry_date': common_columns.get('datetime')(),
+}
+
+Identity = get_phat_table(model_name='Identity', columndict=columns_tbl_personidentity)

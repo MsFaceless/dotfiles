@@ -1,0 +1,9 @@
+-------------------------------------------------------------
+###Simple hack for fixing "MySQL Server has gone Away" error
+-------------------------------------------------------------
+
+Before Running - update $username and $password in sql_timeout_fix.sh
+
+To run, please run: ./sql_timeout_fix.sh
+
+Note - The sql_cmd.txt and sql_timeout_fix.sh need to exist within the same directory.

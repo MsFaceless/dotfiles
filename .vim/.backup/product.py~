@@ -1,0 +1,2882 @@
+# -*- coding: utf-8 -*-
+"""Product controller module"""
+
+from tg import predicates, require
+from tg import expose, redirect, validate, flash, url, request
+
+from tg.i18n import ugettext as _
+from tg.i18n import lazy_ugettext as l_
+
+from rocket.model import *
+
+from sqlalchemy import func, desc, asc
+
+from rocket.lib.tg_utils import *
+from rocket.lib.base import BaseController
+from rocket.lib.type_utils import TypeDictionary as TypeDict
+
+LIMIT = 20
+
+
+class ProductController(BaseController):
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+###############################################################################
+# Product - Voucher, Traditional
+###############################################################################
+
+    @require(predicates.not_anonymous())
+    @expose('rocket.templates.generic')
+    def index(self, *args, **kwargs):
+        html = self.get_product_html(*args, **kwargs)
+        javascript = self.get_javascript_product_onload()
+        title = _("Products")
+        return dict(title=title, html=html, javascript=javascript)
+
+    @expose()
+    def get_product_html(self, *args, **kwargs):
+        selectbox_product_states = self.get_selectbox_product_states(**{
+            'id' : 'product_state_id',
+            #'selected' : searchstate,
+            'class_names': 'col-md-4',
+            })
+        selectbox_product_types = self.get_selectbox_product_types(**{
+            'id' : 'product_type_id',
+            #'selected' : searchtype,
+            'class_names': 'col-md-4',
+            })
+        producttable = self.get_product_htmltbl(**kwargs)
+        html = f"""
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                <div class="card-header">
+                    <div class="row d-flex">
+                        <div class="col-md-6">
+                            <h4 class="card-title">Products</h4>
+                        </div>
+                        <div class="col-md-6 text-right">
+                            <button id="create_new_product" class="btn btn-primary ml-auto">Create a new Product</button>
+                        </div>
+                    </div>
+                    <div class="row d-flex align-items-center">
+                        <div class="col-md-8 d-flex">
+                            <input id='search' type="text" class="form-control mr-2 search" name="searchphrase" placeholder="Search by Code or Description">
+                            {selectbox_product_states}
+                            {selectbox_product_types}
+                        </div>
+                        <div class="col-md-4 pl-0">
+                            <button id='btn_search' class="btn btn-primary action_search">Search</button>
+                            <button id='btn_reset' class="btn btn-primary">Reset</button>
+                        </div>
+                    </div>
+                    <hr>
+                </div>
+                <div class="card-body">
+                    <div id='div_product_table' class="table-responsive">
+                        {producttable}
+                    </div>
+                </div>
+                </div>
+            </div>
+            <div id='dialogdiv'></div>
+        """
+        return html
+
+    @expose()
+    def get_javascript_product_onload(self, *args, **kwargs):
+        javascript = """
+        $("#create_new_product").click(function(){
+            $('#dialogdiv').load('/product/get_modal_new_product?', function(data){
+                return false;
+            });
+        });
+        """
+        return javascript
+
+    @expose()
+    def get_product_htmltbl(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+        img_active = "<img src='/images/icon_check.png' />"
+        img_inactive = "<img src='/images/icon_cross.png' />"
+        outputlist = []
+        dbase_query = Product.get_all('code')
+        td = TypeDict()
+
+        sandbox = td.get_id_of_name('product_state_type', 'sandbox')
+        voucher = td.get_id_of_name('product_type', 'voucher')
+        traditional = td.get_id_of_name('product_type', 'traditional')
+
+        for item in dbase_query:
+
+            disable_text = 'disable' if item.active else 'enable'
+
+            #code = f"<div class='edit product_view' product_id='{item.id}'>{item.code}</div>"
+            #if item.product_state_id == sandbox:
+            #    code = f"<div class='edit product_edit' product_id='{item.id}'>{item.code}</div>"
+
+            code = item.code
+            if item.product_type_id == voucher:
+                code = f"<div class='edit voucher_product_edit' product_id='{item.id}'>{item.code}</div>"
+
+            if item.product_type_id == traditional:
+                code = f"<div class='edit traditional_product_edit' product_id='{item.id}'>{item.code}</div>"
+
+            product_type_name = td.get_pretty_name('product_type', item.product_type_id)
+            product_state_name = td.get_pretty_name('product_state_type', item.product_state_id)
+
+            product_life_assured_type_name = None
+            if item.product_life_assured_type_id:
+                product_life_assured_type_name = td.get_pretty_name('product_life_assured_type', item.product_life_assured_type_id)
+
+            outputlist.append({
+                'code' : code,
+                'name' : item.name,
+                'product_life_assured_type_id' : product_life_assured_type_name,
+                #'price' : getcurrency(item.price),
+                'product_type_id' : product_type_name,
+                'state' : product_state_name,
+                'active' : img_active if item.active else img_inactive,
+                'disable' : f"<div class='product_active' active='{item.active}' product_id='{item.id}' desc='{item.name}'>{disable_text}</div>",
+                })
+        dbcolumnlist=[
+                'code',
+                'name',
+                'product_life_assured_type_id',
+                #'price',
+                'product_type_id',
+                'state',
+                'active',
+                'disable',
+                ]
+        theadlist=[
+                'Code',
+                'Name',
+                'Life Assured',
+                #'Purchase Price',
+                'Product Type',
+                'Product State',
+                'Active',
+                '',
+                ]
+        tdclasslist = [
+                'action_link',
+                '',
+                '',
+                #'',
+                '',
+                '',
+                'text-center',
+                'action_link text-right',
+                ]
+        html = build_html_table(outputlist, dbcolumnlist, theadlist, "product_table", tdclasslist)
+        javascript = """
+        <script>
+        $(".voucher_product_edit").click(function(){
+            var data = {product_id : $(this).attr('product_id')};
+            $.redirect('/product/edit_voucher', data);
+        });
+        $(".traditional_product_edit").click(function(){
+            var data = {product_id : $(this).attr('product_id')};
+            $.redirect('/product/edit_traditional', data);
+        });
+        $(".product_edit").click(function(){
+            var data = {product_id : $(this).attr('product_id')};
+            $.redirect('/product/edit', data);
+        });
+        $(".product_view").click(function(){
+            var data = {product_id : $(this).attr('product_id')};
+            $.redirect('/product/view', data);
+        });
+        $(".product_active").click(function(){
+            var text = $(this).html();
+            var desc = $(this).attr('desc');
+            var result = window.confirm("Are you sure you want to " + text + " '" + desc + "'?");
+            if(result === true){
+                var data = 'product_id='+$(this).attr('product_id');
+                $.post('/product/save_product_active?', data, function(data){
+                    var result = JSON.parse(data);
+                    if(result.success === true){
+                        $.redirect('/product/index');
+                    }
+                    return false;
+                });
+            }
+        });
+        </script>
+        """
+        return html + javascript
+
+    @expose()
+    def get_modal_new_product(self, *args, **kwargs):
+        selectbox_product_types = self.get_selectbox_product_types()
+        html = f"""
+        <div class="modal fade" id="dialog_new_product" tabindex="-1" role="dialog" aria-labelledby="myproductLabel" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <div class="col-md-6">
+                            <h4 class="card-title">New Product</h4>
+                        </div>
+                    </div>
+                    <div class="modal-body">
+                        <form id='form_new_product'>
+                                <div class="col-md-6">
+                                        <div class="form-group row">
+                                                <label class="col-md-5 col-form-label" required for="product_type_id">Product Type</label>
+                                                <div class="col-md-7">
+                                                    {selectbox_product_types}
+                                                </div>
+                                        </div>
+                                </div>
+                                <div class="col-md-6">
+                                        <div class="form-group row">
+                                                <label class="col-md-5 col-form-label" required for="code">Code</label>
+                                                <div class="col-md-7">
+                                                        <input id="code" type="text" name="code" class="form-control" required='true'>
+                                                </div>
+                                        </div>
+                                </div>
+                                <div class="col-md-6">
+                                        <div class="form-group row">
+                                                <label class="col-md-5 col-form-label" required for="name">Description</label>
+                                                <div class="col-md-7">
+                                                        <input id="name" type="text" name="name" class="form-control" required='true'>
+                                                </div>
+                                        </div>
+                                </div>
+                        </form>
+                    </div>
+                    <div class="modal-footer">
+                        <button id='save_new_product' class="btn btn-primary">Save</button>
+                        <button class="btn btn-outline-primary product_back">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        javascript = """
+        <script>
+        setFormValidation('#form_new_product');
+        $('#save_new_product').click(function(){
+             var valid = FormIsValid("#form_new_product");
+             if(valid){
+                var formserial = $('#form_new_product').serialize();
+
+                $.post('/product/save_new_product?', formserial, function(data){
+                    var result = JSON.parse(data);
+                    if(result.success === true){
+                        $.redirect(result.redirect, {'product_id' : result.product_id});
+                    };
+                    return false;
+                });
+             }
+        });
+        $('.product_back').click(function(){
+            $('#dialog_new_product').modal('hide');
+        });
+        $('#dialog_new_product').modal();
+        </script>
+        """
+        return html + javascript
+
+    @expose()
+    def save_new_product(self, *args, **kwargs):
+        usernow = request.identity['user']
+        product_type_id = kwargs.get('product_type_id', None)
+
+        td = TypeDict()
+        sandbox = td.get_id_of_name('product_state_type', 'sandbox')
+
+        this = Product()
+        this.product_type_id = product_type_id
+        this.code = kwargs.get('code', None)
+        this.name = kwargs.get('name', None)
+        this.product_state_id = sandbox
+        this.added_by = usernow.id
+        DBSession.add(this)
+        DBSession.flush()
+
+        voucher = td.get_id_of_name('product_type', 'voucher')
+        traditional = td.get_id_of_name('product_type', 'traditional')
+
+        redirect_url = '/product/index'
+        if int(product_type_id) == voucher: redirect_url = '/product/edit_voucher'
+        if int(product_type_id) == traditional: redirect_url = '/product/edit_traditional'
+
+        return json.dumps({'success' : True, 'product_id' : this.id, 'redirect' : redirect_url})
+
+# ********************* Product Voucher & Traditional ***********************************#
+
+    def get_selectbox_product_states(self, *args, **kwargs):
+        kwargs['id'] = 'product_state_type_id'
+        kwargs['outputdict'] = TypeDict().get_dict_of_types("product_state_type")
+        return create_selectbox_html(**kwargs)
+
+    def get_selectbox_product_types(self, *args, **kwargs):
+        kwargs['id'] = 'product_type_id'
+        kwargs['outputdict'] = TypeDict().get_dict_of_types("product_type")
+        return create_selectbox_html(**kwargs)
+
+    def get_selectbox_cover_types(self, *args, **kwargs):
+        print('Placeholder for ProductCover Link table')
+        kwargs['required'] = True
+        kwargs['id'] = 'product_cover_type_id'
+        kwargs['outputdict'] = TypeDict().get_dict_of_types("product_cover_and_exclusion_type")
+        return create_selectbox_html(**kwargs)
+
+    def get_selectbox_period_effect_types(self, *args, **kwargs):
+        kwargs['required'] = True
+        kwargs['id'] = 'product_period_effect_type_id'
+        kwargs['outputdict'] = TypeDict().get_dict_of_types("product_period_effect_type")
+        return create_selectbox_html(**kwargs)
+
+    def get_selectbox_period_types(self, *args, **kwargs):
+        kwargs['required'] = True
+        kwargs['id'] = 'product_period_type_id'
+        kwargs['outputdict'] = TypeDict().get_dict_of_types("product_period_type")
+        return create_selectbox_html(**kwargs)
+
+    def get_selectbox_life_assured_types(self, *args, **kwargs):
+        kwargs['required'] = True
+        kwargs['id'] = 'product_life_assured_type_id'
+        kwargs['outputdict'] = TypeDict().get_dict_of_types("product_life_assured_type")
+        return create_selectbox_html(**kwargs)
+
+    def get_selectbox_relationship_types(self, *args, **kwargs):
+        kwargs['required'] = True
+        kwargs['id'] = 'relationship_type_id'
+        kwargs['outputdict'] = TypeDict().get_dict_of_types("product_life_assured_relationship_type")
+        return create_selectbox_html(**kwargs)
+
+    def get_selectbox_life_assured_sum_assured_types(self, *args, **kwargs):
+        kwargs['required'] = True
+        kwargs['id'] = 'product_life_assured_sum_assured_type_id'
+        kwargs['outputdict'] = TypeDict().get_dict_of_types("product_life_assured_sum_assured_type")
+        return create_selectbox_html(**kwargs)
+
+    def get_selectbox_premium_rates(self, *args, **kwargs):
+        print('Placeholder for fake data Premium Rates list')
+        for x in range(10):
+            x += 1
+            exists = ProductPremiumRate.by_id(x)
+            if not exists:
+                new = ProductPremiumRate()
+                new.code = f"code{x}"
+                new.name = f"name{x}"
+                new.base_value = 1000
+                new.added_by = 1
+                DBSession.add(new)
+                DBSession.flush()
+        kwargs['required'] = True
+        kwargs['id'] = 'product_premium_rate_id'
+        dbase_query = ProductPremiumRate.get_all('code')
+        kwargs['outputlist'] = [{'name' : x.code, 'id' : x.id} for x in dbase_query]
+        return create_selectbox_html(**kwargs)
+
+    def get_selectbox_product_owner(self, *args, **kwargs):
+        print('Placeholder for product_owner list')
+        for x in range(10):
+            x += 1
+            exists = ProductOwner.by_id(x)
+            if not exists:
+                new = ProductOwner()
+                new.entity_organisation_id = x
+                new.policy_number_prefix = f"prefix{x}"
+                new.message_batch_type_id = random.choice([1, 2])
+                new.added_by = 1
+                DBSession.add(new)
+                DBSession.flush()
+        kwargs['required'] = True
+        kwargs['id'] = kwargs.get('id', 'product_owner_id')
+        dbase_query = ProductOwner.get_all('entity_organisation_id')
+        kwargs['outputlist'] = [{'name' : str(x.entity_organisation_id), 'id' : x.id} for x in dbase_query]
+        return create_selectbox_html(**kwargs)
+
+    def get_selectbox_insurer(self, *args, **kwargs):
+        print('Placeholder for Insurer list')
+        kwargs['id'] = 'insurer'
+        kwargs['outputlist'] = []
+        for x in range(10):
+            x += 1
+            exists = Insurer.by_id(x)
+            if not exists:
+                new = Insurer()
+                new.entity_organisation_id = x
+                new.added_by = 1
+                DBSession.add(new)
+                DBSession.flush()
+        kwargs['required'] = True
+        dbase_query = Insurer.get_all('entity_organisation_id')
+        kwargs['outputlist'] = [{'name' : str(x.entity_organisation_id), 'id' : x.id} for x in dbase_query]
+        return create_selectbox_html(**kwargs)
+
+    def get_selectbox_product_price_type(self, *args, **kwargs):
+        kwargs['id'] = 'product_price_initial_setup_type_id'
+        kwargs['outputdict'] = TypeDict().get_dict_of_types("product_price_initial_setup_type")
+        return create_selectbox_html(**kwargs)
+
+    def get_selectbox_currency(self, *args, **kwargs):
+        print('Placeholder for Currency table')
+        kwargs['id'] = 'currency_id'
+        for x in range(10):
+            x += 1
+            exists = Currency.by_id(x)
+            if not exists:
+                new = Currency()
+                new.code = f"code{x}"
+                new.name = f"name{x}"
+                new.added_by = 1
+                DBSession.add(new)
+                DBSession.flush()
+        dbase_query = Currency.get_all('code')
+        kwargs['outputlist'] = [{'name' : x.code, 'id' : x.id} for x in dbase_query]
+        return create_selectbox_html(**kwargs)
+
+    def get_selectbox_purchase_type(self, *args, **kwargs):
+        kwargs['id'] = 'product_purchase_type_id'
+        kwargs['outputdict'] = TypeDict().get_dict_of_types("product_purchase_type")
+        return create_selectbox_html(**kwargs)
+
+    def get_selectbox_period_type(self, *args, **kwargs):
+        kwargs['id'] = kwargs.get('id', 'period_type_id')
+        kwargs['outputdict'] = TypeDict().get_dict_of_types("product_period_type")
+        return create_selectbox_html(**kwargs)
+
+    def get_selectbox_allocation_types(self, *args, **kwargs):
+        kwargs['required'] = True
+        kwargs['id'] = kwargs.get('id', 'product_allocation_type_id')
+        kwargs['outputdict'] = TypeDict().get_dict_of_types("product_allocation_type")
+        return create_selectbox_html(**kwargs)
+
+    def get_selectbox_allocations(self, *args, **kwargs):
+        print('Placeholder for fake data - allocations')
+        for i in range(1, 10):
+            exists = ProductAllocation.by_id(i)
+            if not exists:
+                new = ProductAllocation()
+                new.name = f"name{i}"
+                new.added_by = 1
+                DBSession.add(new)
+                DBSession.flush()
+        kwargs['required'] = True
+        kwargs['id'] = kwargs.get('id', 'product_allocation_id')
+        dbase_query = ProductAllocation.get_all('name')
+        kwargs['outputlist'] = [{'name' : x.name, 'id' : x.id} for x in dbase_query]
+        return create_selectbox_html(**kwargs)
+
+    def get_selectbox_glaccounts(self, *args, **kwargs):
+        print('Placeholder for fake data - glaccounts')
+        for i in range(1, 10):
+            exists = GeneralLedgerAccount.by_id(i)
+            if not exists:
+                new = GeneralLedgerAccount()
+                new.name = f"name{i}"
+                new.debit_account = f"dr{i}"
+                new.credit_account = f"cr{i}"
+                new.gl_key = f"key{i}"
+                new.added_by = 1
+                DBSession.add(new)
+                DBSession.flush()
+        kwargs['required'] = True
+        kwargs['id'] = kwargs.get('id', 'gl_account_id')
+        dbase_query = GeneralLedgerAccount.get_all('name')
+        kwargs['outputlist'] = [{'name' : x.name, 'id' : x.id} for x in dbase_query]
+        return create_selectbox_html(**kwargs)
+
+    def get_selectbox_allocation_calculation_types(self, *args, **kwargs):
+        kwargs['required'] = True
+        kwargs['id'] = kwargs.get('id', 'product_allocation_calculation_type_id')
+        kwargs['outputdict'] = TypeDict().get_dict_of_types("product_allocation_calculation_type")
+        return create_selectbox_html(**kwargs)
+
+    def get_product_title_html(self, product_id=None, *args, **kwargs):
+        if not product_id: return ''
+        product = Product.by_id(product_id)
+        if not product: return ''
+        return f"Edit: {product.code} - {product.name}"
+
+    def get_edit_product_card_title_html(self, product_id=None, *args, **kwargs):
+        if not product_id: return ''
+        product = Product.by_id(product_id)
+        if not product: return ''
+        product_type_name = TypeDict().get_pretty_name('product_type', product.product_type_id)
+        html = f"""
+        <div class="row">
+            <div class="col-md-12">
+            <div class="card">
+                <div class="card-header">
+                    <div class="row d-flex">
+                        <div class="col-md-12">
+                            <h4 class="card-title">Edit {product_type_name} Product: {product.code} - {product.name}</h4>
+                        </div>
+                    </div>
+                    <hr>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        return html
+
+    def get_edit_product_details_html(self, product_id=None, *args, **kwargs):
+        if not product_id: return ''
+        product = Product.by_id(product_id)
+        if not product: return ''
+        selectbox_cover_types = self.get_selectbox_cover_types()
+        selectbox_life_assured_types = self.get_selectbox_life_assured_types()
+        html = f"""
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="row d-flex">
+                            <div class="col-md-6">
+                                <h4 class="card-title">{_('Product Details')}</h4>
+                            </div>
+                        </div>
+                        <hr>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-5">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label" required>{_('Cover Type')}</label>
+                                    <div class="col-md-9">
+                                        {selectbox_cover_types}
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-7">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label" required>{_('Life Assured Type')}</label>
+                                    <div class="col-md-9">
+                                        {selectbox_life_assured_types}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        return html
+
+    def get_edit_product_age_limits_html(self, product_id=None, *args, **kwargs):
+        if not product_id: return ''
+        product = Product.by_id(product_id)
+        if not product: return ''
+
+        maturation_html = ''
+        traditional = TypeDict().get_id_of_name('product_type', 'traditional')
+        if int(product.product_type_id) == traditional:
+            maturation_html = f"""
+            <div class="col-md-6">
+                <div class="form-group row">
+                    <label class="col-md-3 col-form-label">{_('Maturation Age')}</label>
+                    <div class="col-md-9">
+                        <input id="maturation_age" type="number" name="maturation_age" class="form-control">
+                    </div>
+                </div>
+            </div>
+            """
+
+        html = f"""
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="row d-flex">
+                            <div class="col-md-6">
+                                <h4 class="card-title">{_('Age Limits')}</h4>
+                            </div>
+                        </div>
+                        <hr>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label" required>{_('Minimum Age')}</label>
+                                    <div class="col-md-9">
+                                        <input id="minimum_age" type="number" name="minimum_age" class="form-control" required='true' value="0">
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label">{_('Maximum Age')}</label>
+                                    <div class="col-md-9">
+                                        <input id="maximum_age" type="number" name="maximum_age" class="form-control">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="row">
+                            {maturation_html}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        return html
+
+    def get_edit_product_group_details_html(self, product_id=None, *args, **kwargs):
+        if not product_id: return ''
+        product = Product.by_id(product_id)
+        if not product: return ''
+        selectbox_product_owner = self.get_selectbox_product_owner()
+        selectbox_insurer = self.get_selectbox_insurer()
+        html = f"""
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="row d-flex">
+                            <div class="col-md-6">
+                                <h4 class="card-title">{_('Group Details')}</h4>
+                            </div>
+                        </div>
+                        <hr>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label" required>{_('Product Owner')}</label>
+                                    <div class="col-md-9">
+                                        {selectbox_product_owner}
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label">{_('Insurer')}</label>
+                                    <div class="col-md-9">
+                                        {selectbox_insurer}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        return html
+
+    def get_edit_product_pricing_html(self, product_id=None, *args, **kwargs):
+        if not product_id: return ''
+        product = Product.by_id(product_id)
+        if not product: return ''
+        class_names = ''
+
+        product_purchase_type_id = None
+        if product.product_purchase_type_id:
+            product_purchase_type_id = product.product_purchase_type_id
+
+        product_price_initial_setup_type_id = None
+        if product.product_price_initial_setup_type_id:
+            product_price_initial_setup_type_id = product.product_price_initial_setup_type_id
+
+        td = TypeDict()
+        voucher = td.get_id_of_name('product_type', 'voucher')
+        traditional = td.get_id_of_name('product_type', 'traditional')
+
+        if int(product.product_type_id) == traditional:
+            pass
+
+        if int(product.product_type_id) == voucher:
+            if not product_purchase_type_id:
+                product_purchase_type_id = td.get_id_of_name('product_purchase_type', 'group')
+
+            if not product_price_initial_setup_type_id:
+                product_price_initial_setup_type_id = td.get_id_of_name('product_price_initial_setup_type', 'fixed_premium')
+
+            class_names = 'product_voucher'
+
+        selectbox_currency = self.get_selectbox_currency()
+        selectbox_purchase_type = self.get_selectbox_purchase_type(**{
+            'selected' : product_purchase_type_id,
+            })
+        selectbox_product_price_type = self.get_selectbox_product_price_type(**{
+            'selected' : product_price_initial_setup_type_id,
+            'class_names' : class_names,
+            })
+
+        html = f"""
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="row d-flex">
+                            <div class="col-md-6">
+                                <h4 class="card-title">{_('Pricing')}</h4>
+                            </div>
+                        </div>
+                        <hr>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label" required>{_('Currency')}</label>
+                                    <div class="col-md-9">
+                                        {selectbox_currency}
+                                    </div>
+
+
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label" required>{_('Purchase Type')}</label>
+                                    <div class="col-md-9">
+                                        {selectbox_purchase_type}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label" required>{_('Price Type')}</label>
+                                    <div class="col-md-9">
+                                        {selectbox_product_price_type}
+                                    </div>
+                                </div>
+                            </div>
+                            <div id='price_type_fields' class="col-md-6">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        return html
+
+    def get_edit_product_voucher_durations_html(self, product_id=None, *args, **kwargs):
+        if not product_id: return ''
+        product = Product.by_id(product_id)
+        if not product: return ''
+
+        td = TypeDict()
+        days = td.get_id_of_name('product_period_type', 'days')
+
+        selectbox_period_type_active = self.get_selectbox_period_type(**{
+            'id' : 'active_period_type_id',
+            'selected' : days,
+            })
+        selectbox_period_type_waiting = self.get_selectbox_period_type(**{
+            'id' : 'waiting_period_type_id',
+            'selected' : days,
+            })
+        html = f"""
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="row d-flex">
+                            <div class="col-md-6">
+                                <h4 class="card-title">{_('Durations')}</h4>
+                            </div>
+                        </div>
+                        <hr>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label" required>{_('Active Period')}</label>
+                                    <div class="col-md-9">
+                                        <input id="active_period" type="number" name="active_period" class="form-control" required='true'>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label">{_('Period Type')}</label>
+                                    <div class="col-md-9">
+                                        {selectbox_period_type_active}
+                                    </div>
+                                </div>
+                            </div>
+                        <div class="row">
+                        </div>
+                            <div class="col-md-6">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label">{_('Waiting Period')}</label>
+                                    <div class="col-md-9">
+                                        <input id="waiting_period" type="number" name="waiting_period" class="form-control">
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label">{_('Period Type')}</label>
+                                    <div class="col-md-9">
+                                        {selectbox_period_type_waiting}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        return html
+
+    def get_edit_product_save_html(self, product_id=None, *args, **kwargs):
+        if not product_id: return ''
+        product = Product.by_id(product_id)
+        if not product: return ''
+        sandbox = TypeDict().get_id_of_name('product_state_type', 'sandbox')
+        button_activate = ''
+        if product.product_state_id == sandbox:
+            button_activate = f"""<button id='product_activate' product_id='{product_id}' class="btn btn-primary">Save & Activate</button>"""
+        html = f"""
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-body">
+                        <button id='product_save' class="btn btn-primary">Save</button>
+                        {button_activate}
+                        <button class="btn btn-outline-primary products_back">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        javascript = """
+        <script>
+            $('.products_back').click(function(){
+                $.redirect('/product/index');
+            });
+        </script>
+        """
+        return html + javascript
+
+    @expose()
+    def get_message_textarea_html(self, *args, **kwargs):
+        text = kwargs.get('text', '')
+        name = kwargs.get('name', None)
+        label = kwargs.get('label', None)
+        maxlength = kwargs.get('maxlength', 255)
+        popover = self.get_popover_text_merge_html(**kwargs)
+        html = f"""
+        <div class="row">
+            <div class="col-md-12">
+                <div class="form-group row">
+                    <label class="col-md-3 col-form-label">{label}</label>
+                    <div class="col-md-9">
+                        {popover}
+                        <textarea name='{name}' type="text" class="form-control" rows="2" maxlength='{maxlength}'>{text}</textarea>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        return html
+
+    @expose()
+    def get_product_messaging_html(self, product_id=None, *args, **kwargs):
+        if not product_id: return ''
+        hidden_input_product_id = get_hidden_input(**{'id': 'product_id', 'value': product_id})
+        purchase_confirmation = self.get_message_textarea_html(**{
+            'name' : 'purchase_confirmation_text',
+            'label' : 'Purchase Confirmation',
+            })
+        advance_reminder_text = self.get_message_textarea_html(**{
+            'name' : 'advance_reminder_text',
+            'label' : 'Advanced Reminder',
+            })
+        claim_text = self.get_message_textarea_html(**{
+            'name' : 'redeption_claim_text',
+            'label' : 'Redemption / Claim',
+            })
+        refund_text = self.get_message_textarea_html(**{
+            'name' : 'refund_text',
+            'label' : 'Refund',
+            })
+
+        html = f"""
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="row d-flex">
+                            <div class="col-md-6">
+                                <h4 class="card-title">Product Messaging</h4>
+                            </div>
+                        </div>
+                        <hr>
+                    </div>
+                    <div class="card-body">
+                        <form id='form_product_messaging'>
+                            {hidden_input_product_id}
+                            {purchase_confirmation}
+                            {advance_reminder_text}
+                            {claim_text}
+                            {refund_text}
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-body">
+                        <button id='product_messaging_save' class="btn btn-primary">Save</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        javascript = """
+        <script>
+            $('#product_messaging_save').click(function(){
+                var formserial = $('#form_product_messaging').serialize();
+                $.post('/product/save_edit_product_messaging?', formserial, function(data){
+                    return false;
+                });
+            });
+        </script>
+        """
+        return html + javascript
+
+    @expose()
+    def get_lives_assured_html(self, product_id=None, *args, **kwargs):
+        product_id = kwargs.get('product_id', product_id)
+        if not product_id: return ''
+
+        td = TypeDict()
+        amount = td.get_id_of_name('product_life_assured_sum_assured_type', 'amount')
+        percentage = td.get_id_of_name('product_life_assured_sum_assured_type', 'percentage')
+
+        dbase_query = ProductLifeAssured.by_attr_all('product_id', product_id)
+        outputlist = []
+        for item in dbase_query:
+
+            relationship = td.get_pretty_name('product_life_assured_relationship_type', item.relationship_type_id)
+
+            age_range = f"{item.minimum_age} and higher"
+            if item.has_maximum_age:
+                max_age = ProductLifeAssuredMaximumAge.by_attr_first('product_life_assured_id', item.id)
+                age_rage = f"{item.minimum_age} to {max_age.maximum_age}"
+
+            value = None
+            if item.product_life_assured_sum_assured_type_id == amount:
+                this = ProductLifeAssuredSumAssuredAmount.by_attr_first('product_life_assured_id', item.id)
+                value = f"Amount: {this.amount}"
+
+            if item.product_life_assured_sum_assured_type_id == percentage:
+                this = ProductLifeAssuredSumAssuredPercentage.by_attr_first('product_life_assured_id', item.id)
+                value = f"{this.percentage}%"
+
+            outputlist.append({
+                'relationship_type_id' : f"<div class='edit life_assured_edit' life_assured_id='{item.id}'>{relationship}</div>",
+                'age_range' : age_range,
+                'value' : value,
+                })
+        dbcolumnlist=[
+                'relationship_type_id',
+                'age_range',
+                'value',
+                ]
+        theadlist=[
+                'Relationship Type',
+                'Age Range',
+                'Value',
+                ]
+        life_assuredtable = build_html_table(outputlist, dbcolumnlist, theadlist, "life_assured_table")
+        html = f"""
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="row d-flex">
+                            <div class="col-md-6">
+                                <h4 class="card-title">Lives Assured</h4>
+                            </div>
+                            <div class="col-md-6 text-right">
+                                <button id="create_new_life_assured" product_id="{product_id}" class="btn btn-primary ml-auto">Add a Life Assured</button>
+                            </div>
+                        </div>
+                        <hr>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            {life_assuredtable}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div id='familydialogdiv'></div>
+        """
+        javascript = """
+        <script>
+            $("#create_new_life_assured").click(function(){
+                var kwargs = 'product_id='+$(this).attr('product_id');
+                $('#familydialogdiv').load('/product/get_modal_new_life_assured?', kwargs, function(data){
+                    return false;
+                });
+            });
+            $(".life_assured_edit").click(function(){
+                var kwargs = 'life_assured_id='+$(this).attr('life_assured_id');
+                $('#familydialogdiv').load('/product/get_modal_edit_life_assured?'+kwargs, function(data){
+                    return false;
+                });
+            });
+        </script>
+        """
+        return html + javascript
+
+    @expose()
+    def get_modal_new_life_assured(self, *args, **kwargs):
+        product_id = kwargs.get('product_id', None)
+        hidden_input_product_id = get_hidden_input(**{'id': 'product_id', 'value': product_id})
+        selectbox_relationship_types = self.get_selectbox_relationship_types()
+        selectbox_life_assured_sum_assured_types = self.get_selectbox_life_assured_sum_assured_types()
+        html = f"""
+        <div class="modal fade" id="dialog_new_life_assured" tabindex="-1" role="dialog" aria-labelledby="mylife_assuredLabel" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <div class="col-md-6">
+                            <h4 class="card-title">New Life Assured</h4>
+                        </div>
+                    </div>
+                    <div class="modal-body">
+                        <form id='form_new_life_assured'>
+                            {hidden_input_product_id}
+                            <div class="col-md-12">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label" required for="relationship_type_id">Relationship Type</label>
+                                    <div class="col-md-9">
+                                        {selectbox_relationship_types}
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-12">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label" required for="maximum_lives">Maximum Lives</label>
+                                    <div class="col-md-9">
+                                        <input type="number" class="form-control" name='maximum_lives' id='maximum_lives' value="1" required>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-12">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label" required for="minimum_lives">From Age</label>
+                                    <div class="col-md-9">
+                                        <input type="number" class="form-control" name='minimum_lives' id='minimum_lives' value="1" required>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-12">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label" required for="maximum_age">To Age</label>
+                                    <div class="col-md-9">
+                                        <input type="number" class="form-control" name='maximum_age' id='maximum_age'>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-12">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label" required for="product_life_assured_sum_assured_type_id">Sum Assured Effect</label>
+                                    <div class="col-md-9">
+                                        {selectbox_life_assured_sum_assured_types}
+                                    </div>
+                                </div>
+                            </div>
+                            <div id='life_assured_type_fields' class="col-md-12">
+                            </div>
+                        </form>
+                    </div>
+                    <div class="modal-footer">
+                        <button id='save_new_life_assured' class="btn btn-primary">Save</button>
+                        <button class="btn btn-outline-primary life_assured_back">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        javascript = """
+        <script>
+        $('#product_life_assured_sum_assured_type_id').change(function(){
+
+            var selected = $('#product_life_assured_sum_assured_type_id option:selected').val();
+            var kwargs = 'product_life_assured_sum_assured_type_id='+selected;
+            $('#life_assured_type_fields').load('/product/get_life_assured_type_html?', kwargs, function(data){
+                return false;
+            });
+
+        });
+        $('#product_life_assured_sum_assured_type_id').trigger('change');
+
+        var form_id = '#form_new_life_assured'
+        setFormValidation(form_id);
+        $('#save_new_life_assured').click(function(){
+             var valid = FormIsValid(form_id);
+             if(valid){
+                var formserial = $(form_id).serialize();
+                $('#dialog_new_life_assured').modal('hide');
+                $.post('/product/save_new_life_assured?', formserial, function(data){
+                    $('#tab3').load('/product/get_lives_assured_html?', formserial, function(data){
+                        return false;
+                    });
+                    return false;
+                });
+             }
+        });
+        $('.life_assured_back').click(function(){
+            $('#dialog_new_life_assured').modal('hide');
+        });
+        $('#dialog_new_life_assured').modal();
+        </script>
+        """
+        return html + javascript
+
+    @expose()
+    def get_product_allocation_html(self, product_id=None, *args, **kwargs):
+        product_id = kwargs.get('product_id', product_id)
+        if not product_id: return ''
+        td = TypeDict()
+        dbase_query = ProductAllocationLink.by_attr_all('product_id', product_id)
+        outputlist = []
+        for item in dbase_query:
+            alloc = ProductAllocation.by_id(item.product_allocation_id)
+
+            value = ''
+            amount = ProductAllocationLinkCalculationAmount.by_attr_first('product_allocation_link_id', item.id)
+            if amount: value = f"Amount: {amount.amount}"
+
+            factor = ProductAllocationLinkCalculationFactor.by_attr_first('product_allocation_link_id', item.id)
+            if factor: value = f"Factor: {factor.factor}"
+
+            percentage = ProductAllocationLinkCalculationPercentage.by_attr_first('product_allocation_link_id', item.id)
+            if percentage: value = f"Percentage: {percentage.percentage}"
+
+            glaccount = GeneralLedgerAccount.by_id(item.gl_account_id)
+
+            outputlist.append({
+                'name' : f"<div class='edit product_allocation_edit' product_allocation_id='{item.id}'>{alloc.name}</div>",
+                'allocation_type' : td.get_pretty_name('product_allocation_type', item.product_allocation_type_id),
+                'value' : value,
+                'gl_account_id' : glaccount.name,
+                })
+        dbcolumnlist=[
+                'allocation_type',
+                'name',
+                'value',
+                'gl_account_id',
+                ]
+        theadlist=[
+                'Allocation Type',
+                'Name',
+                'Amount, Factor, %',
+                'GL Account',
+                ]
+        product_allocation_htmltbl = build_html_table(outputlist, dbcolumnlist, theadlist, "product_allocation_table")
+        html = f"""
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="row d-flex">
+                            <div class="col-md-6">
+                                <h4 class="card-title">Allocations</h4>
+                            </div>
+                            <div class="col-md-6 text-right">
+                                <button id="create_new_product_allocation" product_id="{product_id}" class="btn btn-primary ml-auto">Create a new Allocation</button>
+                            </div>
+                        </div>
+                        <hr>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            {product_allocation_htmltbl}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div id='allocationdialogdiv'></div>
+        """
+        javascript = """
+        <script>
+            $("#create_new_product_allocation").click(function(){
+                var kwargs = 'product_id='+$(this).attr('product_id');
+                $('#allocationdialogdiv').load('/product/get_modal_new_product_allocation?', kwargs, function(data){
+                    return false;
+                });
+            });
+            $(".product_allocation_edit").click(function(){
+                var kwargs = 'product_allocation_id='+$(this).attr('product_allocation_id');
+                $('#allocationdialogdiv').load('/product/get_modal_edit_product_allocation?'+kwargs, function(data){
+                    return false;
+                });
+            });
+        </script>
+        """
+        return html + javascript
+
+    @expose()
+    def get_modal_new_product_allocation(self, *args, **kwargs):
+        product_id = kwargs.get('product_id', None)
+        hidden_input_product_id = get_hidden_input(**{'id': 'product_id', 'value': product_id})
+        selectbox_allocation_types = self.get_selectbox_allocation_types()
+        selectbox_allocations = self.get_selectbox_allocations()
+        selectbox_glaccounts = self.get_selectbox_glaccounts()
+        selectbox_allocation_calculation_types = self.get_selectbox_allocation_calculation_types()
+        html = f"""
+        <div class="modal fade" id="dialog_new_product_allocation" tabindex="-1" role="dialog" aria-labelledby="myproduct_allocationLabel" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <div class="col-md-6">
+                            <h4 class="card-title">New Product Allocation</h4>
+                        </div>
+                    </div>
+                    <div class="modal-body">
+                        <form id='form_new_product_allocation'>
+                            {hidden_input_product_id}
+                            <div class="col-md-12">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label" required for="product_allocation_type_id">Allocation Type</label>
+                                    <div class="col-md-9">
+                                        {selectbox_allocation_types}
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-12">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label" required for="product_allocation_id">Allocation</label>
+                                    <div class="col-md-9">
+                                        {selectbox_allocations}
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-12">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label" required for="gl_account_id">GL Account</label>
+                                    <div class="col-md-9">
+                                        {selectbox_glaccounts}
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-12">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label" required for="product_allocation_calculation_type_id">Calculation Type</label>
+                                    <div class="col-md-9">
+                                        {selectbox_allocation_calculation_types}
+                                    </div>
+                                </div>
+                            </div>
+                            <div id='calculation_type_fields' class="col-md-12">
+                            </div>
+                        </form>
+                    </div>
+                    <div class="modal-footer">
+                        <button id='save_new_product_allocation_link' class="btn btn-primary">Save</button>
+                        <button class="btn btn-outline-primary product_allocation_back" data-dismiss="modal">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        javascript = """
+        <script>
+        $('#product_allocation_calculation_type_id').change(function(){
+            var selected = $('#product_allocation_calculation_type_id option:selected').val();
+            var kwargs = 'product_allocation_calculation_type_id='+selected;
+            $('#calculation_type_fields').load('/product/get_calculation_type_html?', kwargs, function(data){
+                return false;
+            });
+        });
+        $('#product_allocation_calculation_type_id').trigger('change');
+
+        var form_id = '#form_new_product_allocation'
+        setFormValidation(form_id);
+        $('#save_new_product_allocation_link').click(function(){
+             var valid = FormIsValid(form_id);
+             if(valid){
+                var formserial = $(form_id).serialize();
+                $('#dialog_new_product_allocation').modal('hide');
+                $.post('/product/save_new_product_allocation_link?', formserial, function(data){
+                    $('#tab4').load('/product/get_product_allocation_html?', formserial, function(data){
+                        return false;
+                    });
+                    return false;
+                });
+             }
+        });
+        $('.product_allocation_back').click(function(){
+            $('#dialog_new_product_allocation').modal('hide');
+        });
+        $('#dialog_new_product_allocation').modal();
+        </script>
+        """
+        return html + javascript
+
+    @expose()
+    def get_calculation_type_html(self, *args, **kwargs):
+        selected_type_id = kwargs.get('product_allocation_calculation_type_id', 0)
+        if not selected_type_id: return ''
+
+        td = TypeDict()
+        amount = td.get_id_of_name('product_allocation_calculation_type', 'amount')
+        factor = td.get_id_of_name('product_allocation_calculation_type', 'factor')
+        percentage = td.get_id_of_name('product_allocation_calculation_type', 'percentage')
+
+        name = ''
+        selected_type_id = int(selected_type_id)
+        if selected_type_id == amount:
+            name = 'amount'
+
+        if selected_type_id == factor:
+            name = 'factor'
+
+        if selected_type_id == percentage:
+            name = 'percentage'
+
+        return f"""
+        <div class="form-group row">
+            <label class="col-md-3 col-form-label" required for="{name}">{name.title()}</label>
+            <div class="col-md-9">
+                <input id="{name}" type="number" name="{name}" class="form-control" required='true'>
+            </div>
+        </div>
+        """
+
+    @expose()
+    def get_life_assured_type_html(self, *args, **kwargs):
+        selected_type_id = kwargs.get('product_life_assured_sum_assured_type_id', 0)
+        if not selected_type_id: return ''
+
+        td = TypeDict()
+        amount = td.get_id_of_name('product_life_assured_sum_assured_type', 'amount')
+        percentage = td.get_id_of_name('product_life_assured_sum_assured_type', 'percentage')
+
+        name = ''
+        selected_type_id = int(selected_type_id)
+        if selected_type_id == amount:
+            name = 'amount'
+
+        if selected_type_id == percentage:
+            name = 'percentage'
+
+        return f"""
+        <div class="form-group row">
+            <label class="col-md-3 col-form-label" required for="{name}">{name.title()}</label>
+            <div class="col-md-9">
+                <input id="{name}" type="number" name="{name}" class="form-control" required='true'>
+            </div>
+        </div>
+        """
+
+    @expose()
+    def get_product_contract_setup_html(self, product_id=None, *args, **kwargs):
+        if not product_id: return ''
+        product = Product.by_id(product_id)
+        if not product: return ''
+        popover = self.get_popover_text_merge_html(**kwargs)
+        html = f"""
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card ">
+                    <div class="card-header ">
+                        <div class="row d-flex">
+                            <div class="col-md-6">
+                                <h4 class="card-title">Contract Setup</h4>
+                            </div>
+                            <div class="col-md-6 text-right">
+                                <button id='btn_preview_contract' product_id='{product.id}' class="btn btn-primary ml-auto action_new">Preview Contract</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-body ">
+                        <div class="row">
+                            <div class="col-md-12">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label">Backgound Image</label>
+                                    dropzone html
+                                </div>
+                            </div>
+                        </div>
+                        <form id='form_product_contract'>
+                            <div class="row">
+                                <div class="col-md-12">
+                                    <div class="form-group row">
+                                        <label class="col-md-3 col-form-label" required>Start text on line</label>
+                                        <div class="col-md-9">
+                                            <input type="text" class="form-control" name='contract_text_line_start' value="" required>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-md-12">
+                                    <div class="form-group row">
+                                        <label class="col-md-3 col-form-label" required>Contract Wording</label>
+                                        <div class="col-md-9 position-relative">
+                                            {popover}
+                                            <textarea type="text" name='text' class="form-control" rows="5" maxlength='255' required></textarea>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-body">
+                        <button id='btn_apply' product_id='{product.id}' class="btn btn-primary ml-auto">Apply and Preview</button>
+                        <button class="btn btn-outline-primary products_back">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        return html
+
+    def get_popover_text_merge_html(self, *args, **kwargs):
+        print('Placeholder for text merge list')
+        dbase_query = []
+        inner_html = ''
+        for text in dbase_query:
+            inner_html += f"""
+            <div class='row'>
+                <span class='col-6'>
+                    {text.description}
+                </span
+                <span class='col-6'>
+                    {text.text}
+                </span>
+            </div>
+            """
+        html = f"""
+        <i class="now-ui-icons travel_info text-merge"
+           id="text_merge"
+           title="Options"
+           data-content="{inner_html}">
+        </i>
+        """
+        javascript = """
+        <script>
+        $(document).ready(function(){
+            $('#text_merge').popover({
+                html : true,
+            })
+            $('.nav-link').click(function(){
+                $('#text_merge').popover('hide');
+            })
+        });
+        </script>
+        """
+        return html + javascript
+
+    @expose()
+    def save_edit_product(self, *args, **kwargs):
+        print(kwargs)
+        return 'true'
+
+    @expose()
+    def save_edit_product_messaging(self, *args, **kwargs):
+        print(kwargs)
+        return 'true'
+
+    @expose()
+    def check_lives_assured_tab_must_exist(self, *args, **kwargs):
+        selected = kwargs.get('product_life_assured_type_id', None)
+        product_life_assured_type_name = TypeDict().get_name('product_life_assured_type', selected)
+        if 'family' in product_life_assured_type_name: return 'true'
+        return 'false'
+
+    @expose()
+    def save_new_product_allocation_link(self, *args, **kwargs):
+        usernow = request.identity['user']
+        link = ProductAllocationLink()
+        link.product_id = kwargs.get('product_id', None)
+        link.gl_account_id = kwargs.get('gl_account_id', None)
+        link.product_allocation_id = kwargs.get('product_allocation_id', None)
+        link.product_allocation_type_id = kwargs.get('product_allocation_type_id', None)
+        link.product_allocation_calculation_type_id = kwargs.get('product_allocation_calculation_type_id', None)
+        link.added_by = usernow.id
+        DBSession.add(link)
+        DBSession.flush()
+
+        amount = kwargs.get('amount', None)
+        if amount:
+            calc = ProductAllocationLinkCalculationAmount()
+            calc.product_allocation_link_id = link.id
+            calc.amount = amount
+            calc.added_by = usernow.id
+            DBSession.add(calc)
+            DBSession.flush()
+
+        factor = kwargs.get('factor', None)
+        if factor:
+            calc = ProductAllocationLinkCalculationFactor()
+            calc.product_allocation_link_id = link.id
+            calc.factor = factor
+            calc.added_by = usernow.id
+            DBSession.add(calc)
+            DBSession.flush()
+
+        percentage = kwargs.get('percentage', None)
+        if percentage:
+            calc = ProductAllocationLinkCalculationPercentage()
+            calc.product_allocation_link_id = link.id
+            calc.percentage = percentage
+            calc.added_by = usernow.id
+            DBSession.add(calc)
+            DBSession.flush()
+        return 'true'
+
+    @expose()
+    def save_new_life_assured(self, *args, **kwargs):
+        usernow = request.identity['user']
+        maximum_age = kwargs.get('maximum_age', None)
+
+        life = ProductLifeAssured()
+        life.product_id = kwargs.get('product_id', None)
+        life.relationship_type_id = kwargs.get('relationship_type_id', None)
+        life.maximum_lives = kwargs.get('maximum_lives', None)
+        life.minimum_age = kwargs.get('minimum_age', None)
+        life.has_maximum_age = True if maximum_age else False
+        life.product_life_assured_sum_assured_type_id = kwargs.get('product_life_assured_sum_assured_type_id', None)
+        life.added_by = usernow.id
+        DBSession.add(life)
+        DBSession.flush()
+
+        maximum_age = kwargs.get('maximum_age', None)
+        if maximum_age:
+            this = ProductLifeAssuredMaximumAge()
+            this.product_life_assured_id = life.id
+            this.maximum_age = maximum_age
+            this.added_by = usernow.id
+            DBSession.add(this)
+            DBSession.flush()
+
+        amount = kwargs.get('amount', None)
+        if amount:
+            this = ProductLifeAssuredSumAssuredAmount()
+            this.product_life_assured_id = life.id
+            this.amount = amount
+            this.added_by = usernow.id
+            DBSession.add(this)
+            DBSession.flush()
+
+        percentage = kwargs.get('percentage', None)
+        if percentage:
+            this = ProductLifeAssuredSumAssuredPercentage()
+            this.product_life_assured_id = life.id
+            this.percentage = percentage
+            this.added_by = usernow.id
+            DBSession.add(this)
+            DBSession.flush()
+        return 'true'
+
+    @expose()
+    def save_new_product_period(self, *args, **kwargs):
+        usernow = request.identity['user']
+
+        period = ProductPeriod()
+        period.product_id = kwargs.get('product_id', None)
+        period.product_period_effect_type_id = kwargs.get('product_period_effect_type_id', None)
+        period.product_period_type_id = kwargs.get('product_period_type_id', None)
+        period.time_period = kwargs.get('time_period', None)
+        period.added_by = usernow.id
+        DBSession.add(period)
+        DBSession.flush()
+        return 'true'
+
+# ********************* Product Voucher Only ********************************************#
+
+    @require(predicates.not_anonymous())
+    @expose('rocket.templates.generic')
+    def edit_voucher(self, *args, **kwargs):
+        product_id = kwargs.get('product_id', None)
+        if not product_id: redirect('/product/index')
+        product = Product.by_id(product_id)
+        if not product: redirect('/product/index')
+        html = self.get_edit_voucher_html(*args, **kwargs)
+        javascript = self.get_javascript_edit_voucher_onload()
+        title = self.get_product_title_html(product_id)
+        return dict(title=title, html=html, javascript=javascript)
+
+    def get_edit_voucher_html(self, *args, **kwargs):
+        product_id = kwargs.get('product_id', None)
+        if not product_id: return ''
+
+        # HEADER
+        card_header = self.get_edit_product_card_title_html(product_id)
+
+        # TAB 1
+        hidden_input_product_id = get_hidden_input(**{'id': 'voucher_product_id', 'value': product_id})
+        card_product_details = self.get_edit_product_details_html(product_id)
+        card_product_age_limits = self.get_edit_product_age_limits_html(product_id)
+        card_product_group_details = self.get_edit_product_group_details_html(product_id)
+        card_product_pricing = self.get_edit_product_pricing_html(product_id)
+        card_product_durations = self.get_edit_product_voucher_durations_html(product_id)
+        card_btn_save = self.get_edit_product_save_html(product_id)
+        form_edit_voucher_product = f"""
+        <form id='form_edit_voucher_product'>
+            {hidden_input_product_id}
+            {card_product_details}
+            {card_product_age_limits}
+            {card_product_group_details}
+            {card_product_pricing}
+            {card_product_durations}
+        </form>
+        {card_btn_save}
+        <div id='dialogdiv'></div>
+        """
+
+        # TAB 2
+        product_messaging_html = self.get_product_messaging_html(product_id)
+
+        # TAB 3
+        lives_assured_html = self.get_lives_assured_html(product_id)
+
+        # TAB 4
+        product_allocation_html = self.get_product_allocation_html(product_id)
+
+        # TAB 5
+        contract_setup_html = self.get_product_contract_setup_html(product_id)
+
+        html = f"""
+        {card_header}
+        <div class="row">
+            <div class="col-md-12 ml-auto mr-auto">
+                <div class="col-md-12 ml-auto mr-auto">
+                    <ul class="nav nav-pills nav-pills-primary justify-content-center" role="tablist">
+                        <li class="nav-item">
+                            <a class="nav-link" data-toggle="tab" href="#tab1" role="tablist">
+                                Details
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" data-toggle="tab" href="#tab2" role="tablist">
+                                Messaging
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" data-toggle="tab" href="#tab3" role="tablist">
+                                Lives Assured
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" data-toggle="tab" href="#tab4" role="tablist">
+                                Allocations
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" data-toggle="tab" href="#tab5" role="tablist">
+                                Contract
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link active" data-toggle="tab" href="#tab6" role="tablist">
+                                Benefits
+                            </a>
+                        </li>
+                    </ul>
+                </div>
+                <div class="tab-content tab-space tab-subcategories">
+                    <div class="tab-pane" id="tab1">
+                        {form_edit_voucher_product}
+                    </div>
+                    <div class="tab-pane" id="tab2">
+                        {product_messaging_html}
+                    </div>
+                    <div class="tab-pane" id="tab3">
+                        {lives_assured_html}
+                    </div>
+                    <div class="tab-pane" id="tab4">
+                        {product_allocation_html}
+                    </div>
+                    <div class="tab-pane" id="tab5">
+                        {contract_setup_html}
+                    </div>
+                    <div class="tab-pane active" id="tab6">
+                        benefits
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        return html
+
+    def get_javascript_edit_product_onload(self, *args, **kwargs):
+        javascript = """
+        /*
+        $('#product_life_assured_type_id').change(function(){
+
+            var selected = $('#product_life_assured_type_id option:selected').val();
+            var kwargs = 'product_life_assured_type_id='+selected;
+            $.post('/product/check_lives_assured_tab_must_exist?', kwargs, function(data){
+                if(data === 'true'){
+                    $('#tab3').show().css('display', '');
+                    $('[href="#tab3"]').closest('li').show();
+
+                }else{
+                    $('#tab3').hide();
+                    $('[href="#tab3"]').closest('li').hide();
+                };
+                return false;
+            });
+
+        });
+        $('#product_life_assured_type_id').trigger('change');
+        */
+
+        $('#product_price_initial_setup_type_id').change(function(){
+
+            var selected = $('#product_price_initial_setup_type_id option:selected').val();
+            var kwargs = 'product_price_initial_setup_type_id='+selected;
+            $('#price_type_fields').load('/product/get_price_type_html?', kwargs, function(data){
+                return false;
+            });
+
+            var voucher = $('#product_price_initial_setup_type_id').hasClass('product_voucher');
+            if(voucher){
+                //$('#product_price_initial_setup_type_id').attr('disabled', 'disabled');
+                // Uncomment above to disable selectbox;
+            };
+
+        });
+        $('#product_price_initial_setup_type_id').trigger('change');
+        """
+        return javascript
+
+    def get_javascript_edit_voucher_onload(self, *args, **kwargs):
+        javascript = self.get_javascript_edit_product_onload()
+        javascript += """
+
+        var form_id = '#form_edit_voucher_product'
+        setFormValidation(form_id);
+
+        $('#product_save').click(function(){
+             var valid = FormIsValid(form_id);
+             if(valid){
+                var formserial = $(form_id).serialize();
+                $.post('/product/save_edit_product?', formserial, function(data){
+                    return false;
+                });
+             };
+        });
+
+        """
+        return javascript
+
+    @expose()
+    def get_price_type_html(self, *args, **kwargs):
+        selected_type_id = kwargs.get('product_price_initial_setup_type_id', 0)
+        if not selected_type_id: return ''
+
+        td = TypeDict()
+        rate_table = td.get_id_of_name('product_price_initial_setup_type', 'rate_table')
+        fixed_premium = td.get_id_of_name('product_price_initial_setup_type', 'fixed_premium')
+        select_premium = td.get_id_of_name('product_price_initial_setup_type', 'select_premium')
+        fixed_sum_assured = td.get_id_of_name('product_price_initial_setup_type', 'fixed_sum_assured')
+        select_sum_assured = td.get_id_of_name('product_price_initial_setup_type', 'select_sum_assured')
+        fixed_premium_and_sum_assured = td.get_id_of_name('product_price_initial_setup_type', 'fixed_premium_and_sum_assured')
+
+        selected_type_id = int(selected_type_id)
+        if selected_type_id == rate_table:
+            selectbox_premium_rates = self.get_selectbox_premium_rates()
+            return f"""
+            <div class="form-group row">
+                <label class="col-md-3 col-form-label" required for="product_premium_rate_id">Premium</label>
+                <div class="col-md-9">
+                    {selectbox_premium_rates}
+                </div>
+            </div>
+            """
+
+        if selected_type_id == fixed_premium:
+            return f"""
+            <div class="form-group row">
+                <label class="col-md-3 col-form-label" required for="price">Premium</label>
+                <div class="col-md-9">
+                    <input id="price" type="number" name="price" class="form-control" required='true'>
+                </div>
+            </div>
+            """
+
+        if selected_type_id == select_premium:
+            return ''
+
+        if selected_type_id == fixed_sum_assured:
+            return f"""
+            <div class="form-group row">
+                <label class="col-md-3 col-form-label" required for="sum_assured">Sum Assured</label>
+                <div class="col-md-9">
+                    <input id="sum_assured" type="number" name="sum_assured" class="form-control" required='true'>
+                </div>
+            </div>
+            """
+
+        if selected_type_id == select_sum_assured:
+            return ''
+
+        if selected_type_id == fixed_premium_and_sum_assured:
+            return f"""
+            <div class="form-group row">
+                <label class="col-md-3 col-form-label" required for="price">Premium</label>
+                <div class="col-md-9">
+                    <input id="price" type="number" name="price" class="form-control" required='true'>
+                </div>
+            </div>
+            <div class="form-group row">
+                <label class="col-md-3 col-form-label" required for="sum_assured">Sum Assured</label>
+                <div class="col-md-9">
+                    <input id="sum_assured" type="number" name="sum_assured" class="form-control" required='true'>
+                </div>
+            </div>
+            """
+
+        return ''
+
+# ********************* Product Traditional Only ****************************************#
+
+    @require(predicates.not_anonymous())
+    @expose('rocket.templates.generic')
+    def edit_traditional(self, *args, **kwargs):
+        product_id = kwargs.get('product_id', None)
+        if not product_id: redirect('/product/index')
+        product = Product.by_id(product_id)
+        if not product: redirect('/product/index')
+        html = self.get_edit_traditional_html(*args, **kwargs)
+        javascript = self.get_javascript_edit_traditional_onload()
+        title = self.get_product_title_html(product_id)
+        return dict(title=title, html=html, javascript=javascript)
+
+    def get_edit_traditional_html(self, *args, **kwargs):
+        product_id = kwargs.get('product_id', None)
+        if not product_id: return ''
+
+        # HEADER
+        card_header = self.get_edit_product_card_title_html(product_id)
+
+        # TAB 1
+        hidden_input_product_id = get_hidden_input(**{'id': 'traditional_product_id', 'value': product_id})
+        card_product_details = self.get_edit_product_details_html(product_id)
+        card_product_age_limits = self.get_edit_product_age_limits_html(product_id)
+        card_product_group_details = self.get_edit_product_group_details_html(product_id)
+        card_product_pricing = self.get_edit_product_pricing_html(product_id)
+        card_product_durations = self.get_edit_product_traditional_durations_html(product_id)
+        card_btn_save = self.get_edit_product_save_html(product_id)
+        form_edit_traditional_product = f"""
+        <form id='form_edit_traditional_product'>
+            {hidden_input_product_id}
+            {card_product_details}
+            {card_product_age_limits}
+            {card_product_group_details}
+            {card_product_pricing}
+        </form>
+        <div id='product_period_fields'>
+            {card_product_durations}
+        </div>
+        {card_btn_save}
+        <div id='dialogdiv'></div>
+        """
+
+        # TAB 2
+        product_messaging_html = self.get_product_messaging_html(product_id)
+
+        # TAB 3
+        lives_assured_html = self.get_lives_assured_html(product_id)
+
+        # TAB 4
+        product_allocation_html = self.get_product_allocation_html(product_id)
+
+        # TAB 5
+        contract_setup_html = self.get_product_contract_setup_html(product_id)
+
+        # TAB 6
+        loaders_html = self.get_product_loaders_html(product_id)
+
+        html = f"""
+        {card_header}
+        <div class="row">
+            <div class="col-md-12 ml-auto mr-auto">
+                <div class="col-md-12 ml-auto mr-auto">
+                    <ul class="nav nav-pills nav-pills-primary justify-content-center" role="tablist">
+                        <li class="nav-item">
+                            <a class="nav-link" data-toggle="tab" href="#tab1" role="tablist">
+                                Details
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" data-toggle="tab" href="#tab2" role="tablist">
+                                Messaging
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" data-toggle="tab" href="#tab3" role="tablist">
+                                Lives Assured
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" data-toggle="tab" href="#tab4" role="tablist">
+                                Allocations
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" data-toggle="tab" href="#tab5" role="tablist">
+                                Contract
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" data-toggle="tab" href="#tab6" role="tablist">
+                                Loaders
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link active" data-toggle="tab" href="#tab7" role="tablist">
+                                Benefits
+                            </a>
+                        </li>
+                    </ul>
+                </div>
+                <div class="tab-content tab-space tab-subcategories">
+                    <div class="tab-pane" id="tab1">
+                        {form_edit_traditional_product}
+                    </div>
+                    <div class="tab-pane" id="tab2">
+                        {product_messaging_html}
+                    </div>
+                    <div class="tab-pane" id="tab3">
+                        {lives_assured_html}
+                    </div>
+                    <div class="tab-pane" id="tab4">
+                        {product_allocation_html}
+                    </div>
+                    <div class="tab-pane" id="tab5">
+                        {contract_setup_html}
+                    </div>
+                    <div class="tab-pane" id="tab6">
+                        {loaders_html}
+                    </div>
+                    <div class="tab-pane active" id="tab7">
+                        benefits
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        return html
+
+    def get_javascript_edit_traditional_onload(self, *args, **kwargs):
+        javascript = self.get_javascript_edit_product_onload()
+        javascript += """
+
+        var form_id = '#form_edit_traditional_product'
+        setFormValidation(form_id);
+
+        $('#product_save').click(function(){
+             var valid = FormIsValid(form_id);
+             if(valid){
+                var formserial = $(form_id).serialize();
+                $.post('/product/save_edit_product?', formserial, function(data){
+                    return false;
+                });
+             };
+        });
+
+        """
+        return javascript
+
+    @expose()
+    def get_edit_product_traditional_durations_html(self, product_id=None, *args, **kwargs):
+        product_id = kwargs.get('product_id', product_id)
+        if not product_id: return ''
+        td = TypeDict()
+        dbase_query = ProductPeriod.by_attr_all('product_id', product_id)
+        outputlist = []
+        for item in dbase_query:
+
+            effect_type = td.get_pretty_name('product_period_effect_type', item.product_period_effect_type_id)
+            period_type = td.get_pretty_name('product_period_type', item.product_period_type_id)
+
+            outputlist.append({
+                'name' : f"<div class='edit product_period_edit' effect_type_id='{item.id}'>{effect_type}</div>",
+                'period' : item.time_period,
+                'period_type' : period_type,
+                })
+        dbcolumnlist=[
+                'name',
+                'period',
+                'period_type',
+                ]
+        theadlist=[
+                'Name',
+                'Period',
+                'Period Type',
+                ]
+        period_typetable = build_html_table(outputlist, dbcolumnlist, theadlist, "period_type_table")
+        html = f"""
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="row d-flex">
+                            <div class="col-md-6">
+                                <h4 class="card-title">{_('Durations')}</h4>
+                            </div>
+                            <div class="col-md-6 text-right">
+                                <button product_id='{product_id}' id="btn_new_product_period" class="btn btn-primary ml-auto">Add a new Duration</button>
+                            </div>
+                        </div>
+                        <hr>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            {period_typetable}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        javascript = """
+        <script>
+            $("#btn_new_product_period").click(function(){
+                var kwargs = 'product_id='+$(this).attr('product_id');
+                $('#dialogdiv').load('/product/get_modal_new_product_period?', kwargs, function(data){
+                    return false;
+                });
+            });
+        </script>
+        """
+        return html + javascript
+
+    @expose()
+    def get_modal_new_product_period(self, *args, **kwargs):
+        product_id = kwargs.get('product_id', None)
+        if not product_id: return ''
+        hidden_input_product_id = get_hidden_input(**{'id': 'product_id', 'value': product_id})
+        selectbox_period_effect_types = self.get_selectbox_period_effect_types()
+        selectbox_period_types = self.get_selectbox_period_types()
+        html = f"""
+        <div class="modal fade" id="dialog_new_product_period" tabindex="-1" role="dialog" aria-labelledby="myproduct_periodLabel" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <div class="col-md-6">
+                            <h4 class="card-title">New Duration / Period</h4>
+                        </div>
+                    </div>
+                    <div class="modal-body">
+                        <form id='form_new_product_period'>
+                            {hidden_input_product_id}
+                            <div class="col-md-12">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label" required for="product_period_effect_type_id">Period Effect Type</label>
+                                    <div class="col-md-9">
+                                        {selectbox_period_effect_types}
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-12">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label" required for="product_period_type_id">Period Type</label>
+                                    <div class="col-md-9">
+                                        {selectbox_period_types}
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-12">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label" required for="time_period">Period</label>
+                                    <div class="col-md-9">
+                                        <input id="time_period" type="number" name="time_period" class="form-control">
+                                    </div>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                    <div class="modal-footer">
+                        <button id='save_new_product_period' class="btn btn-primary">Save</button>
+                        <button class="btn btn-outline-primary product_period_back">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        javascript = """
+        <script>
+        var form_id = '#form_new_product_period'
+        setFormValidation(form_id);
+        $('#save_new_product_period').click(function(){
+             var valid = FormIsValid(form_id);
+             if(valid){
+                var formserial = $(form_id).serialize();
+                $('#dialog_new_product_period').modal('hide');
+                $.post('/product/save_new_product_period?', formserial, function(data){
+                    $('#product_period_fields').load('/product/get_edit_product_traditional_durations_html?', formserial, function(data){
+                        return false;
+                    });
+                    return false;
+                });
+             }
+        });
+        $('.product_period_back').click(function(){
+            $('#dialog_new_product_period').modal('hide');
+        });
+        $('#dialog_new_product_period').modal();
+        </script>
+        """
+        return html + javascript
+
+    @expose()
+    def get_product_loaders_html(self, product_id=None, *args, **kwargs):
+        product_id = kwargs.get('product_id', product_id)
+        if not product_id: return ''
+        product = Product.by_id(product_id)
+        if not product: return ''
+        available_inner, used_inner = self.get_available_used_product_loader_html(product_id)
+        html = f"""
+        <div class="row">
+            {used_inner}
+            {available_inner}
+        </div>
+        """
+        javascript = """
+        <script>
+            function SegmentClick(selector, href){
+                $(selector).click(function(data){
+                    var product_id = $(this).attr('product_id');
+                    var kwargs = 'product_id='+product_id;
+                    kwargs += '&loader_question_id='+$(this).attr('loader_question_id');
+                    $.post(href, kwargs, function(data){
+                        $('#tab6').load('/product/get_product_loaders_html', kwargs, function(data){
+                            return false;
+                        });
+                    });
+                });
+            };
+            SegmentClick('#div_used .loader_segment', '/product/save_delete_productloader');
+            SegmentClick('#div_available .loader_segment', '/product/save_new_productloader');
+        </script>
+        """
+        return html + javascript
+
+    @expose()
+    def save_delete_productloader(self, *args, **kwargs):
+        this = DBSession.query(ProductLoaderLink). \
+                filter(ProductLoaderLink.product_id==kwargs.get('product_id')). \
+                filter(ProductLoaderLink.loader_question_id==kwargs.get('loader_question_id')). \
+                one()
+        DBSession.delete(this)
+        DBSession.flush()
+        return 'true'
+
+    @expose()
+    def save_new_productloader(self, *args, **kwargs):
+        usernow = request.identity['user']
+        link = ProductLoaderLink()
+        link.product_id = kwargs.get('product_id', None)
+        link.loader_question_id = kwargs.get('loader_question_id', None)
+        link.added_by = usernow.id
+        DBSession.add(link)
+        DBSession.flush()
+        return 'true'
+
+    def get_available_used_product_loader_html(self, product_id=None, *args, **kwargs):
+
+        print('Placeholder for fake data LoaderQuestion')
+        for i in range(1, 20):
+            exists = LoaderQuestion.by_id(i)
+            if not exists:
+                this = LoaderQuestion()
+                this.text = f"loader text {i}"
+                this.loader_question_premium_effect_type_id = random.choice([1, 2, 3])
+                this.added_by = 1
+                DBSession.add(this)
+                DBSession.flush()
+
+        avail, used = '', ''
+
+        loaderlist = LoaderQuestion.get_all('text')
+        linklist = ProductLoaderLink.by_attr_all('product_id', product_id)
+        idlist = [int(x.loader_question_id) for x in linklist]
+
+        for item in loaderlist:
+            element = f"""
+                <div class='loader_segment' product_id='{product_id}' loader_question_id='{item.id}'>
+                    {item.text}
+                </div> """
+            if int(item.id) in idlist: used += element
+            else: avail += element
+        used = f"""
+        <div class="col-md-6">
+            <div class="card mh_260">
+                <div class="card-header ">
+                    <div class="row d-flex">
+                        <div class="col-md-6">
+                            <h4 class="card-title">Attached Loaders</h4>
+                        </div>
+                        <div class="col-md-6 text-right">
+                        </div>
+                    </div>
+                </div>
+                <div id='div_used' class="card-body">
+                    {used}
+                </div>
+            </div>
+        </div>
+        """
+        avail = f"""
+        <div class="col-md-6">
+            <div class="card mh_260">
+                <div class="card-header ">
+                    <div class="row d-flex">
+                        <div class="col-md-6">
+                            <h4 class="card-title">Available Loaders</h4>
+                        </div>
+                        <div class="col-md-6 text-right">
+                        </div>
+                    </div>
+                </div>
+                <div id='div_available' class="card-body">
+                    {avail}
+                </div>
+            </div>
+        </div>
+        """
+        return avail, used
+
+###############################################################################
+# Allocations
+###############################################################################
+
+    @require(predicates.not_anonymous())
+    @expose('rocket.templates.generic')
+    def allocations(self, *args, **kwargs):
+        html = self.get_allocations_html(*args, **kwargs)
+        javascript = self.get_javascript_allocations_onload()
+        title = "Allocations"
+        return dict(title=title, html=html, javascript=javascript)
+
+    @expose()
+    def get_allocations_html(self, *args, **kwargs):
+        usernow = request.identity['user']
+        dbase_query = self.get_allocations_list(*args, **kwargs)
+        outputlist = []
+        for item in dbase_query:
+            outputlist.append({
+                'name': f"<div class='allocations_edit' allocation_id='{item.id}'>{item.name}</div>",
+                })
+        dbcolumnlist = [
+                'name',
+                ]
+        theadlist = [
+                'Name',
+                ]
+        allocationstable = build_html_table(outputlist, dbcolumnlist, theadlist, "allocations_table")
+        html = f"""
+            <div class="row">
+                <div class="col-md-12">
+                    <div class="card">
+                    <div class="card-header">
+                        <div class="row d-flex">
+                            <div class="col-md-6">
+                                <h4 class="card-title">Allocations</h4>
+                            </div>
+                            <div class="col-md-6 text-right">
+                                <button id="create_new_allocations" class="btn btn-primary ml-auto">Create a new Allocation</button>
+                            </div>
+                        </div>
+                        <div class="row d-flex align-items-center">
+                            <div class="col-md-4">
+                                <input type="text" class="form-control search" name="searchphrase" placeholder="Search">
+                            </div>
+                            <div class="col-md-8">
+                                <button class="btn btn-primary action_search">Search</button>
+                                <button class="btn btn-primary">Reset</button>
+                            </div>
+                        </div>
+                        <hr>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            {allocationstable}
+                        </div>
+                    </div>
+                    </div>
+                </div>
+                <div id='dialogdiv'></div>
+            """
+        return html
+
+    @expose()
+    def get_javascript_allocations_onload(self, *args, **kwargs):
+        javascript = """
+            $("#create_new_allocations").click(function(){
+                $('#dialogdiv').load('/product/get_modal_new_allocations?', function(data){
+                    return false;
+                });
+            });
+            $(".allocations_edit").click(function(){
+                var kwargs = 'allocation_id='+$(this).attr('allocation_id');
+                $('#dialogdiv').load('/product/get_modal_edit_allocations?', kwargs, function(data){
+                    return false;
+                });
+            });
+            """
+        return javascript
+
+    @expose()
+    def get_modal_new_allocations(self, *args, **kwargs):
+        html = """
+            <div class="modal fade" id="dialog_new_allocations" tabindex="-1" role="dialog" aria-labelledby="myallocationsLabel" aria-hidden="true">
+                <div class="modal-dialog modal-dialog-centered modal-lg">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <div class="col-md-6">
+                                <h4 class="card-title">New Allocation</h4>
+                            </div>
+                        </div>
+                        <div class="modal-body">
+                            <form id='form_new_allocations'>
+                                <div class="col-md-6">
+                                    <div class="form-group row">
+                                            <label class="col-md-3 col-form-label" required for="name">Name</label>
+                                            <div class="col-md-9">
+                                                    <input id="name" type="text" name="name" class="form-control" required='true'>
+                                            </div>
+                                    </div>
+                                </div>
+                            </form>
+                        </div>
+                        <div class="modal-footer">
+                            <button id='save_new_allocations' class="btn btn-primary">Save</button>
+                            <button class="btn btn-outline-primary allocations_back">Cancel</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            """
+        javascript = """
+            <script>
+            setFormValidation('#form_new_allocations');
+            $('#save_new_allocations').click(function(){
+                 var valid = FormIsValid("#form_new_allocations");
+                 if(valid){
+                    var formserial = getFormData('#form_new_allocations');
+                    var data = {data : JSON.stringify(formserial)};
+
+                    $.post('/product/save_new_allocations?', data, function(data){
+                        var result = JSON.parse(data);
+                        if(result.success === true){
+                            $.redirect('/product/allocations');
+                        };
+                        return false;
+                    });
+                 }
+            });
+            $('.allocations_back').click(function(){
+                $('#dialog_new_allocations').modal('hide');
+            });
+            $('#dialog_new_allocations').modal();
+            </script>
+                """
+        return html + javascript
+
+    @expose()
+    def get_modal_edit_allocations(self, *args, **kwargs):
+        allocation_id = kwargs.get('allocation_id', None)
+        if not allocation_id:
+            return ''
+        this = self.get_allocations_by_id(*args, **kwargs)
+        if not this:
+            return ''
+        checked = 'checked' if this.active else ''
+        html = f"""
+            <div class="modal fade" id="dialog_edit_allocations" tabindex="-1" role="dialog" aria-labelledby="myallocationsLabel" aria-hidden="true">
+                <div class="modal-dialog modal-dialog-centered modal-lg">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <div class="col-md-6">
+                                <h4 class="card-title">Edit Allocation</h4>
+                            </div>
+                        </div>
+                        <div class="modal-body">
+                            <form id='form_edit_allocations'>
+                                <div style='display: none' class="col-md-6">
+                                        <div class="form-group row">
+                                                <label class="col-md-3 col-form-label" required for="allocation_id">ID</label>
+                                                <div class="col-md-9">
+                                                        <input id="id" type="text" name="allocation_id" value="{this.id}" class="form-control" required='true'>
+                                                </div>
+                                        </div>
+                                </div>
+                                <div class="col-md-6">
+                                        <div class="form-group row">
+                                                <label class="col-md-3 col-form-label" required for="name">Name</label>
+                                                <div class="col-md-9">
+                                                        <input id="name" type="text" name="name" value="{this.name}" class="form-control" required='true'>
+                                                </div>
+                                        </div>
+                                </div>
+                                <div class="form-group row">
+                                  <label class="col-4 col-form-label" for="active" required>Active</label>
+                                  <div class="col-8"><div class="form-check">
+                                    <input class="form-check-input" type="checkbox" name="active" id="active" {checked}/></div>
+                                  </div>
+                                </div>
+                            </form>
+                        </div>
+                        <div class="modal-footer">
+                            <button id='save_edit_allocations' class="btn btn-primary">Save</button>
+                            <button class="btn btn-outline-primary allocations_back">Cancel</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            """
+        javascript = """
+            <script>
+            setFormValidation('#form_edit_allocations');
+            $('#save_edit_allocations').click(function(){
+                var valid = FormIsValid("#form_edit_allocations");
+                if(valid){
+                    var formserial = getFormData('#form_edit_allocations');
+                    var data = {data : JSON.stringify(formserial)};
+
+                    $.post('/product/save_edit_allocations?', data, function(data){
+                        var result = JSON.parse(data);
+                        if(result.success === true){
+                            $.redirect('/product/allocations');
+                            };
+                        return false;
+                        });
+                    }
+                });
+            $('.allocations_back').click(function(){
+                $('#dialog_edit_allocations').modal('hide');
+                });
+            $('#dialog_edit_allocations').modal();
+            </script>
+                """
+        return html + javascript
+
+    @expose()
+    def save_new_allocations(self, *args, **kwargs):
+        data = json.loads(kwargs.get('data', json.dumps({})))
+        if not data:
+            return json.dumps({'success': False, 'data': 'No data provided'})
+        usernow = request.identity['user']
+        this = ProductAllocation()
+        this.name = data.get('name', None)
+        this.added_by = usernow.id
+        DBSession.add(this)
+        DBSession.flush()
+        return json.dumps({'success': True, 'data': this.id})
+
+    @expose()
+    def save_edit_allocations(self, *args, **kwargs):
+        data = json.loads(kwargs.get('data', json.dumps({})))
+        if not data:
+            return json.dumps({'success': False, 'data': 'No data provided'})
+        usernow = request.identity['user']
+        this = self.get_allocations_by_id(**data)
+        if not this:
+            return json.dumps({'success': False, 'data': 'No allocations found for id provided'})
+        this.name = data.get('name', None)
+        if not data.get('active', None):
+            this.active = False
+        DBSession.flush()
+        return json.dumps({'success': True, 'data': this.id})
+
+    @expose()
+    def get_allocations_by_id(self, *args, **kwargs):
+        return DBSession.query(ProductAllocation). \
+                filter(ProductAllocation.id == kwargs.get('allocation_id', None)). \
+                first()
+
+    @expose()
+    def get_allocations_list(self, *args, **kwargs):
+        searchphrase = kwargs.get('searchphrase', None)
+
+        name = kwargs.get('name', None)
+
+        if name:
+            searchphrase = "%" + kwargs['name'] + "%"
+            dbase_query = DBSession.query(ProductAllocation). \
+                    filter(ProductAllocation.name.like(searchphrase)). \
+                    filter(ProductAllocation.active == 1). \
+                    order_by(asc(ProductAllocation.name)).limit(LIMIT)
+        else:
+            dbase_query = DBSession.query(ProductAllocation). \
+                    filter(ProductAllocation.active == 1). \
+                    order_by(asc(ProductAllocation.id)). \
+                    limit(LIMIT)
+        return dbase_query
+
+###############################################################################
+# General Ledger Accounts - GL Accounts
+###############################################################################
+
+    @require(predicates.not_anonymous())
+    @expose('rocket.templates.generic')
+    def glaccounts(self, *args, **kwargs):
+        html = self.get_general_ledger_accounts_html(*args, **kwargs)
+        javascript = self.get_javascript_general_ledger_accounts_onload()
+        title = "General Ledger Accounts"
+        return dict(title=title, html=html, javascript=javascript)
+
+    @expose()
+    def get_general_ledger_accounts_html(self, *args, **kwargs):
+        usernow = request.identity['user']
+        dbase_query = self.get_general_ledger_accounts_list(*args, **kwargs)
+        outputlist = []
+        for item in dbase_query:
+            outputlist.append({
+                'name': "<div class='edit general_ledger_accounts_edit' general_ledger_accounts_id='{1}'>{0}</div>".format(
+                    item.name, item.id),
+                'debit_account': item.debit_account,
+                'credit_account': item.credit_account,
+                'gl_key': item.gl_key,
+            })
+        dbcolumnlist = [
+            'name',
+            'debit_account',
+            'credit_account',
+            'gl_key',
+        ]
+        theadlist = [
+            'Name',
+            'Debit Account',
+            'Credit Account',
+            'GL Key',
+        ]
+        general_ledger_accountstable = build_html_table(outputlist, dbcolumnlist, theadlist, 'glaccounttable')
+        html = f"""
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                <div class="card-header">
+                    <div class="row d-flex">
+                        <div class="col-md-6">
+                            <h4 class="card-title">General Ledger Accounts</h4>
+                        </div>
+                        <div class="col-md-6 text-right">
+                            <button id="create_new_general_ledger_accounts" class="btn btn-primary ml-auto">Create a new General Ledger Account</button>
+                        </div>
+                    </div>
+                    <div class="row d-flex align-items-center">
+                        <div class="col-md-4">
+                            <input type="text" class="form-control search" name="searchphrase" placeholder="Search">
+                        </div>
+                        <div class="col-md-8">
+                            <button class="btn btn-primary action_search">Search</button>
+                            <button class="btn btn-primary">Reset</button>
+                        </div>
+                    </div>
+                    <hr>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        {general_ledger_accountstable}
+                    </div>
+                </div>
+                </div>
+            </div>
+            <div id='dialogdiv'></div>
+            """
+        return html
+
+    @expose()
+    def get_javascript_general_ledger_accounts_onload(self, *args, **kwargs):
+        javascript = """
+            $("#create_new_general_ledger_accounts").click(function(){
+                $('#dialogdiv').load('/product/get_modal_new_general_ledger_accounts?', function(data){
+                    return false;
+                    });
+                });
+            $(".general_ledger_accounts_edit").click(function(){
+                var kwargs = 'general_ledger_accounts_id='+$(this).attr('general_ledger_accounts_id');
+                $('#dialogdiv').load('/product/get_modal_edit_general_ledger_accounts?', kwargs, function(data){
+                    return false;
+                    });
+                });
+            """
+        return javascript
+
+    @expose()
+    def get_modal_new_general_ledger_accounts(self, *args, **kwargs):
+        html = """
+            <div class="modal fade" id="dialog_new_general_ledger_accounts" tabindex="-1" role="dialog" aria-labelledby="mygeneral_ledger_accountsLabel" aria-hidden="true">
+                <div class="modal-dialog modal-dialog-centered modal-lg">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <div class="col-md-6">
+                                <h4 class="card-title">New General Ledger Account</h4>
+                            </div>
+                        </div>
+                        <div class="modal-body">
+                            <form id='form_new_general_ledger_accounts'>
+                                    <div class="col-md-6">
+                                        <div class="form-group row">
+                                                <label class="col-md-3 col-form-label" required for="name">Name</label>
+                                                <div class="col-md-9">
+                                                        <input id="name" type="text" name="name" class="form-control" required='true'>
+                                                </div>
+                                        </div>
+                                </div>
+                                    <div class="col-md-6">
+                                        <div class="form-group row">
+                                                <label class="col-md-3 col-form-label" required for="debit_account">Debit Account</label>
+                                                <div class="col-md-9">
+                                                        <input id="debit_account" type="text" name="debit_account" class="form-control" required='true'>
+                                                </div>
+                                        </div>
+                                </div>
+                                    <div class="col-md-6">
+                                        <div class="form-group row">
+                                                <label class="col-md-3 col-form-label" required for="credit_account">Credit Account</label>
+                                                <div class="col-md-9">
+                                                        <input id="credit_account" type="text" name="credit_account" class="form-control" required='true'>
+                                                </div>
+                                        </div>
+                                </div>
+                                    <div class="col-md-6">
+                                        <div class="form-group row">
+                                                <label class="col-md-3 col-form-label" required for="gl_key">Gl Key</label>
+                                                <div class="col-md-9">
+                                                        <input id="gl_key" type="text" name="gl_key" class="form-control" required='true'>
+                                                </div>
+                                        </div>
+                                </div>
+                            </form>
+                        </div>
+                        <div class="modal-footer">
+                            <button id='save_new_general_ledger_accounts' class="btn btn-primary">Save</button>
+                            <button class="btn btn-outline-primary general_ledger_accounts_back">Cancel</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            """
+        javascript = """
+            <script>
+            setFormValidation('#form_new_general_ledger_accounts');
+            $('#save_new_general_ledger_accounts').click(function(){
+                var valid = FormIsValid("#form_new_general_ledger_accounts");
+                if(valid){
+                    var formserial = getFormData('#form_new_general_ledger_accounts');
+                    var data = {data : JSON.stringify(formserial)};
+
+                    $.post('/product/save_new_general_ledger_accounts?', data, function(data){
+                        var result = JSON.parse(data);
+                        if(result.success === true){
+                            $.redirect('/product/glaccounts');
+                            };
+                        return false;
+                        });
+                    }
+                });
+            $('.general_ledger_accounts_back').click(function(){
+                $('#dialog_new_general_ledger_accounts').modal('hide');
+                });
+            $('#dialog_new_general_ledger_accounts').modal();
+            </script>
+                """
+        return html + javascript
+
+    @expose()
+    def get_modal_edit_general_ledger_accounts(self, *args, **kwargs):
+        general_ledger_accounts_id = kwargs.get('general_ledger_accounts_id', None)
+        if not general_ledger_accounts_id:
+            return ''
+        this = self.get_general_ledger_accounts_by_id(*args, **kwargs)
+        if not this:
+            return ''
+        checked = 'checked' if this.active else ''
+        html = f"""
+            <div class="modal fade" id="dialog_edit_general_ledger_accounts" tabindex="-1" role="dialog" aria-labelledby="mygeneral_ledger_accountsLabel" aria-hidden="true">
+                <div class="modal-dialog modal-dialog-centered modal-lg">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <div class="col-md-6">
+                                <h4 class="card-title">Edit General Ledger Account</h4>
+                            </div>
+                        </div>
+                        <div class="modal-body">
+                            <form id='form_edit_general_ledger_accounts'>
+                                <div style='display: none' class="col-md-6">
+                                        <div class="form-group row">
+                                                <label class="col-md-3 col-form-label" required for="general_ledger_accounts_id">ID</label>
+                                                <div class="col-md-9">
+                                                        <input id="id" type="text" name="general_ledger_accounts_id" value="{this.id}" class="form-control" required='true'>
+                                                </div>
+                                        </div>
+                                </div>
+                                <div class="col-md-6">
+                                        <div class="form-group row">
+                                                <label class="col-md-3 col-form-label" required for="name">Name</label>
+                                                <div class="col-md-9">
+                                                        <input id="name" type="text" name="name" value="{this.name}" class="form-control" required='true'>
+                                                </div>
+                                        </div>
+                                </div>
+                                <div class="col-md-6">
+                                        <div class="form-group row">
+                                                <label class="col-md-3 col-form-label" required for="debit_account">Debit Account</label>
+                                                <div class="col-md-9">
+                                                        <input id="debit_account" type="text" name="debit_account" value="{this.debit_account}" class="form-control" required='true'>
+                                                </div>
+                                        </div>
+                                </div>
+                                <div class="col-md-6">
+                                        <div class="form-group row">
+                                                <label class="col-md-3 col-form-label" required for="credit_account">Credit Account</label>
+                                                <div class="col-md-9">
+                                                        <input id="credit_account" type="text" name="credit_account" value="{this.credit_account}" class="form-control" required='true'>
+                                                </div>
+                                        </div>
+                                </div>
+                                <div class="col-md-6">
+                                        <div class="form-group row">
+                                                <label class="col-md-3 col-form-label" required for="gl_key">Gl Key</label>
+                                                <div class="col-md-9">
+                                                        <input id="gl_key" type="text" name="gl_key" value="{this.gl_key}" class="form-control" required='true'>
+                                                </div>
+                                        </div>
+                                </div>
+                                <div class="form-group row">
+                                  <label class="col-4 col-form-label" for="active" required>Active</label>
+                                  <div class="col-8"><div class="form-check">
+                                    <input class="form-check-input" type="checkbox" name="active" id="active" {checked}/></div>
+                                  </div>
+                                </div>
+                            </form>
+                        </div>
+                        <div class="modal-footer">
+                            <button id='save_edit_general_ledger_accounts' class="btn btn-primary">Save</button>
+                            <button class="btn btn-outline-primary general_ledger_accounts_back">Cancel</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            """
+        javascript = """
+            <script>
+            setFormValidation('#form_edit_general_ledger_accounts');
+            $('#save_edit_general_ledger_accounts').click(function(){
+                var valid = FormIsValid("#form_edit_general_ledger_accounts");
+                if(valid){
+                    var formserial = getFormData('#form_edit_general_ledger_accounts');
+                    var data = {data : JSON.stringify(formserial)};
+
+                    $.post('/product/save_edit_general_ledger_accounts?', data, function(data){
+                        var result = JSON.parse(data);
+                        if(result.success === true){
+                            $.redirect('/product/glaccounts');
+                            };
+                        return false;
+                        });
+                    }
+                });
+            $('.general_ledger_accounts_back').click(function(){
+                $('#dialog_edit_general_ledger_accounts').modal('hide');
+                });
+            $('#dialog_edit_general_ledger_accounts').modal();
+            </script>
+                """
+        return html + javascript
+
+    @expose()
+    def save_new_general_ledger_accounts(self, *args, **kwargs):
+        data = json.loads(kwargs.get('data', json.dumps({})))
+        if not data:
+            return json.dumps({'success': False, 'data': 'No data provided'})
+        usernow = request.identity['user']
+        this = GeneralLedgerAccount()
+        this.name = data.get('name', None)
+        this.debit_account = data.get('debit_account', None)
+        this.credit_account = data.get('credit_account', None)
+        this.gl_key = data.get('gl_key', None)
+        this.added_by = usernow.id
+        DBSession.add(this)
+        DBSession.flush()
+        return json.dumps({'success': True, 'data': this.id})
+
+    @expose()
+    def save_edit_general_ledger_accounts(self, *args, **kwargs):
+        data = json.loads(kwargs.get('data', json.dumps({})))
+        if not data:
+            return json.dumps({'success': False, 'data': 'No data provided'})
+        usernow = request.identity['user']
+        this = self.get_general_ledger_accounts_by_id(**data)
+        if not this:
+            return json.dumps(
+                    {'success': False, 'data': 'No general_ledger_accounts found for id provided'})
+        this.name = data.get('name', None)
+        this.debit_account = data.get('debit_account', None)
+        this.credit_account = data.get('credit_account', None)
+        this.gl_key = data.get('gl_key', None)
+        if not data.get('active', None): this.active = False
+        DBSession.flush()
+        return json.dumps({'success': True, 'data': this.id})
+
+    @expose()
+    def get_general_ledger_accounts_by_id(self, *args, **kwargs):
+        return DBSession.query(GeneralLedgerAccount). \
+                filter(GeneralLedgerAccount.id == kwargs.get('general_ledger_accounts_id', None)). \
+                first()
+
+    @expose()
+    def get_general_ledger_accounts_list(self, *args, **kwargs):
+        searchphrase = kwargs.get('searchphrase', None)
+
+        name = kwargs.get('name', None)
+        debit_account = kwargs.get('debit_account', None)
+        credit_account = kwargs.get('credit_account', None)
+        gl_key = kwargs.get('gl_key', None)
+
+        if name:
+            searchphrase = "%" + kwargs['name'] + "%"
+            dbase_query = DBSession.query(GeneralLedgerAccount). \
+                    filter(GeneralLedgerAccount.name.like(searchphrase)). \
+                    filter(GeneralLedgerAccount.active == 1). \
+                    order_by(asc(GeneralLedgerAccount.name)).limit(LIMIT)
+        if debit_account:
+            searchphrase = "%" + kwargs['debit_account'] + "%"
+            dbase_query = DBSession.query(GeneralLedgerAccount). \
+                    filter(GeneralLedgerAccount.debit_account.like(searchphrase)). \
+                    filter(GeneralLedgerAccount.active == 1). \
+                    order_by(asc(GeneralLedgerAccount.debit_account)).limit(LIMIT)
+        if credit_account:
+            searchphrase = "%" + kwargs['credit_account'] + "%"
+            dbase_query = DBSession.query(GeneralLedgerAccount). \
+                    filter(GeneralLedgerAccount.credit_account.like(searchphrase)). \
+                    filter(GeneralLedgerAccount.active == 1). \
+                    order_by(asc(GeneralLedgerAccount.credit_account)).limit(LIMIT)
+        if gl_key:
+            searchphrase = "%" + kwargs['gl_key'] + "%"
+            dbase_query = DBSession.query(GeneralLedgerAccount). \
+                    filter(GeneralLedgerAccount.gl_key.like(searchphrase)). \
+                    filter(GeneralLedgerAccount.active == 1). \
+                    order_by(asc(GeneralLedgerAccount.gl_key)).limit(LIMIT)
+        else:
+            dbase_query = DBSession.query(GeneralLedgerAccount). \
+                    filter(GeneralLedgerAccount.active == 1). \
+                    order_by(asc(GeneralLedgerAccount.id)). \
+                    limit(LIMIT)
+        return dbase_query

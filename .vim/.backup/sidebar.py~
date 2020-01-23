@@ -1,0 +1,246 @@
+# -*- coding: utf-8 -*-
+"""SidebarController controller module"""
+
+import os, json
+from datetime import datetime
+from pkg_resources import resource_filename
+
+from tg import predicates
+from tg import expose, require, redirect, validate, flash, url, request, response
+
+from tg.i18n import ugettext as _
+from tg.i18n import lazy_ugettext as l_
+
+from rocket.lib.utils import is_user
+from rocket.lib.tg_utils import sort_dict_list
+
+class Sidebar():
+
+    @expose()
+    def welcome(self):
+        return f"""
+        <div class="card">
+            <div class="card-header">
+                <h4 class="card-title">{_('Welcome to Rocket!')}</h4>
+                <hr>
+            </div>
+            <div class="card-content">
+            </div>
+        </div>
+        """
+
+    def get_sidebar_html(self, *args, **kwargs):
+        home_segment = self.get_sidebar_home_segment()
+        profile_segment = self.get_sidebar_profile_segment()
+        operational_dropdown = self.get_sidebar_operational_dropdown()
+        reports_dropdown = self.get_sidebar_reports_dropdown()
+        setup_dropdown = self.get_sidebar_setup_dropdown()
+        html = f"""
+        <div class="sidebar-wrapper" id="sidebar-wrapper">
+            {home_segment}
+            {profile_segment}
+            <ul class="nav">
+                {operational_dropdown}
+                {reports_dropdown}
+                {setup_dropdown}
+            </ul>
+        </div>
+        """
+        javascript = """
+        <script>
+            $(document).ready(function(){
+                var origin = window.location.origin;
+                var url = window.location.href.replace(origin, '');
+                $('.sidebar-wrapper a').each(function(){
+                    var href = $(this).attr('href');
+                    if(href === url && href != '/profile/index'){
+                        $(this).closest('li').addClass('active');
+                        $(this).closest('li').parent().closest('div').addClass('show');
+                        $(this).closest('li').parent().closest('li').addClass('active');
+                        $(this).closest('li').parent().closest('a').attr('aria-expanded', true);
+                    };
+                });
+            });
+        </script>
+        """
+        return html + javascript
+
+    def get_sidebar_home_segment(self, *args, **kwargs):
+        html = """
+          <div class="logo">
+            <a href="/" class="simple-text logo-mini">
+              <i class="now-ui-icons objects_spaceship"></i>
+            </a>
+            <a href="/" class="simple-text logo-normal">
+              Rocket
+            </a>
+          </div>
+        """
+        return html
+
+    def get_sidebar_profile_segment(self, *args, **kwargs):
+        profile = self.create_nav_li(**{'icon_text': 'MP', 'name': 'My Profile', 'link': '/profile/index'})
+        logout = self.create_nav_li(**{'icon_text': 'L', 'name': 'Logout', 'link': '/logout_handler'})
+        usernow = request.identity.get('user')
+        html = f"""
+        <div class="user">
+          <div class="photo">
+            <img onerror='$(this).attr("src", "/images/nothing.png")' src="/images/{usernow.id}.png" />
+          </div>
+          <div class="info">
+            <a data-toggle="collapse" href="#profileCollapse">
+              <span> {usernow.name} <b class="caret"></b> </span>
+            </a>
+            <div class="clearfix"></div>
+            <div class="collapse" id="profileCollapse">
+              <ul class="nav">
+                {profile}
+                {logout}
+              </ul>
+            </div>
+          </div>
+        </div>
+        """
+        return html
+
+    def get_sidebar_operational_dropdown(self, *args, **kwargs):
+
+        members_all = self.create_nav_li(**{'icon_text': 'M', 'name': 'Members', 'link': '/members/index', 'role_list' : ['Administrator', 'Membership']})
+        policy_all = self.create_nav_li(**{'icon_text': 'P', 'name': 'Policies', 'link': '/policy/index', 'role_list' : ['Administrator', 'Catalog Maintenance']})
+        claim_reg = self.create_nav_li(**{'icon_text': 'CR', 'name': 'Claims Registration', 'link': '/claim/registration', 'role_list' : ['Administrator', 'ClaimsRegistration']})
+        claim_manage = self.create_nav_li(**{'icon_text': 'CM', 'name': 'Claims Management', 'link': '/claim/management', 'role_list' : ['Administrator', 'ClaimsManagement']})
+        claim_approve = self.create_nav_li(**{'icon_text': 'CA', 'name': 'Claims Approval', 'link': '/claim/approval', 'role_list' : ['Administrator', 'ClaimsApproval']})
+        product = self.create_nav_li(**{'icon_text': 'P', 'name': 'Products', 'link': '/product/index', 'role_list' : ['Administrator', 'ProductSetup']})
+        alloc = self.create_nav_li(**{'icon_text': 'A', 'name': 'Allocations', 'link': '/product/allocations', 'role_list' : ['Administrator', 'ProductSetup']})
+        gl_accounts = self.create_nav_li(**{'icon_text': 'GL', 'name': 'GL Accounts', 'link': '/product/glaccounts', 'role_list' : ['Administrator', 'ProductSetup']})
+        loaders = self.create_nav_li(**{'icon_text': 'PL', 'name': 'Product Loaders', 'link': '/setup/loaders', 'role_list' : ['Administrator', 'ProductSetup']})
+        premium_rate = self.create_nav_li(**{'icon_text': 'PR', 'name': 'Premium Rates', 'link': '/setup/premium_rates', 'role_list' : ['Administrator', 'ProductSetup']})
+        cover_and_exclusion = self.create_nav_li(**{'icon_text': 'CE', 'name': 'Cover & Exclusion', 'link': '/setup/cover_exclusions', 'role_list' : ['Administrator', 'ProductSetup']})
+        batch_import = self.create_nav_li(**{'icon_text': 'BI', 'name': 'Batch Import', 'link': '/batchimport/index', 'role_list' : ['Administrator', 'Membership']})
+        if not any([members_all, policy_all, claim_reg, claim_manage, claim_approve, product, alloc, gl_accounts, loaders, premium_rate, cover_and_exclusion, batch_import]):
+            return ''
+
+        #product_sandbox = (**{'icon_text': 'PS', 'name': 'Product Sandbox', 'link': '/product/sandbox', 'role_list' : []})
+        #industry = self.create_nav_li(**{'icon_text': 'IR', 'name': 'Industry Rates', 'link': '/setup/industry', 'role_list' : ['Administrator', 'ProductSetup']})
+        #rates = self.create_nav_li(**{'icon_text': 'PR', 'name': 'Premium Rates', 'link': '/product/rates', 'role_list' : ['Administrator', 'ProductSetup']})
+        #investment_fund = self.create_nav_li(**{'icon_text': 'IF', 'name': 'Investment Fund', 'link': '/product/investment', 'role_list' : ['Administrator', 'ProductSetup']})
+
+        html = f"""
+          <li>
+            <a data-toggle="collapse" href="#operationalCollapse">
+              <i class="now-ui-icons design_image"></i>
+              <p> Operational <b class="caret"></b>
+              </p>
+            </a>
+            <div class="collapse" id="operationalCollapse">
+              <ul class="nav">
+                {members_all}
+                {policy_all}
+                {claim_reg}
+                {claim_manage}
+                {claim_approve}
+                {product}
+                {alloc}
+                {gl_accounts}
+                {loaders}
+                {premium_rate}
+                {cover_and_exclusion}
+                {batch_import}
+              </ul>
+            </div>
+          </li>
+        """
+        return html
+
+    def get_sidebar_reports_dropdown(self, *args, **kwargs):
+
+        policy_sales = self.create_nav_li(**{'icon_text': 'PS', 'name': 'Policy Sales', 'link': '/reports/policy_sales', 'role_list' : ['Administrator', 'StatisticalReports', 'FinancialReports']})
+        alloc_report = self.create_nav_li(**{'icon_text': 'AR', 'name': 'Allocation Report', 'link': '/reports/allocations', 'role_list' : ['Administrator', 'StatisticalReports', 'FinancialReports']})
+        glaccount_report = self.create_nav_li(**{'icon_text': 'GL', 'name': 'GL Extract', 'link': '/reports/glaccounts', 'role_list' : ['Administrator', 'FinancialReports']})
+        if not any([policy_sales, alloc_report, glaccount_report]):
+            return ''
+
+        # liability_report = (**{'icon_text': 'LR', 'name': 'Liability Report', 'link': '/reports/liability', 'role_list' : ['Administrator', 'StatisticalReports', 'FinancialReports']})
+        # members_report = (**{'icon_text': 'MR', 'name': 'Members Report', 'link': '/reports/members', 'role_list' : ['Administrator', 'StatisticalReports', 'FinancialReports']})
+        # debit_orders = (**{'icon_text': 'DO', 'name': 'Debit Orders', 'link': '/reports/debit_orders', 'role_list' : ['Administrator', 'FinancialReports']})
+
+        html = f"""
+          <li>
+            <a data-toggle="collapse" href="#reportCollapse">
+              <i class="now-ui-icons education_atom"></i>
+              <p> Reports <b class="caret"></b> </p>
+            </a>
+            <div class="collapse" id="reportCollapse">
+              <ul class="nav">
+                {policy_sales}
+                {alloc_report}
+                {glaccount_report}
+              </ul>
+            </div>
+          </li>
+        """
+        return html
+
+    def get_sidebar_setup_dropdown(self, *args, **kwargs):
+
+        region_district_centre = self.create_nav_li(**{'icon_text': 'RE', 'name': 'Region/District/Center', 'link': '/setup/location', 'role_list' : ['Administrator', 'Catalog Maintenance']})
+        banks = self.create_nav_li(**{'icon_text': 'BA', 'name': 'Banks', 'link': '/setup/banks', 'role_list' : ['Administrator', 'Catalog Maintenance']})
+        entity = self.create_nav_li(**{'icon_text': 'EN', 'name': 'Entity', 'link': '/entity/index', 'role_list' : ['Administrator', 'Catalog Maintenance']})
+        intermediaries = self.create_nav_li(**{'icon_text': 'IN', 'name': 'Intermediaries', 'link': '/setup/intermediaries', 'role_list' : ['Administrator', 'Catalog Maintenance']})
+        currency_rates = self.create_nav_li(**{'icon_text': 'CR', 'name': 'Currencies & Rates', 'link': '/setup/currency_rates', 'role_list' : ['Administrator', 'Catalog Maintenance']})
+        users_access = self.create_nav_li(**{'icon_text': 'UA', 'name': 'Users & Access', 'link': '/useraccess/index', 'role_list' : ['Administrator', 'Catalog Maintenance']})
+        claim_reasons = self.create_nav_li(**{'icon_text': 'CL', 'name': 'Claims Reasons', 'link': '/setup/claim_reasons', 'role_list' : ['Administrator', 'Catalog Maintenance']})
+        system_documents = self.create_nav_li(**{'icon_text': 'SD', 'name': 'System Documents', 'link': '/setup/system_documents', 'role_list' : ['Administrator', 'Catalog Maintenance']})
+        if not any([region_district_centre, banks, entity, intermediaries, currency_rates, users_access, claim_reasons, system_documents]):
+            return ''
+
+
+        #groups = self.create_nav_li(**{'icon_text': 'GR', 'name': 'Groups', 'link': '/groups/index', 'role_list' : ['Administrator', 'Catalog Maintenance']})
+
+        #affinity_stack = (**{'icon_text': 'AS', 'name': 'Affinity Stack', 'link': '/setup/affinity', 'role_list' : ['Administrator', 'Catalog Maintenance']})
+        #service_providers = (**{'icon_text': 'SP', 'name': 'Service Providers', 'link': '/setup/service_providers', 'role_list' : ['Administrator', 'Catalog Maintenance']})
+        #service_providers_types = (**{'icon_text': 'ST', 'name': 'Service Provider Types', 'link': '/setup/service_providers_types', 'role_list' : ['Administrator', 'Catalog Maintenance']})
+        #disease_codes = (**{'icon_text': 'DC', 'name': 'Disease Codes', 'link': '/setup/disease_codes', 'role_list' : ['Administrator', 'Catalog Maintenance']})
+        #system_params = (**{'icon_text': 'SP', 'name': 'System Parameters', 'link': '/setup/system_params', 'role_list' : ['Administrator', 'Catalog Maintenance']})
+        #payment_method = (**{'icon_text': 'PM', 'name': 'Payment Method', 'link': '/setup/payment_method', 'role_list' : ['Administrator', 'Catalog Maintenance']})
+
+        html = f"""
+          <li>
+            <a data-toggle="collapse" href="#setupCollapse">
+              <i class="now-ui-icons files_single-copy-04"></i>
+              <p> Setup <b class="caret"></b> </p>
+            </a>
+            <div class="collapse" id="setupCollapse">
+              <ul class="nav">
+                {region_district_centre}
+                {banks}
+                {entity}
+                {intermediaries}
+                {currency_rates}
+                {users_access}
+                {system_documents}
+              </ul>
+            </div>
+          </li>
+        """
+        return html
+
+    def create_nav_li(self, *args, **kwargs):
+        link = kwargs.get('link', '/')
+        name = kwargs.get('name', '')
+        icon_text = kwargs.get('icon_text', '')
+        role_list = [str(r).lower() for r in kwargs.get('role_list', [])]
+
+        if role_list:
+            user_roles = [str(r.name).lower() for r in request.identity.get('user', {}).roles]
+            matches = [role for role in role_list if role in user_roles]
+            if not matches: return ''
+
+        return f"""
+        <li>
+          <a href="{link}">
+            <span class="sidebar-mini-icon">{icon_text}</span>
+            <span class="sidebar-normal">{name}</span>
+          </a>
+        </li>
+        """
