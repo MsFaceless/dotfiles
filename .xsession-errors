@@ -1,0 +1,402 @@
+/usr/bin/iceauth:  creating new authority file /run/user/1000/ICEauthority
+gpg-agent[827]: WARNING: "--write-env-file" is an obsolete option - it has no effect
+gpg-agent: a gpg-agent is already running - not starting a new one
+
+(xfce4-session:766): xfce4-session-WARNING **: 12:28:12.460: gpg-agent returned no PID in the variables
+
+(xfce4-session:766): xfce4-session-WARNING **: 12:28:12.464: xfsm_manager_load_session: Something wrong with /home/camilla/.cache/sessions/xfce4-session-camilla:0, Does it exist? Permissions issue?
+libpager-Message: 12:28:13.130: Setting the pager rows returned false. Maybe the setting is not applied.
+
+(wrapper-2.0:863): Gtk-WARNING **: 12:28:13.270: Negative content width -1 (allocation 1, extents 1x1) while allocating gadget (node button, owner GtkToggleButton)
+
+(wrapper-2.0:865): Gtk-WARNING **: 12:28:13.368: Negative content width -1 (allocation 1, extents 1x1) while allocating gadget (node button, owner PulseaudioButton)
+
+(xfce4-session:766): xfce4-session-WARNING **: 12:28:13.465: Unable to launch "plank" (specified by autostart/plank.desktop): Failed to execute child process “plank” (No such file or directory)
+
+(xfce4-session:766): xfce4-session-WARNING **: 12:28:13.466: Unable to launch "variety" (specified by autostart/variety.desktop): Failed to execute child process “variety” (No such file or directory)
+blueman-applet 12.28.13 ERROR    PluginManager:90 load_plugin: Unable to load plugin module AppIndicator
+Traceback (most recent call last):
+  File "/usr/lib/python3.8/site-packages/blueman/plugins/applet/AppIndicator.py", line 7, in <module>
+    require_version('AppIndicator3', '0.1')
+  File "/usr/lib/python3.8/site-packages/gi/__init__.py", line 129, in require_version
+    raise ValueError('Namespace %s not available' % namespace)
+ValueError: Namespace AppIndicator3 not available
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/usr/lib/python3.8/site-packages/blueman/main/PluginManager.py", line 88, in load_plugin
+    importlib.import_module(self.module_path.__name__ + ".%s" % plugin)
+  File "/usr/lib/python3.8/importlib/__init__.py", line 127, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+  File "<frozen importlib._bootstrap>", line 1014, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 991, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 975, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 671, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 783, in exec_module
+  File "<frozen importlib._bootstrap>", line 219, in _call_with_frames_removed
+  File "/usr/lib/python3.8/site-packages/blueman/plugins/applet/AppIndicator.py", line 9, in <module>
+    raise ImportError("AppIndicator3 not found")
+ImportError: AppIndicator3 not found
+
+(pamac-tray:900): Gdk-CRITICAL **: 12:28:14.014: gdk_window_thaw_toplevel_updates: assertion 'window->update_and_descendants_freeze_count > 0' failed
+blueman-applet 12.28.14 WARNING  DiscvManager:109 update_menuitems: warning: Adapter is None
+blueman-applet 12.28.14 ERROR    AgentManager:18 on_register_failed: /org/bluez/obex/agent/blueman org.bluez.obex.Error.AlreadyExists Agent already exists
+thunar-volman: Unsupported USB device type "usb".
+thunar-volman: Unsupported USB device type "usb-storage".
+thunar-volman: Unknown block device type "disk".
+
+(Thunar:858): xfconf-WARNING **: 12:28:20.847: Failed to set property "thunar::/last-details-view-column-widths": Operation was cancelled
+
+(Thunar:858): xfconf-WARNING **: 12:28:20.860: Failed to set property "thunar::/last-details-view-column-widths": Operation was cancelled
+
+(Thunar:858): xfconf-WARNING **: 12:28:20.885: Failed to set property "thunar::/last-details-view-column-widths": Operation was cancelled
+
+(Thunar:858): xfconf-WARNING **: 12:28:22.812: Failed to set property "thunar::/last-details-view-column-widths": Operation was cancelled
+[1146:1146:0113/122825.670948:ERROR:vaapi_wrapper.cc(417)] vaInitialize failed: unknown libva error
+[1146:1146:0113/122825.716359:ERROR:sandbox_linux.cc(372)] InitializeSandbox() called with multiple threads in process gpu-process.
+[1146:1146:0113/122826.127938:ERROR:buffer_manager.cc(488)] [.DisplayCompositor]GL ERROR :GL_INVALID_OPERATION : glBufferData: <- error from previous GL command
+[1225:1:0113/122827.820645:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[1225:1:0113/122827.821154:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[1225:1:0113/122828.631919:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[1225:1:0113/122828.632495:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[1332:1:0113/122830.732637:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[1332:1:0113/122832.432717:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[1332:1:0113/122832.433361:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[1332:1:0113/122832.444871:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[1332:1:0113/122833.908767:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[1332:1:0113/122833.909287:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[1332:1:0113/122833.923598:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[1121:1121:0113/122925.788277:ERROR:gcm_channel_status_request.cc(145)] GCM channel request failed.
+qt.network.ssl: QSslSocket: cannot resolve SSL_set_alpn_protos
+qt.network.ssl: QSslSocket: cannot resolve SSL_CTX_set_alpn_select_cb
+qt.network.ssl: QSslSocket: cannot resolve SSL_get0_alpn_selected
+[1121:1121:0113/122952.547359:ERROR:gcm_channel_status_request.cc(145)] GCM channel request failed.
+[1121:1121:0113/123038.267509:ERROR:brave_referrals_service.cc(213)] Failed to fetch headers from referral server, error: 0, response code: 503, payload: Timed out while waiting on cache-jnb7025-JNB
+, url: https://laptop-updates.brave.com/promo/custom-headers
+[1121:1121:0113/123050.212367:ERROR:gcm_channel_status_request.cc(145)] GCM channel request failed.
+**
+ERROR:lib/bluez/adapter.c:165:adapter_get_dbus_object_path: assertion failed: (ADAPTER_IS(self))
+timeout: the monitored command dumped core
+
+(blueberry.py:2205): com.linuxmint.blueberry-WARNING **: 12:31:01.748: Could not retrieve the BT adapter name with 'bt-adapter -i': Command '['timeout', '2s', 'bt-adapter', '-i']' died with <Signals.SIGABRT: 6>.
+**
+ERROR:lib/bluez/adapter.c:165:adapter_get_dbus_object_path: assertion failed: (ADAPTER_IS(self))
+timeout: the monitored command dumped core
+
+(blueberry.py:2205): com.linuxmint.blueberry-WARNING **: 12:31:02.174: Could not retrieve the BT adapter name with 'bt-adapter -i': Command '['timeout', '2s', 'bt-adapter', '-i']' died with <Signals.SIGABRT: 6>.
+[1121:1121:0113/123149.346782:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/123149.349114:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/123149.379197:ERROR:CONSOLE(0)] "Unchecked runtime.lastError: Cannot access contents of url "chrome://newtab/". Extension manifest must request permission to access this host.", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/_generated_background_page.html (0)
+[1146:1146:0113/123156.478478:ERROR:buffer_manager.cc(488)] [.DisplayCompositor]GL ERROR :GL_INVALID_OPERATION : glBufferData: <- error from previous GL command
+
+(Thunar:858): Gtk-CRITICAL **: 12:32:31.392: gtk_container_foreach: assertion 'GTK_IS_CONTAINER (container)' failed
+
+(Thunar:858): Gtk-CRITICAL **: 12:32:31.392: gtk_container_foreach: assertion 'GTK_IS_CONTAINER (container)' failed
+
+(Thunar:858): Gtk-CRITICAL **: 12:32:31.392: gtk_container_foreach: assertion 'GTK_IS_CONTAINER (container)' failed
+
+(Thunar:858): Gtk-CRITICAL **: 12:32:31.392: gtk_container_foreach: assertion 'GTK_IS_CONTAINER (container)' failed
+
+(Thunar:858): Gtk-CRITICAL **: 12:32:31.392: gtk_container_foreach: assertion 'GTK_IS_CONTAINER (container)' failed
+
+(Thunar:858): Gtk-CRITICAL **: 12:32:31.392: gtk_container_foreach: assertion 'GTK_IS_CONTAINER (container)' failed
+
+(Thunar:858): Gtk-CRITICAL **: 12:32:31.392: gtk_container_foreach: assertion 'GTK_IS_CONTAINER (container)' failed
+
+(Thunar:858): Gtk-CRITICAL **: 12:32:31.392: gtk_container_foreach: assertion 'GTK_IS_CONTAINER (container)' failed
+
+(Thunar:858): Gtk-CRITICAL **: 12:32:31.392: gtk_container_foreach: assertion 'GTK_IS_CONTAINER (container)' failed
+[1121:1121:0113/123238.094374:ERROR:gcm_channel_status_request.cc(145)] GCM channel request failed.
+**
+ERROR:lib/bluez/adapter.c:165:adapter_get_dbus_object_path: assertion failed: (ADAPTER_IS(self))
+timeout: the monitored command dumped core
+
+(blueberry.py:2378): com.linuxmint.blueberry-WARNING **: 12:33:31.976: Could not retrieve the BT adapter name with 'bt-adapter -i': Command '['timeout', '2s', 'bt-adapter', '-i']' died with <Signals.SIGABRT: 6>.
+**
+ERROR:lib/bluez/adapter.c:165:adapter_get_dbus_object_path: assertion failed: (ADAPTER_IS(self))
+timeout: the monitored command dumped core
+
+(blueberry.py:2378): com.linuxmint.blueberry-WARNING **: 12:33:32.402: Could not retrieve the BT adapter name with 'bt-adapter -i': Command '['timeout', '2s', 'bt-adapter', '-i']' died with <Signals.SIGABRT: 6>.
+thunar-volman: Unsupported USB device type "usb".
+thunar-volman: Unsupported USB device type "usb-storage".
+
+(Thunar:858): Gtk-CRITICAL **: 12:35:39.405: gtk_tree_model_filter_get_model: assertion 'GTK_IS_TREE_MODEL_FILTER (filter)' failed
+[1121:1121:0113/123611.809270:ERROR:gcm_channel_status_request.cc(145)] GCM channel request failed.
+[1121:1121:0113/123714.897688:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/123714.899052:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/123714.935367:ERROR:CONSOLE(0)] "Unchecked runtime.lastError: Cannot access contents of url "chrome://newtab/". Extension manifest must request permission to access this host.", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/_generated_background_page.html (0)
+[2744:1:0113/123727.760750:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[1121:1121:0113/124142.803956:ERROR:gcm_channel_status_request.cc(145)] GCM channel request failed.
+/usr/bin/brave: line 27:  9936 Segmentation fault      (core dumped) /usr/lib/brave-bin/brave "$@" $SANDBOX_FLAG $PEPPER_FLASH_FLAG $USER_FLAGS
+[1121:1121:0113/124227.452707:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/124227.455475:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[10083:10083:0113/124227.456742:ERROR:vaapi_wrapper.cc(417)] vaInitialize failed: unknown libva error
+[1121:1121:0113/124227.457149:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1146:1146:0113/124227.471212:ERROR:buffer_manager.cc(488)] [.DisplayCompositor]GL ERROR :GL_INVALID_OPERATION : glBufferData: <- error from previous GL command
+[10083:10083:0113/124227.524375:ERROR:sandbox_linux.cc(372)] InitializeSandbox() called with multiple threads in process gpu-process.
+[1121:1121:0113/124227.538839:ERROR:CONSOLE(0)] "Unchecked runtime.lastError: Cannot access contents of url "chrome://newtab/". Extension manifest must request permission to access this host.", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/_generated_background_page.html (0)
+[1146:1146:0113/124234.099350:ERROR:buffer_manager.cc(488)] [.DisplayCompositor]GL ERROR :GL_INVALID_OPERATION : glBufferData: <- error from previous GL command
+[1146:1146:0113/124509.175529:ERROR:buffer_manager.cc(488)] [.DisplayCompositor]GL ERROR :GL_INVALID_OPERATION : glBufferData: <- error from previous GL command
+[1146:1146:0113/124510.994504:ERROR:buffer_manager.cc(488)] [.DisplayCompositor]GL ERROR :GL_INVALID_OPERATION : glBufferData: <- error from previous GL command
+[1146:1146:0113/124516.564320:ERROR:buffer_manager.cc(488)] [.DisplayCompositor]GL ERROR :GL_INVALID_OPERATION : glBufferData: <- error from previous GL command
+[1121:1121:0113/125142.817584:ERROR:gcm_channel_status_request.cc(145)] GCM channel request failed.
+/usr/bin/brave: line 27: 35306 Segmentation fault      (core dumped) /usr/lib/brave-bin/brave "$@" $SANDBOX_FLAG $PEPPER_FLASH_FLAG $USER_FLAGS
+[35332:35332:0113/125500.619525:ERROR:vaapi_wrapper.cc(417)] vaInitialize failed: unknown libva error
+[1121:1121:0113/125500.626538:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/125500.626704:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/125500.627975:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1146:1146:0113/125500.634001:ERROR:buffer_manager.cc(488)] [.DisplayCompositor]GL ERROR :GL_INVALID_OPERATION : glBufferData: <- error from previous GL command
+[35332:35332:0113/125500.685896:ERROR:sandbox_linux.cc(372)] InitializeSandbox() called with multiple threads in process gpu-process.
+[1121:1121:0113/125500.703452:ERROR:CONSOLE(0)] "Unchecked runtime.lastError: Cannot access contents of url "chrome://newtab/". Extension manifest must request permission to access this host.", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/_generated_background_page.html (0)
+[1146:1146:0113/125508.571164:ERROR:buffer_manager.cc(488)] [.DisplayCompositor]GL ERROR :GL_INVALID_OPERATION : glBufferData: <- error from previous GL command
+[1146:1146:0113/125509.603671:ERROR:buffer_manager.cc(488)] [.DisplayCompositor]GL ERROR :GL_INVALID_OPERATION : glBufferData: <- error from previous GL command
+[1121:1121:0113/130142.831564:ERROR:gcm_channel_status_request.cc(145)] GCM channel request failed.
+[1121:1121:0113/131142.845662:ERROR:gcm_channel_status_request.cc(145)] GCM channel request failed.
+[1121:1121:0113/132142.860779:ERROR:gcm_channel_status_request.cc(145)] GCM channel request failed.
+[1121:1121:0113/133142.871995:ERROR:gcm_channel_status_request.cc(145)] GCM channel request failed.
+[35337:1:0113/133544.854050:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[35337:1:0113/133544.854817:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[35337:1:0113/133616.381510:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[35337:1:0113/133616.382111:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[1121:1121:0113/133710.582778:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/133710.583133:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/133710.678213:ERROR:CONSOLE(0)] "Unchecked runtime.lastError: Cannot access contents of url "chrome://newtab/". Extension manifest must request permission to access this host.", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/_generated_background_page.html (0)
+Fontconfig error: Cannot load default config file
+[35940:1:0113/133726.235124:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[35940:1:0113/133726.235968:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[35940:1:0113/133728.176227:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[35940:1:0113/133728.177683:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[1347:1:0113/133734.592959:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[1347:1:0113/133734.594596:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[1121:1121:0113/133756.932837:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/133756.932964:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/133756.983080:ERROR:CONSOLE(0)] "Unchecked runtime.lastError: Cannot access contents of url "chrome://newtab/". Extension manifest must request permission to access this host.", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/_generated_background_page.html (0)
+[1146:1146:0113/133947.973943:ERROR:buffer_manager.cc(488)] [.DisplayCompositor]GL ERROR :GL_INVALID_OPERATION : glBufferData: <- error from previous GL command
+**
+ERROR:lib/bluez/adapter.c:165:adapter_get_dbus_object_path: assertion failed: (ADAPTER_IS(self))
+timeout: the monitored command dumped core
+
+(blueberry.py:37563): com.linuxmint.blueberry-WARNING **: 13:41:01.027: Could not retrieve the BT adapter name with 'bt-adapter -i': Command '['timeout', '2s', 'bt-adapter', '-i']' died with <Signals.SIGABRT: 6>.
+**
+ERROR:lib/bluez/adapter.c:165:adapter_get_dbus_object_path: assertion failed: (ADAPTER_IS(self))
+timeout: the monitored command dumped core
+
+(blueberry.py:37563): com.linuxmint.blueberry-WARNING **: 13:41:01.115: Could not retrieve the BT adapter name with 'bt-adapter -i': Command '['timeout', '2s', 'bt-adapter', '-i']' died with <Signals.SIGABRT: 6>.
+[1146:1146:0113/134141.310919:ERROR:buffer_manager.cc(488)] [.DisplayCompositor]GL ERROR :GL_INVALID_OPERATION : glBufferData: <- error from previous GL command
+[1121:1121:0113/134142.884981:ERROR:gcm_channel_status_request.cc(145)] GCM channel request failed.
+[1121:1121:0113/134435.976789:ERROR:CONSOLE(0)] "Unchecked runtime.lastError: Cannot access contents of url "chrome-distiller://e7d4a465-b131-463e-9185-219f04c77073_28c3848be6f11a15b25a2f56937d22f903332802fa570f086f61b9c450463f2c/?time=4598356&url=http%3A%2F%2Flocalhost%3A1234%2F". Extension manifest must request permission to access this host.", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/_generated_background_page.html (0)
+[36061:1:0113/134436.217403:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[37673:1:0113/134627.760428:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[37673:1:0113/134627.761639:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[1121:1121:0113/134637.153347:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/134637.154017:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/134637.201568:ERROR:CONSOLE(0)] "Unchecked runtime.lastError: Cannot access contents of url "chrome://newtab/". Extension manifest must request permission to access this host.", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/_generated_background_page.html (0)
+[1146:1146:0113/134637.590890:ERROR:buffer_manager.cc(488)] [.DisplayCompositor]GL ERROR :GL_INVALID_OPERATION : glBufferData: <- error from previous GL command
+[1121:1121:0113/134648.399175:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/134648.403219:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/134648.447009:ERROR:CONSOLE(0)] "Unchecked runtime.lastError: Cannot access contents of url "chrome://newtab/". Extension manifest must request permission to access this host.", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/_generated_background_page.html (0)
+[1146:1146:0113/134651.533144:ERROR:buffer_manager.cc(488)] [.DisplayCompositor]GL ERROR :GL_INVALID_OPERATION : glBufferData: <- error from previous GL command
+[1121:1121:0113/134656.236771:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/134656.236877:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/134656.237147:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[37923:1:0113/134658.138190:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[1121:1121:0113/134700.211675:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/134700.216420:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/134700.221852:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[37957:1:0113/134701.863256:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[37957:1:0113/134701.864754:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[1121:1152:0113/134703.821058:ERROR:object_proxy.cc(632)] Failed to call method: org.freedesktop.ScreenSaver.Inhibit: object_path= /org/freedesktop/ScreenSaver: org.freedesktop.DBus.Error.ServiceUnknown: The name org.freedesktop.ScreenSaver was not provided by any .service files
+[1121:1152:0113/134703.821131:ERROR:power_save_blocker_x11.cc(330)] No response to Inhibit() request!
+[1121:1121:0113/134707.435156:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/134707.437515:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/134707.498593:ERROR:CONSOLE(0)] "Unchecked runtime.lastError: Cannot access contents of url "chrome://newtab/". Extension manifest must request permission to access this host.", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/_generated_background_page.html (0)
+[1146:1146:0113/134707.876509:ERROR:buffer_manager.cc(488)] [.DisplayCompositor]GL ERROR :GL_INVALID_OPERATION : glBufferData: <- error from previous GL command
+[1121:1152:0113/134709.592319:ERROR:object_proxy.cc(632)] Failed to call method: org.freedesktop.ScreenSaver.UnInhibit: object_path= /org/freedesktop/ScreenSaver: org.freedesktop.DBus.Error.ServiceUnknown: The name org.freedesktop.ScreenSaver was not provided by any .service files
+[1121:1152:0113/134709.592366:ERROR:power_save_blocker_x11.cc(403)] No response to Uninhibit() request!
+[1121:1152:0113/134709.595991:ERROR:object_proxy.cc(632)] Failed to call method: org.freedesktop.ScreenSaver.Inhibit: object_path= /org/freedesktop/ScreenSaver: org.freedesktop.DBus.Error.ServiceUnknown: The name org.freedesktop.ScreenSaver was not provided by any .service files
+[1121:1152:0113/134709.596056:ERROR:power_save_blocker_x11.cc(330)] No response to Inhibit() request!
+[1121:1152:0113/134709.632971:ERROR:object_proxy.cc(632)] Failed to call method: org.freedesktop.ScreenSaver.UnInhibit: object_path= /org/freedesktop/ScreenSaver: org.freedesktop.DBus.Error.ServiceUnknown: The name org.freedesktop.ScreenSaver was not provided by any .service files
+[1121:1152:0113/134709.633024:ERROR:power_save_blocker_x11.cc(403)] No response to Uninhibit() request!
+[1121:1152:0113/134709.640299:ERROR:object_proxy.cc(632)] Failed to call method: org.freedesktop.ScreenSaver.Inhibit: object_path= /org/freedesktop/ScreenSaver: org.freedesktop.DBus.Error.ServiceUnknown: The name org.freedesktop.ScreenSaver was not provided by any .service files
+[1121:1152:0113/134709.640349:ERROR:power_save_blocker_x11.cc(330)] No response to Inhibit() request!
+[1121:1121:0113/134712.878418:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/134712.878706:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/134712.999502:ERROR:CONSOLE(0)] "Unchecked runtime.lastError: Cannot access contents of url "chrome://newtab/". Extension manifest must request permission to access this host.", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/_generated_background_page.html (0)
+[38113:1:0113/134714.182757:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[38113:1:0113/134714.183695:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[38113:1:0113/134714.185259:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[38113:1:0113/134714.186379:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[38113:1:0113/134714.188908:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[38113:1:0113/134714.190037:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[1121:1121:0113/134714.550011:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/134714.555833:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/134714.706420:ERROR:CONSOLE(0)] "Unchecked runtime.lastError: Cannot access contents of url "chrome://newtab/". Extension manifest must request permission to access this host.", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/_generated_background_page.html (0)
+[1121:1121:0113/134826.217431:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/134826.217539:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/134826.330489:ERROR:CONSOLE(0)] "Unchecked runtime.lastError: Cannot access contents of url "chrome://newtab/". Extension manifest must request permission to access this host.", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/_generated_background_page.html (0)
+[1121:1152:0113/134826.434462:ERROR:object_proxy.cc(632)] Failed to call method: org.freedesktop.ScreenSaver.UnInhibit: object_path= /org/freedesktop/ScreenSaver: org.freedesktop.DBus.Error.ServiceUnknown: The name org.freedesktop.ScreenSaver was not provided by any .service files
+[1121:1152:0113/134826.434528:ERROR:power_save_blocker_x11.cc(403)] No response to Uninhibit() request!
+[1121:1152:0113/134839.492780:ERROR:object_proxy.cc(632)] Failed to call method: org.freedesktop.ScreenSaver.Inhibit: object_path= /org/freedesktop/ScreenSaver: org.freedesktop.DBus.Error.ServiceUnknown: The name org.freedesktop.ScreenSaver was not provided by any .service files
+[1121:1152:0113/134839.492926:ERROR:power_save_blocker_x11.cc(330)] No response to Inhibit() request!
+[1121:1152:0113/134840.044945:ERROR:object_proxy.cc(632)] Failed to call method: org.freedesktop.ScreenSaver.UnInhibit: object_path= /org/freedesktop/ScreenSaver: org.freedesktop.DBus.Error.ServiceUnknown: The name org.freedesktop.ScreenSaver was not provided by any .service files
+[1121:1152:0113/134840.045013:ERROR:power_save_blocker_x11.cc(403)] No response to Uninhibit() request!
+[1121:1121:0113/134840.051168:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/134840.051234:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/134840.090323:ERROR:CONSOLE(0)] "Unchecked runtime.lastError: Cannot access contents of url "chrome://newtab/". Extension manifest must request permission to access this host.", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/_generated_background_page.html (0)
+[38299:1:0113/134852.794119:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[38299:1:0113/134852.795014:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[38299:1:0113/134852.796965:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[38299:1:0113/134852.798418:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[38299:1:0113/134852.800482:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[38299:1:0113/134852.801954:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[1121:1121:0113/134901.377576:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/134901.380669:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/134901.421831:ERROR:CONSOLE(0)] "Unchecked runtime.lastError: Cannot access contents of url "chrome://newtab/". Extension manifest must request permission to access this host.", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/_generated_background_page.html (0)
+[38432:1:0113/134935.076183:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[38432:1:0113/134935.076739:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[38432:1:0113/134935.077634:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[38432:1:0113/134935.078116:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+Failed to play sound: Sound disabled
+[1121:1121:0113/135023.291484:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/135023.291650:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/135023.294680:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+Failed to play sound: Sound disabled
+[1121:1121:0113/135142.922992:ERROR:gcm_channel_status_request.cc(145)] GCM channel request failed.
+Failed to play sound: Sound disabled
+Failed to play sound: Sound disabled
+Failed to play sound: Sound disabled
+[1121:1121:0113/140142.937430:ERROR:gcm_channel_status_request.cc(145)] GCM channel request failed.
+[1121:1121:0113/141142.972204:ERROR:gcm_channel_status_request.cc(145)] GCM channel request failed.
+[1121:1121:0113/141941.988747:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/141941.990469:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/141942.027026:ERROR:CONSOLE(0)] "Unchecked runtime.lastError: Cannot access contents of url "chrome://newtab/". Extension manifest must request permission to access this host.", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/_generated_background_page.html (0)
+[1146:1146:0113/141942.403210:ERROR:buffer_manager.cc(488)] [.DisplayCompositor]GL ERROR :GL_INVALID_OPERATION : glBufferData: <- error from previous GL command
+[1121:1121:0113/141944.712966:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/141944.715656:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/141944.763348:ERROR:CONSOLE(0)] "Unchecked runtime.lastError: Cannot access contents of url "chrome://newtab/". Extension manifest must request permission to access this host.", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/_generated_background_page.html (0)
+[39228:1:0113/141945.294058:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[39228:1:0113/141945.295278:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[39228:1:0113/141945.296661:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[39228:1:0113/141945.297711:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[39228:1:0113/141945.299619:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[39228:1:0113/141945.300313:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[39228:1:0113/142004.991453:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[39228:1:0113/142004.993224:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[1121:1121:0113/142142.987869:ERROR:gcm_channel_status_request.cc(145)] GCM channel request failed.
+[1121:1121:0113/142218.381067:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/142218.381338:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/142218.381438:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[39276:1:0113/142220.000308:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[39276:1:0113/142220.001201:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[39276:1:0113/142220.003462:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[39276:1:0113/142220.004981:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[39276:1:0113/142220.007767:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[39276:1:0113/142220.009285:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[1121:1121:0113/142622.106587:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/142622.108154:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/142622.148686:ERROR:CONSOLE(0)] "Unchecked runtime.lastError: Cannot access contents of url "chrome://newtab/". Extension manifest must request permission to access this host.", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/_generated_background_page.html (0)
+[1146:1146:0113/142622.487419:ERROR:buffer_manager.cc(488)] [.DisplayCompositor]GL ERROR :GL_INVALID_OPERATION : glBufferData: <- error from previous GL command
+[39533:1:0113/142627.946820:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+Failed to play sound: Sound disabled
+Failed to play sound: Sound disabled
+[1121:1121:0113/143143.000503:ERROR:gcm_channel_status_request.cc(145)] GCM channel request failed.
+[1121:1121:0113/143423.769935:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/143423.770086:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/143423.809032:ERROR:CONSOLE(0)] "Unchecked runtime.lastError: Cannot access contents of url "chrome://newtab/". Extension manifest must request permission to access this host.", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/_generated_background_page.html (0)
+[1121:1121:0113/144143.016226:ERROR:gcm_channel_status_request.cc(145)] GCM channel request failed.
+[1121:1121:0113/144419.136629:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/144419.136759:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/144419.173927:ERROR:CONSOLE(0)] "Unchecked runtime.lastError: Cannot access contents of url "chrome://newtab/". Extension manifest must request permission to access this host.", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/_generated_background_page.html (0)
+[41305:41305:0113/144646.685718:ERROR:vaapi_wrapper.cc(417)] vaInitialize failed: unknown libva error
+/usr/bin/brave: line 27: 41282 Segmentation fault      (core dumped) /usr/lib/brave-bin/brave "$@" $SANDBOX_FLAG $PEPPER_FLASH_FLAG $USER_FLAGS
+[1146:1146:0113/144646.702942:ERROR:buffer_manager.cc(488)] [.DisplayCompositor]GL ERROR :GL_INVALID_OPERATION : glBufferData: <- error from previous GL command
+[1121:1121:0113/144646.739582:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/144646.740457:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/144646.741742:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[41305:41305:0113/144646.750451:ERROR:sandbox_linux.cc(372)] InitializeSandbox() called with multiple threads in process gpu-process.
+[1121:1121:0113/144646.789677:ERROR:CONSOLE(0)] "Unchecked runtime.lastError: Cannot access contents of url "chrome://newtab/". Extension manifest must request permission to access this host.", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/_generated_background_page.html (0)
+[1121:1121:0113/144708.388694:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/144708.392737:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/144708.393427:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+/usr/bin/brave: line 27: 41388 Segmentation fault      (core dumped) /usr/lib/brave-bin/brave "$@" $SANDBOX_FLAG $PEPPER_FLASH_FLAG $USER_FLAGS
+[41414:41414:0113/144708.410530:ERROR:vaapi_wrapper.cc(417)] vaInitialize failed: unknown libva error
+[1146:1146:0113/144708.410771:ERROR:buffer_manager.cc(488)] [.DisplayCompositor]GL ERROR :GL_INVALID_OPERATION : glBufferData: <- error from previous GL command
+[41414:41414:0113/144708.464968:ERROR:sandbox_linux.cc(372)] InitializeSandbox() called with multiple threads in process gpu-process.
+[1121:1121:0113/144708.503002:ERROR:CONSOLE(0)] "Unchecked runtime.lastError: Cannot access contents of url "chrome://newtab/". Extension manifest must request permission to access this host.", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/_generated_background_page.html (0)
+[39903:1:0113/144712.528758:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[39903:1:0113/144712.529999:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[39903:1:0113/144727.045078:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[39903:1:0113/144727.045784:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[1146:1146:0113/144730.213007:ERROR:buffer_manager.cc(488)] [.DisplayCompositor]GL ERROR :GL_INVALID_OPERATION : glBufferData: <- error from previous GL command
+[1146:1146:0113/144731.381386:ERROR:buffer_manager.cc(488)] [.DisplayCompositor]GL ERROR :GL_INVALID_OPERATION : glBufferData: <- error from previous GL command
+[1146:1146:0113/144736.854491:ERROR:buffer_manager.cc(488)] [.DisplayCompositor]GL ERROR :GL_INVALID_OPERATION : glBufferData: <- error from previous GL command
+[1146:1146:0113/144758.567691:ERROR:buffer_manager.cc(488)] [.DisplayCompositor]GL ERROR :GL_INVALID_OPERATION : glBufferData: <- error from previous GL command
+[1146:1146:0113/144806.945867:ERROR:buffer_manager.cc(488)] [.DisplayCompositor]GL ERROR :GL_INVALID_OPERATION : glBufferData: <- error from previous GL command
+[1121:1121:0113/145143.029633:ERROR:gcm_channel_status_request.cc(145)] GCM channel request failed.
+[1121:1121:0113/150143.114702:ERROR:gcm_channel_status_request.cc(145)] GCM channel request failed.
+[1121:1121:0113/150156.082564:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/150156.082653:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/150156.136226:ERROR:CONSOLE(0)] "Unchecked runtime.lastError: Cannot access contents of url "chrome://newtab/". Extension manifest must request permission to access this host.", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/_generated_background_page.html (0)
+**
+ERROR:lib/bluez/adapter.c:165:adapter_get_dbus_object_path: assertion failed: (ADAPTER_IS(self))
+timeout: the monitored command dumped core
+
+(blueberry.py:42306): com.linuxmint.blueberry-WARNING **: 15:04:17.473: Could not retrieve the BT adapter name with 'bt-adapter -i': Command '['timeout', '2s', 'bt-adapter', '-i']' died with <Signals.SIGABRT: 6>.
+**
+ERROR:lib/bluez/adapter.c:165:adapter_get_dbus_object_path: assertion failed: (ADAPTER_IS(self))
+timeout: the monitored command dumped core
+
+(blueberry.py:42306): com.linuxmint.blueberry-WARNING **: 15:04:17.573: Could not retrieve the BT adapter name with 'bt-adapter -i': Command '['timeout', '2s', 'bt-adapter', '-i']' died with <Signals.SIGABRT: 6>.
+/usr/lib/blueberry/blueberry-tray.py:165: DeprecationWarning: Gdk.Display.get_device_manager is deprecated
+  device = Gdk.Display.get_default().get_device_manager().get_client_pointer()
+/usr/lib/blueberry/blueberry-tray.py:165: DeprecationWarning: Gdk.DeviceManager.get_client_pointer is deprecated
+  device = Gdk.Display.get_default().get_device_manager().get_client_pointer()
+/usr/lib/blueberry/blueberry-tray.py:166: DeprecationWarning: Gtk.Menu.popup_for_device is deprecated
+  menu.popup_for_device(device, None, None, position_menu_cb, [x, y, position], button, time)
+
+(xfce4-session:766): GLib-WARNING **: 15:04:27.057: GChildWatchSource: Exit status of a child process was requested but ECHILD was received by waitpid(). See the documentation of g_child_watch_source_new() for possible causes.
+
+(xfce4-session:766): GLib-WARNING **: 15:07:20.521: GChildWatchSource: Exit status of a child process was requested but ECHILD was received by waitpid(). See the documentation of g_child_watch_source_new() for possible causes.
+/usr/bin/brave: line 27: 46815 Segmentation fault      (core dumped) /usr/lib/brave-bin/brave "$@" $SANDBOX_FLAG $PEPPER_FLASH_FLAG $USER_FLAGS
+[46841:46841:0113/151106.416221:ERROR:vaapi_wrapper.cc(417)] vaInitialize failed: unknown libva error
+[1146:1146:0113/151106.427939:ERROR:buffer_manager.cc(488)] [.DisplayCompositor]GL ERROR :GL_INVALID_OPERATION : glBufferData: <- error from previous GL command
+[46841:46841:0113/151106.463400:ERROR:sandbox_linux.cc(372)] InitializeSandbox() called with multiple threads in process gpu-process.
+[1121:1121:0113/151106.474316:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/151106.475337:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/151106.475987:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/151106.514471:ERROR:CONSOLE(0)] "Unchecked runtime.lastError: Cannot access contents of url "chrome://newtab/". Extension manifest must request permission to access this host.", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/_generated_background_page.html (0)
+[1121:1121:0113/151143.128524:ERROR:gcm_channel_status_request.cc(145)] GCM channel request failed.
+
+(xfce4-session:766): GLib-WARNING **: 15:14:40.114: GChildWatchSource: Exit status of a child process was requested but ECHILD was received by waitpid(). See the documentation of g_child_watch_source_new() for possible causes.
+
+(nm-applet:893): nm-applet-WARNING **: 15:17:24.675: failed to load icon "nm-secure-lock": Icon 'nm-secure-lock' not present in theme Paper-Mono-Dark
+
+(nm-applet:893): nm-applet-WARNING **: 15:17:30.360: disconnect_cb: Device disconnect failed: (9) Rejected send message, 1 matched rules; type="method_call", sender=":1.82" (uid=1000 pid=893 comm="nm-applet ") interface="org.freedesktop.NetworkManager.Device" member="Disconnect" error name="(unset)" requested_reply="0" destination=":1.4" (uid=0 pid=462 comm="/usr/bin/NetworkManager --no-daemon ")
+
+(nm-applet:893): nm-applet-WARNING **: 15:18:15.712: failed to load icon "nm-secure-lock": Icon 'nm-secure-lock' not present in theme Paper-Mono-Dark
+[1121:1121:0113/152143.142595:ERROR:gcm_channel_status_request.cc(145)] GCM channel request failed.
+
+(xfce4-session:766): GLib-WARNING **: 15:28:53.133: GChildWatchSource: Exit status of a child process was requested but ECHILD was received by waitpid(). See the documentation of g_child_watch_source_new() for possible causes.
+
+(xfce4-session:766): GLib-WARNING **: 15:31:20.102: GChildWatchSource: Exit status of a child process was requested but ECHILD was received by waitpid(). See the documentation of g_child_watch_source_new() for possible causes.
+[1121:1121:0113/153143.157026:ERROR:gcm_channel_status_request.cc(145)] GCM channel request failed.
+[1121:1121:0113/154143.169164:ERROR:gcm_channel_status_request.cc(145)] GCM channel request failed.
+[46904:1:0113/154332.340687:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[46904:1:0113/154332.341350:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[46904:1:0113/154339.350106:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[46904:1:0113/154339.351793:ERROR:child_process_sandbox_support_impl_linux.cc(79)] FontService unique font name matching request did not receive a response.
+[1121:1121:0113/155143.182400:ERROR:gcm_channel_status_request.cc(145)] GCM channel request failed.
+[1121:1121:0113/155248.213705:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/155248.214750:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/155248.251471:ERROR:CONSOLE(0)] "Unchecked runtime.lastError: Cannot access contents of url "chrome://newtab/". Extension manifest must request permission to access this host.", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/_generated_background_page.html (0)
+[1121:1121:0113/155413.069788:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/155413.071684:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/155413.074666:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/155459.011898:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/155459.012045:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1121:0113/155459.012156:ERROR:CONSOLE(1)] "[Shields]: Can't request shields panel data. Error: No tab url specified", source: chrome-extension://mnojpmjdmbbfmejpflffifhffcmidifd/out/brave_extension_background.bundle.js (1)
+[1121:1152:0113/155536.884117:ERROR:object_proxy.cc(632)] Failed to call method: org.freedesktop.ScreenSaver.Inhibit: object_path= /org/freedesktop/ScreenSaver: org.freedesktop.DBus.Error.ServiceUnknown: The name org.freedesktop.ScreenSaver was not provided by any .service files
+[1121:1152:0113/155536.884189:ERROR:power_save_blocker_x11.cc(330)] No response to Inhibit() request!
+[1121:1152:0113/155538.375114:ERROR:object_proxy.cc(632)] Failed to call method: org.freedesktop.ScreenSaver.UnInhibit: object_path= /org/freedesktop/ScreenSaver: org.freedesktop.DBus.Error.ServiceUnknown: The name org.freedesktop.ScreenSaver was not provided by any .service files
+[1121:1152:0113/155538.375333:ERROR:power_save_blocker_x11.cc(403)] No response to Uninhibit() request!
