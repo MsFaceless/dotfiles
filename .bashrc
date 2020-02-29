@@ -8,9 +8,12 @@ case $- in
       *) return;;
 esac
 
-# don't put duplicate lines or lines starting with space in the history.
 # See bash(1) for more options
-HISTIGNORE='rm :*--clean*' # prevent hg update --clean from being written into history
+
+# prevent hg update --clean from being written into history
+HISTIGNORE='rm :*--clean*'
+
+# don't put duplicate lines or lines starting with space in the history.
 HISTCONTROL=ignoreboth:erasedups
 
 # append to the history file, don't overwrite it
