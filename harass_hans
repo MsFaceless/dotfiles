@@ -1,3 +1,0 @@
-#!/usr/bin/bash
-OUT=$(/usr/bin/zenity --entry --hide-text)
-/usr/bin/ssh -CX hans@192.168.0.85 "DISPLAY=:0 notify-send -u critical '$OUT'"
