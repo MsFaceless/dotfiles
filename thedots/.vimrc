@@ -4,22 +4,23 @@ filetype off
 set rtp+=~/.vim/bundle/Vundle.vim
 call vundle#begin()
 
+"Plugin 'dart-lang/dart-vim-plugin'
+"Plugin 'leafgarland/typescript-vim'
+"Bundle 'OmniSharp/omnisharp-vim'
+"
 Plugin 'VundleVim/Vundle.vim'
-Plugin 'Valloric/YouCompleteMe'
 Plugin 'SirVer/ultisnips'
 Plugin 'honza/vim-snippets'
 Plugin 'majutsushi/tagbar'
-Plugin 'leafgarland/typescript-vim'
 Plugin 'vim-airline/vim-airline'
 Plugin 'vim-airline/vim-airline-themes'
-Bundle 'OmniSharp/omnisharp-vim'
+Plugin 'Valloric/YouCompleteMe'
 
 call vundle#end()
 
 syntax on
 filetype plugin indent on
 filetype plugin on
-colorscheme spacecamp
 
 set path+=**
 set wildmenu
@@ -74,15 +75,16 @@ nmap <F4> :g/^$/d<CR>
 nmap <F5> :%s/\s\+$//e<CR>
 " Add an empty space after commas
 nmap <F6> :%s/,\(\S\)/, \1/g<CR>
-" Remove spaces in empty strings 
+" Remove spaces in empty strings
 nmap <F7> :%s/' '/''/gc<CR>
+" Add an empty space after colons
+nmap <F8> :%s/:\(\S\)/: \1/gc<CR>
 
 " Shows tabs and spaces
 nmap <leader>l :set list!<CR>
 
 if has('autocmd')
     autocmd FileType python nmap <F2> :w\|!python %<cr>
-    autocmd FileType python nmap <F8> :w\|!python3 %<cr>
     autocmd FileType sh nmap <F2> :w\|!sh %<cr>
     autocmd FileType cpp nmap <F2> :w\|!g++ -g -c -o %< % && ./%<<cr>
     autocmd FileType cs nmap <F2> :w\|!csc ./%<cr>
@@ -111,3 +113,7 @@ let g:ycm_autoclose_preview_window_after_completion=1
 let g:airline_section_b = '%{strftime("%c")}'
 let g:airline_section_y = 'BN: %{bufnr("%")}'
 let g:airline_theme = 'simple'
+
+" Tar files Config
+" let g:loaded_tarPlugin = 1
+" let g:loaded_tar = 1
