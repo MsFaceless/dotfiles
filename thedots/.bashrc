@@ -119,6 +119,8 @@ if ! shopt -oq posix; then
   fi
 fi
 
-#[ -f /etc/profile.d/autojump.sh ] && . /etc/profile.d/autojump.sh
 export EDITOR=/usr/bin/vim
+#[ -f /etc/profile.d/autojump.sh ] && . /etc/profile.d/autojump.sh
+#export PATH="$PATH:/home/camilla/Documents/software/flutter/bin"
+#export ANDROID_HOME=/home/camilla/Documents/software/android
 #source /home/camilla/Documents/software/setproxy.sh

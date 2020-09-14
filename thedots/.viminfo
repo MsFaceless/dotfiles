@@ -12,11 +12,9 @@
 ~h
 # Command Line History (newest to oldest):
 :qa
-|2,0,1576046323,,"qa"
+|2,0,1578985105,,"qa"
 :wqa
-|2,0,1576045811,,"wqa"
-:q
-|2,0,1576045412,,"q"
+|2,0,1578984318,,"wqa"
 
 # Search String History (newest to oldest):
 
@@ -27,72 +25,89 @@
 # Debug Line History (newest to oldest):
 
 # Registers:
-""1	LINE	0
-	#export PATH=$PATH:/home/camilla/NFS/staff_folders/camilla/Android/Sdk/tools:/home/camilla/NFS/staff_folders/camilla/Android/Sdk/tools/bin:/home/camilla/NFS/staff_folders/camilla/Android/Sdk/platform-tools
-|3,1,1,1,1,0,1576045810,"#export PATH=$PATH:/home/camilla/NFS/staff_folders/camilla/Android/Sdk/tools:/home/camilla/NFS/staff_folders/camilla/Android/Sdk/tools/bin:/home/camilla/NFS/staff_folders/camilla/Android/Sdk/platform-tools"
-"2	LINE	0
-	#export ANDROID_HOME=~/NFS/staff_folders/camilla/Android/Sdk
-|3,0,2,1,1,0,1576045809,"#export ANDROID_HOME=~/NFS/staff_folders/camilla/Android/Sdk"
-"3	LINE	0
-	
-|3,0,3,1,1,0,1575989640,""
-"4	LINE	0
-	neofetch
-|3,0,4,1,1,0,1575989640,"neofetch"
+""-	CHAR	0
+	#
+|3,1,36,0,1,0,1578984002,"#"
 
 # File marks:
-'0  20986  0  /usr/bin/subl3
-|4,48,20986,0,1576046323,"/usr/bin/subl3"
-'1  120  0  ~/.bashrc
-|4,49,120,0,1576045811,"~/.bashrc"
-'2  156  0  ~/.bashrc
-|4,50,156,0,1575989642,"~/.bashrc"
-'3  158  0  ~/.bashrc
-|4,51,158,0,1575989642,"~/.bashrc"
+'0  1  0  /usr/bin/harass_hans
+|4,48,1,0,1578984833,"/usr/bin/harass_hans"
+'1  10  0  ~/enviros/rocket_env/rocket/dev_requirements.txt
+|4,49,10,0,1578984318,"~/enviros/rocket_env/rocket/dev_requirements.txt"
+'2  106  0  ~/enviros/rocket_env/rocket/development.ini
+|4,50,106,0,1578984002,"~/enviros/rocket_env/rocket/development.ini"
 
 # Jumplist (newest first):
--'  20986  0  /usr/bin/subl3
-|4,39,20986,0,1576046323,"/usr/bin/subl3"
--'  1  0  /usr/bin/subl3
-|4,39,1,0,1576046322,"/usr/bin/subl3"
--'  120  0  ~/.bashrc
-|4,39,120,0,1576045811,"~/.bashrc"
--'  120  0  ~/.bashrc
-|4,39,120,0,1576045811,"~/.bashrc"
--'  1  0  ~/.bashrc
-|4,39,1,0,1576045796,"~/.bashrc"
--'  1  0  ~/.bashrc
-|4,39,1,0,1576045796,"~/.bashrc"
--'  156  0  ~/.bashrc
-|4,39,156,0,1575989642,"~/.bashrc"
--'  158  0  ~/.bashrc
-|4,39,158,0,1575989642,"~/.bashrc"
--'  158  0  ~/.bashrc
-|4,39,158,0,1575989642,"~/.bashrc"
--'  156  0  ~/.bashrc
-|4,39,156,0,1575989642,"~/.bashrc"
--'  158  0  ~/.bashrc
-|4,39,158,0,1575989642,"~/.bashrc"
--'  158  0  ~/.bashrc
-|4,39,158,0,1575989642,"~/.bashrc"
--'  1  0  ~/.bashrc
-|4,39,1,0,1575989639,"~/.bashrc"
--'  1  0  ~/.bashrc
-|4,39,1,0,1575989639,"~/.bashrc"
--'  1  0  ~/.bashrc
-|4,39,1,0,1575989639,"~/.bashrc"
--'  1  0  ~/.bashrc
-|4,39,1,0,1575989639,"~/.bashrc"
+-'  1  0  /usr/bin/harass_hans
+|4,39,1,0,1578984833,"/usr/bin/harass_hans"
+-'  1  0  /usr/bin/harass_hans
+|4,39,1,0,1578984833,"/usr/bin/harass_hans"
+-'  10  0  ~/enviros/rocket_env/rocket/dev_requirements.txt
+|4,39,10,0,1578984318,"~/enviros/rocket_env/rocket/dev_requirements.txt"
+-'  10  0  ~/enviros/rocket_env/rocket/dev_requirements.txt
+|4,39,10,0,1578984318,"~/enviros/rocket_env/rocket/dev_requirements.txt"
+-'  10  0  ~/enviros/rocket_env/rocket/dev_requirements.txt
+|4,39,10,0,1578984318,"~/enviros/rocket_env/rocket/dev_requirements.txt"
+-'  10  0  ~/enviros/rocket_env/rocket/dev_requirements.txt
+|4,39,10,0,1578984318,"~/enviros/rocket_env/rocket/dev_requirements.txt"
+-'  1  0  ~/enviros/rocket_env/rocket/dev_requirements.txt
+|4,39,1,0,1578984313,"~/enviros/rocket_env/rocket/dev_requirements.txt"
+-'  1  0  ~/enviros/rocket_env/rocket/dev_requirements.txt
+|4,39,1,0,1578984313,"~/enviros/rocket_env/rocket/dev_requirements.txt"
+-'  1  0  ~/enviros/rocket_env/rocket/dev_requirements.txt
+|4,39,1,0,1578984313,"~/enviros/rocket_env/rocket/dev_requirements.txt"
+-'  1  0  ~/enviros/rocket_env/rocket/dev_requirements.txt
+|4,39,1,0,1578984313,"~/enviros/rocket_env/rocket/dev_requirements.txt"
+-'  106  0  ~/enviros/rocket_env/rocket/development.ini
+|4,39,106,0,1578984002,"~/enviros/rocket_env/rocket/development.ini"
+-'  106  0  ~/enviros/rocket_env/rocket/development.ini
+|4,39,106,0,1578984002,"~/enviros/rocket_env/rocket/development.ini"
+-'  106  0  ~/enviros/rocket_env/rocket/development.ini
+|4,39,106,0,1578984002,"~/enviros/rocket_env/rocket/development.ini"
+-'  106  0  ~/enviros/rocket_env/rocket/development.ini
+|4,39,106,0,1578984002,"~/enviros/rocket_env/rocket/development.ini"
+-'  106  0  ~/enviros/rocket_env/rocket/development.ini
+|4,39,106,0,1578984002,"~/enviros/rocket_env/rocket/development.ini"
+-'  106  0  ~/enviros/rocket_env/rocket/development.ini
+|4,39,106,0,1578984002,"~/enviros/rocket_env/rocket/development.ini"
+-'  106  0  ~/enviros/rocket_env/rocket/development.ini
+|4,39,106,0,1578984002,"~/enviros/rocket_env/rocket/development.ini"
+-'  106  0  ~/enviros/rocket_env/rocket/development.ini
+|4,39,106,0,1578984002,"~/enviros/rocket_env/rocket/development.ini"
+-'  1  0  ~/enviros/rocket_env/rocket/development.ini
+|4,39,1,0,1578983982,"~/enviros/rocket_env/rocket/development.ini"
+-'  1  0  ~/enviros/rocket_env/rocket/development.ini
+|4,39,1,0,1578983982,"~/enviros/rocket_env/rocket/development.ini"
+-'  1  0  ~/enviros/rocket_env/rocket/development.ini
+|4,39,1,0,1578983982,"~/enviros/rocket_env/rocket/development.ini"
+-'  1  0  ~/enviros/rocket_env/rocket/development.ini
+|4,39,1,0,1578983982,"~/enviros/rocket_env/rocket/development.ini"
+-'  1  0  ~/enviros/rocket_env/rocket/development.ini
+|4,39,1,0,1578983982,"~/enviros/rocket_env/rocket/development.ini"
+-'  1  0  ~/enviros/rocket_env/rocket/development.ini
+|4,39,1,0,1578983982,"~/enviros/rocket_env/rocket/development.ini"
+-'  1  0  ~/enviros/rocket_env/rocket/development.ini
+|4,39,1,0,1578983982,"~/enviros/rocket_env/rocket/development.ini"
+-'  1  0  ~/enviros/rocket_env/rocket/development.ini
+|4,39,1,0,1578983982,"~/enviros/rocket_env/rocket/development.ini"
 
 # History of marks within files (newest to oldest):
 
-> /usr/bin/subl3
-	*	1576046322	0
-	"	20986	0
+> /usr/bin/harass_hans
+	*	1578984821	0
+	"	1	0
 
-> ~/.bashrc
-	*	1576045810	0
-	"	120	0
-	.	120	0
-	+	157	0
-	+	120	0
+> ~/enviros/rocket_env/rocket/dev_requirements.txt
+	*	1578984317	0
+	"	10	0
+	^	10	1
+	.	10	0
+	+	10	0
+
+> ~/enviros/rocket_env/rocket/development.ini
+	*	1578984002	0
+	"	106	0
+	^	101	1
+	.	106	0
+	+	101	0
+	+	106	0

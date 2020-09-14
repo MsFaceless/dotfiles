@@ -1,4 +1,12 @@
 let g:netrw_dirhistmax  =10
 let g:netrw_dirhistcnt =2
-let g:netrw_dirhist_2='/home/camilla/enviros/olderenvs/rocket_app/rocket_app/public/javascript'
-let g:netrw_dirhist_1='/home/camilla/.vim'
+let g:netrw_dirhist_2='/usr/share/fonts'
+let g:netrw_dirhist_1='/home/camilla/enviros/rocket22env/rocket2_2/rocket/lib/phat'
+let g:netrw_dirhist_0='/home/camilla/enviros/rocket22env/rocket2_2/rocket/controllers'
+let g:netrw_dirhist_9='/home/camilla/Videos/documents/codezone/jistdocstore/controllers'
+let g:netrw_dirhist_8='/home/camilla/enviros/rocket22env/rocket2_2/rocket/config'
+let g:netrw_dirhist_7='/home/camilla/enviros/rocket22env/rocket2_2/rocket/model'
+let g:netrw_dirhist_6='/home/camilla/enviros/rocket22env/rocket2_2/rocket/controllers'
+let g:netrw_dirhist_5='/home/camilla/enviros/calabash_eiffelcorp_backoffice/backoffice/eiffel_back/controllers'
+let g:netrw_dirhist_4='/home/camilla/enviros/threevault_env/threevault_hg/.hg'
+let g:netrw_dirhist_3='/home/camilla/enviros/threevault_env/threevault_hg'

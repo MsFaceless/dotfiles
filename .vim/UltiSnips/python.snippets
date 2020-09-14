@@ -226,7 +226,7 @@ def write_model_column(args,snip,prefix):
 			snip += "%s = Column(Unicode(255)) " % (arg)
 
 def write_outputlist(args, snip, prefix):
-	if len(args) > 1:
+	if len(args) >= 1:
 		first = args[0]
 		snip += """'{0}' : "<div class='edit {1}_edit' {1}_id='{{1}}'>{{0}}</div>".format(item.{0}, item.id),  """.format(first, prefix)
 		for arg in args[1:]:
@@ -234,6 +234,21 @@ def write_outputlist(args, snip, prefix):
 	else:
 		for arg in args:
 			snip += "'{0}' : item.{0}, ".format(arg)
+
+def write_edit_form_args(args, snip, prefix):
+	for arg in args:
+		snip += """{0} = {2}.{0} if {2} else '' """.format(arg, arg.capitalize(), prefix)
+
+def write_new_form_cards_with_value(args, snip, prefix):
+	for arg in args:
+		snip += """<div class="col-md-6">
+					<div class="form-group row">
+						<label class="col-md-3 col-form-label" required for="{0}">{1}</label>
+						<div class="col-md-9">
+							<input id="{0}" value="{{{0}}}" type="text" name="{0}" class="form-control" required='true'>
+						</div>
+					</div>
+				</div>""".format(arg, arg.capitalize())
 
 def write_new_form_cards(args, snip, prefix):
 	for arg in args:
@@ -519,7 +534,7 @@ write_headers(args, snip, t[4]) `
                             <h4 class="card-title">${2/\w+\s*/\u$0/g}</h4>
                         </div>
                         <div class="col-md-6 text-right">
-                            <button id="create_new_$2" class="btn btn-primary ml-auto">Create a new ${2/\w+\s*/\u$0/g}</button>
+                            <button id="create_new_$2" class="btn btn-primary ml-auto">Create a New ${2/\w+\s*/\u$0/g}</button>
                         </div>
                     </div>
                     <div class="row d-flex align-items-center">
@@ -821,7 +836,7 @@ write_headers(args, snip, t[4]) `
                             <h4 class="card-title">${2/\w+\s*/\u$0/g}</h4>
                         </div>
                         <div class="col-md-6 text-right">
-                            <button id="create_new_$2" class="btn btn-primary ml-auto">Create a new ${2/\w+\s*/\u$0/g}</button>
+                            <button id="create_new_$2" class="btn btn-primary ml-auto">Create a New ${2/\w+\s*/\u$0/g}</button>
                         </div>
                     </div>
                     <div class="row d-flex align-items-center">
@@ -1443,17 +1458,18 @@ snip += "Test 2"
 
 `
 endsnippet
-
 snippet _dic "Create a dictionary"
 ${1:dictname} = {
 				 '${2:one}':'${3:one}',
 				 '${4:two}':'${5:two}'${0}
 				}
 endsnippet
-
 snippet _dol
 	def ${1:__init__}(self, *args, **kwargs):
 	    super(${0:ClassName}, self).$1(*args, **kwargs)
+endsnippet
+snippet kwg
+${1:var_name} = kwargs.get('$1', ${2:None})
 endsnippet
 snippet _kwg
 self.${1:var_name} = kwargs.get('$1', ${2:None})
@@ -1665,4 +1681,198 @@ else:
     snip.rv += "{0}".format(t[1])
 `
 $0
+endsnippet
+
+snippet _tgcreateclass_nowui_modal_nojson "Create TG Now UI' Classes with Modals" b
+#class_name = ${1:GenericClassName}
+#table_name =${2}
+#prefix =${3}
+#postfix =${4}
+#columns_to_create = [$5] #id - primary_key autoincrement=True
+#cont_name =${6}
+#html_template_name =${7}
+#dbsession =${8}
+#controller_name =${9}
+#view_cols_list = [$10]
+#search_cols_list = [$11]
+#pdf_cols_list = [$12]
+#link_to_id_or_None =${13}
+#link_class_name_None =${14}
+
+############################
+# Controller
+############################
+
+$0
+class $9(BaseController):
+	`!p snip.rv = triple_quotes(snip)`Docstring for $6.`!p snip.rv = triple_quotes(snip)`
+
+	def __init__(self, *args, **kwargs):
+		pass
+
+	@require(predicates.not_anonymous())
+    @expose('rocket_app.templates.generic')
+    def $2s(self, *args, **kwargs):
+        html = self.get_active_$2_html(*args, **kwargs)
+        javascript = self.get_javascript_$2_onload()
+		title = "${2/\w+\s*/\u$0/g}"
+        return dict(title=title, html=html, javascript=javascript)
+
+    @expose()
+    def get_active_$2_html(self, *args, **kwargs):
+		dbase_query = $1.get_all('id')
+        outputlist = []
+		for item in dbase_query:
+			outputlist.append({ `!p
+snip >> 4
+args = get_args(t[10])
+write_outputlist(args, snip, t[2]) `
+							 })
+		dbcolumnlist=[ `!p
+snip >> 4
+snip.rv = ""
+args = get_args(t[10])
+write_dictstuff(args, snip, t[4]) `
+					]
+		theadlist=[ `!p
+snip >> 4
+snip.rv = ""
+args = get_args(t[10])
+write_headers(args, snip, t[4]) `
+				]
+		htmltbl = build_html_table(outputlist, dbcolumnlist, theadlist, "$2_table")
+		html = f"""
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                <div class="card-header">
+                    <div class="row d-flex">
+                        <div class="col-md-6">
+                            <h4 class="card-title">${2/\w+\s*/\u$0/g}</h4>
+                        </div>
+                        <div class="col-md-6 text-right">
+                            <button id="create_new_$2" class="btn btn-primary ml-auto">Create New ${2/\w+\s*/\u$0/g}</button>
+                        </div>
+                    </div>
+                    <div class="row d-flex align-items-center">
+                        <div class="col-md-4">
+                            <input type="text" class="form-control search" name="searchphrase" placeholder="Search">
+                        </div>
+                        <div class="col-md-8">
+                            <button class="btn btn-primary action_search">Search</button>
+                            <button class="btn btn-primary">Reset</button>
+                        </div>
+                    </div>
+                    <hr>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        {htmltbl}
+                    </div>
+                </div>
+                </div>
+            </div>
+		</div>
+		"""
+		return html
+
+    @expose()
+    def get_javascript_$2_onload(self, *args, **kwargs):
+        javascript = """
+        $("#create_new_$2").click(function(){
+            $('#dialogdiv').load('/$6/get_modal_$2?', function(data){
+                return false;
+            });
+        });
+        $(".$2_edit").click(function(){
+            var kwargs = '$2_id='+$(this).attr('$2_id');
+            $('#dialogdiv').load('/$6/get_modal_$2?', kwargs, function(data){
+                return false;
+            });
+        });
+		"""
+		return javascript
+
+    @expose()
+    def get_modal_$2(self, *args, **kwargs):
+		$2_id = kwargs.get('$2_id', None)
+		$2 = None
+		hidden_input = ''
+		if $2_id:
+			$2 = $1.by_id($2_id)
+			hidden_input = get_hidden_input(**{'id': '$2_id', 'value': $2_id}) `!p
+snip >> 2
+args = get_args(t[10])
+write_edit_form_args(args, snip, t[2]) `
+        html = f"""
+        <div class="modal fade" id="dialog_$2" tabindex="-1" role="dialog" aria-labelledby="my$2Label" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <div class="col-md-6">
+                            <h4 class="card-title">New ${2/\w+\s*/\u$0/g}</h4>
+                        </div>
+                    </div>
+                    <div class="modal-body">
+                        <form id='form_$2'>
+						{hidden_input}`!p
+snip >> 8
+args = get_args(t[10])
+write_new_form_cards_with_value(args, snip, t[2]) `
+                        </form>
+                    </div>
+                    <div class="modal-footer">
+                        <button id='save_$2' class="btn btn-primary">Save</button>
+                        <button class="btn btn-outline-primary $2_back">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+		"""
+        javascript = """
+		<script>
+		var form_id = '#form_$2'
+        setFormValidation(form_id); `!p
+snip >> 2
+snip.rv = ""
+args = get_args(t[5])
+write_datepicker_js(args, snip, t[2])`
+        $('#save_$2').click(function(){
+             var valid = FormIsValid(form_id);
+             if(valid){
+                var formserial = $(form_id).serialize();
+                $.post('/$6/save_$2?', formserial, function(data){
+					$.redirect('/$6/$2s');
+                    return false;
+                });
+             }
+        });
+        $('.$2_back').click(function(){
+			$('#dialog_$2').modal('hide');
+        });
+		$('#dialog_$2').modal();
+		</script>
+	 	"""
+		return html + javascript
+
+    @expose()
+    def save_$2(self, *args, **kwargs):
+        usernow = request.identity.get('user', None)
+		$2_id = kwargs.get('$2_id', None)
+		if not $2_id:
+			this = $1()`!p
+snip >> 3
+args = get_args(t[5])
+write_savenew_record(args, snip, t[4]) `
+			this.added_by = usernow.id
+			$8.add(this)
+			$8.flush()
+		else:
+			this = $1.by_id($2_id)
+			if not this: return 'false'`!p
+snip >> 3
+args = get_args(t[5])
+write_saveedit_record(args, snip, t[4]) `
+			$8.flush()
+        return str(this.id)
 endsnippet

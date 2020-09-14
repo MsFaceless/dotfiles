@@ -15,12 +15,13 @@ Plugin 'majutsushi/tagbar'
 Plugin 'vim-airline/vim-airline'
 Plugin 'vim-airline/vim-airline-themes'
 Plugin 'Valloric/YouCompleteMe'
+Plugin 'chrisbra/csv.vim'
 
 call vundle#end()
 
-syntax on
 filetype plugin indent on
 filetype plugin on
+syntax on
 
 set path+=**
 set wildmenu
@@ -69,6 +70,9 @@ endfor
 
 " Open the tagbar toggler
 nmap <F3> :TagbarToggle<CR>
+" Open the taglist toggler
+nmap <F9> :TlistToggle<CR>
+
 " Deletes empty lines
 nmap <F4> :g/^$/d<CR>
 " Removes trailing whitespaces
@@ -115,5 +119,5 @@ let g:airline_section_y = 'BN: %{bufnr("%")}'
 let g:airline_theme = 'simple'
 
 " Tar files Config
-" let g:loaded_tarPlugin = 1
-" let g:loaded_tar = 1
+let g:loaded_tarPlugin = 1
+let g:loaded_tar = 1

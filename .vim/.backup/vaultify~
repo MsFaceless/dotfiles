@@ -1,8 +1,0 @@
-cd $HOME/enviros
-/usr/bin/python3.8 -m venv vault
-cd vault
-source bin/activate
-hg clone ssh://developer@dotxml.duckdns.org:45678//home/developer/enviros/rocket_vault/vault/
-cd vault
-pip install -r dev_requirements.txt
-source run_main
