@@ -1,6 +1,0 @@
-#!/bin/python
-    def file_name_regex_replace(self, file_name='', *args, **kwargs):
-        old_file_name, ext = os.path.splitext(file_name)
-        new_file_name = newstring = "".join(c for c in old_file_name if c.isalpha())
-        return new_file_name+ext
-

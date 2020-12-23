@@ -1,7 +1,0 @@
-#!/bin/bash
-
-echo "Pulling in SQL Data"
-#mysql -udeveloper -pdeveloppass rocketdb < rocketdbdump.sql;
-#mysql -udeveloper -pdeveloppass rocketdb < lezaqadata.sql;
-mysql -udeveloper -pdeveloppass rocketdb < inprogress.sql;
-wait

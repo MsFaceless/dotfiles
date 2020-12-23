@@ -1,1 +1,0 @@
-sshuttle --dns -r developer@dotxml.duckdns.org -x 105.242.106.10 -v 0/0 --ssh-cmd "ssh -i /home/hans/.ssh/id_rsa -p 45678" --python=python3

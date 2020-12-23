@@ -1,9 +1,0 @@
-Loyalty
-
-1
-
-url: base_url/loyalty/get_balance
-input: username
-output: same as main get_balance
-        success bln
-        data list [{'balance' : string}]

@@ -1,9 +1,0 @@
-#!/bin/python
-
-import pandas as pd
-
-filename = 'static_data.xlsx'
-
-x1 = pd.ExcelFile(filename)
-print(x1)
-
