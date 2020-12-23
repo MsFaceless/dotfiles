@@ -1,0 +1,603 @@
+# -*- coding: utf-8 -*-
+"""Agent controller module"""
+from tg import predicates
+
+import string
+import random
+# from tg.i18n import ugettext as _
+# from tg import predicates
+from tg import expose, require, redirect, validate, flash, url, request, response, predicates
+
+from calmerchant_app.model import *
+
+from calmerchant_app.controllers.common import CommonController
+from calmerchant_app.lib.base import BaseController
+from calmerchant_app.lib.tg_utils import *
+from calmerchant_app.lib.tg_decorators import time_it, CustomNotAnonymous
+from calmerchant_app.lib.gateway_utils import *
+from sqlalchemy import func, desc, asc ,  or_
+
+COMMON = CommonController()
+
+class AgentController(BaseController):
+
+    @require(CustomNotAnonymous())
+    @expose('calmerchant_app.templates.generic')
+    def index(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+        COMMON.sync_merchant_sales_roles()
+        dbase_query = DBSession.query(UserMerchantAgentLink). \
+                filter(UserMerchantAgentLink.user_id_merchant == usernow.user_id). \
+                filter(UserMerchantAgentLink.active == True). \
+                all()
+        agent_chart = ''
+        input_list = self.get_sales_figures()
+        if input_list:
+            agent_chart = self.get_pie_chart(input_list)
+        html=f"""
+        <div class="row">
+            <div class="col-md-8">
+                <div class="card">
+                    <div class="card-header d-flex align-items-center">
+                        <div class="col-md-6">
+                            <h4 class="card-title">Sales Agents</h4>
+                        </div>
+                        <div class="col-md-6 text-right">
+                            <button id="btnNewAgent" merchant_id="{usernow.user_id}" class="btn btn-info">New Sales Agent</button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div id="agentDiv"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                {agent_chart}
+            </div>
+        </div>
+        """
+        javascript = """
+        $('#agentDiv').load('agent/get_sales_agent_html_tbl');
+        $('#btnNewAgent').click(function(){
+            var kwargs = {'merchant_id': $(this).attr('merchant_id')};
+            $.redirect('/agent/new', kwargs);
+        });
+        """
+        return dict(title="Sales Agents | Calabash", html=html, javascript=javascript)
+
+    def get_sales_figures(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+        today = datetime.date(datetime.now())
+        this_month = today - timedelta(days=31)
+        dbase_query = DBSession.query(UserMerchantAgentLink). \
+            filter(UserMerchantAgentLink.user_id_merchant == usernow.user_id). \
+            filter(UserMerchantAgentLink.active == True). \
+            all()
+        input_list = []
+        if not dbase_query:
+            return []
+        for agent in dbase_query:
+            agent_user = DBSession.query(User). \
+                filter(User.user_id == agent.user_id_agent). \
+                first()
+            total_sales = DBSession.query(TransactionHistory). \
+                filter(TransactionHistory.myimali_username == agent_user.myimali_username). \
+                filter(TransactionHistory.type=='purchase'). \
+                filter(TransactionHistory.date >= this_month). \
+                value(func.sum(TransactionHistory.amount))
+            if not total_sales:
+                continue
+            print('total_sales', total_sales)
+            input_list.append({'name': agent_user.name, 'value': total_sales})
+        return input_list
+
+    def get_pie_chart(self, input_list=[], *args, **kwargs):
+        chart_data = ""
+        # Wired up for DEMO
+        theme_colours = ['161b40','43bee5','ff1a6e','efa500','41b853','344098','78d2ed','ff669e','ffcf66','8ed799']
+        for i, item in enumerate(input_list):
+            agent_name = item.get('name', None)
+            sales_value = item.get('value', None)
+            colour = theme_colours[i]
+            chart_data += f'<span class="salesAgents" data-name="{agent_name}" data-value="{sales_value}" data-colour="#{colour}"></span>'
+        html = f"""
+        <div class="card ">
+            <div class="card-header ">
+                <h5 class="card-title">Agent Sales</h5>
+                <p class="card-category">Total sales for this month</p>
+            </div>
+            <div class="card-body ">
+                {chart_data}
+                <canvas id="chartPie" class="ct-chart ct-perfect-fourth mb-3" width="456" height="300"></canvas>
+            </div>
+        </div>
+        """
+        javascript = """
+        <script>
+            var names = new Array();
+            var amounts = new Array();
+            var colours = new Array();
+            $('.salesAgents').each(function(){
+                names.push($(this).data('name'));
+                amounts.push($(this).data('value'));
+                colours.push($(this).data('colour'));
+            });
+            // console.log(names);
+            // console.log(amounts);
+            // console.log(colours);
+            new Chart(
+                document.getElementById("chartPie"),
+                {
+                    "type": "pie",
+                    "data": {
+                        "labels": names,
+                        "datasets": [{
+                            "label": "My First Dataset",
+                            "data": amounts,
+                            "backgroundColor": colours,
+                        }]
+                    },
+                    options: {
+                        legend: {
+                            display: true,
+                            position: 'bottom',
+                        }
+                    }
+                }
+            );
+        </script>
+        """
+        return html + javascript
+
+    def random_colour(self, *args, **kwargs):
+        return "%06x" % random.randint(0, 0xFFFFFF)
+
+    @expose()
+    def get_sales_agent_html_tbl(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+        dbase_query = DBSession.query(UserMerchantAgentLink). \
+                filter(UserMerchantAgentLink.user_id_merchant == usernow.user_id). \
+                filter(UserMerchantAgentLink.active == True). \
+                all()
+        dbcolumnlist = []
+        tdclasslist = []
+        theadlist = []
+        outputlist = []
+        for agent in dbase_query:
+            agent_user = DBSession.query(User). \
+                    filter(User.user_id == agent.user_id_agent). \
+                    first()
+            outputlist.append({
+                'name': agent_user.name,
+                'surname' : agent_user.surname,
+                'mobile': agent_user.mobile,
+                'email': agent_user.email,
+                'actions': f'<div agent_id="{agent_user.user_id}" merchant_id="{agent.user_id_merchant}" class="btn btn-sm btn-info agentSelect">VIEW</div>'
+                })
+        dbcolumnlist=[
+                'name',
+                'surname',
+                'mobile',
+                'email',
+                'actions',
+                ]
+        theadlist=[
+                'Name',
+                'Surname',
+                'Mobile',
+                'Email',
+                'Actions',
+                ]
+        tdclasslist = [
+                '',
+                '',
+                '',
+                '',
+                'w-10p text-center',
+                ]
+        javascript = """
+        <script>
+        $(document).ready(function(){
+            $('.agentSelect').click(function(){
+                var kwargs = {
+                    'agent_id': $(this).attr('agent_id'),
+                    'merchant_id': $(this).attr('merchant_id'),
+                }
+                $.redirect('/agent/edit', kwargs);
+            })
+            $('#agent_table').DataTable({
+                "pagingType": "full_numbers",
+                "lengthMenu": [[10, 25, 50, -1], [10, 25, 50, 'All']],
+                "dom": "<'toolbar'f>" +
+                    "<'row'<'col-md-12't>>" +
+                    "<'row'<'col-md-6 d-flex'<'mt-1'l><'ml-2'i>><'col-md-6'p>>",
+                "columns": [
+                    null,
+                    null,
+                    null,
+                    null,
+                    { "orderable": false }
+                ],
+                responsive: true,
+                language: {
+                    search: "_INPUT_",
+                    searchPlaceholder: "Search records",
+                    emptyTable: "No agents to show...",
+                }
+            });
+        });
+        </script>
+        """
+        return build_html_datatable(outputlist, dbcolumnlist, theadlist, "agent_table", tdclasslist) + javascript
+
+    @expose()
+    def get_agent_form(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+        agent = kwargs.get('agent', None)
+        merchant_id_dict = {
+            'input_id': 'merchant_id',
+            'input_type': 'hidden',
+            'input_val': f'value="{usernow.user_id}"'
+        }
+        username_dict = {
+        'wrapper_class': 'row col-md-12',
+        'label_attrs': 'required',
+        'input_id': 'username',
+        'label_val': 'Username',
+        'input_attrs': 'required',
+        'input_val': f'value="{agent.username}"' if agent else ''
+        }
+        first_name_dict = {
+        'wrapper_class': 'row col-md-12',
+        'label_attrs': 'required',
+        'input_id': 'name',
+        'label_val': 'First Name',
+        'input_attrs': 'required',
+        'input_val': f'value="{agent.name}"' if agent else ''
+        }
+        surname_dict = {
+        'wrapper_class': 'row col-md-12',
+        'label_attrs': 'required',
+        'input_id': 'surname',
+        'label_val': 'Surname',
+        'input_attrs': 'required',
+        'input_val': f'value="{agent.surname}"' if agent else ''
+        }
+        mobile_dict = {
+        'wrapper_class': 'row col-md-12',
+        'label_attrs': 'required',
+        'input_id': 'mobile',
+        'label_val': 'Mobile',
+        'input_attrs': 'required',
+        'input_val': f'value="{agent.mobile}"' if agent else ''
+        }
+        email_dict = {
+        'wrapper_class': 'row col-md-12',
+        'label_attrs': 'required',
+        'input_id': 'email',
+        'label_val': 'Email',
+        'input_attrs': 'required',
+        'input_val': f'value="{agent.email}"' if agent else ''
+        }
+        if agent:
+            merchant_link = DBSession.query(UserMerchantAgentLink). \
+                    filter(UserMerchantAgentLink.user_id_merchant == usernow.user_id). \
+                    filter(UserMerchantAgentLink.user_id_agent == agent.user_id). \
+                    first()
+        allow_refunds = f'{merchant_link.allow_refunds}' if agent else False
+        allow_refunds_dict = {
+        'wrapper_class': 'row col-md-12',
+        'label_attrs': 'required',
+        'label_val': 'Allow Refunds',
+        'input_attrs': 'required',
+        'input_type': 'custom',
+        'input_field': create_checkbox_html(**{'input_id': 'allow_refunds', 'label_text': 'Allow', 'value': f'{allow_refunds}'})
+        }
+        params_list = [
+        merchant_id_dict,
+        username_dict,
+        first_name_dict,
+        surname_dict,
+        mobile_dict,
+        email_dict,
+        allow_refunds_dict,
+        ]
+        if agent:
+            agent_id_dict = {
+                'input_id': 'id',
+                'input_type': 'hidden',
+                'input_val': f'value="{agent.user_id}"'
+            }
+            params_list.append(agent_id_dict)
+        return build_html_form('agent_form', params_list)
+
+    @require(CustomNotAnonymous())
+    @expose('calmerchant_app.templates.generic')
+    def new(self, *args, **kwargs):
+        agent_form = self.get_agent_form(**kwargs)
+        html=f"""
+        <div class="row">
+            <div class="col-md-6">
+                <div class="card ">
+                    <div class="card-header d-flex align-items-center">
+                        <div class="col-md-6">
+                            <h4 class="card-title">New Sales Agent</h4>
+                        </div>
+                        <div class="col-md-6 text-right">
+                            <button id="btnBack" class="btn btn-info">Back to Sales Agent List</button>
+                        </div>
+                    </div>
+                    <div class="card-body ">
+                        {agent_form}
+                    </div>
+                    <div class="text-right">
+                        <button id="btnSave" class="btn btn-info ml-auto">Save</button>
+                        <button id="btnCancel" class="btn btn-info ml-1 mr-3">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        javascript = """
+        var agent_form = $('#agent_form');
+        setFormValidation(agent_form);
+        $('#btnSave').click(function(){
+            var valid = FormIsValid(agent_form);
+                 if(valid){
+                    var formserial = getFormData(agent_form);
+                    $.post('/agent/save_agent', formserial, function(data){
+                        var result = JSON.parse(data);
+                        if(result.success === 'true'){
+                            $.redirect('/agent');
+                            return false;
+                        } else {
+                            showNotification(result.status, result.message);
+                        };
+                        return false;
+                    });
+                 }
+        });
+        $('#btnBack, #btnCancel').click(function(){
+             $.redirect('/agent');
+        });
+        """
+        return dict(title="New Sales Agent | Calabash", html=html, javascript=javascript)
+
+    @require(CustomNotAnonymous())
+    @expose('calmerchant_app.templates.generic')
+    def edit(self, *args, **kwargs):
+        agent_id = kwargs.get('agent_id', None)
+        if not agent_id:
+            print('DEBUG: NO agent_id')
+            return json.dumps({'success': 'false', 'message': 'No Sales Agent selected, please try again.', 'status': 'danger'})
+        agent = DBSession.query(User). \
+                filter(User.user_id == agent_id). \
+                first()
+        kwargs['agent'] = agent
+        agent_form = self.get_agent_form(**kwargs)
+        transaction_table = COMMON.get_month_table_html(agent_id)
+        html=f"""
+        <div class="row">
+            <div class="col-md-6">
+                <div id="transactionHistory">
+                    {transaction_table}
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card ">
+                    <div class="card-header d-flex align-items-center">
+                        <div class="col-md-6">
+                            <h4 class="card-title">Edit Sales Agent</h4>
+                        </div>
+                        <div class="col-md-6 text-right">
+                            <button id="btnBack" class="btn btn-info">Back to Sales Agent List</button>
+                        </div>
+                    </div>
+                    <div class="card-body ">
+                        {agent_form}
+                    </div>
+                    <div class="row col-md-12 pr-0">
+                        <button id="btnDelete" class="btn btn-danger ml-3" data-agent-id="{agent_id}">Delete</button>
+                        <button id="btnSave" class="btn btn-info ml-auto">Save</button>
+                        <button id="btnCancel" class="btn btn-info ml-1 mr-3">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        javascript = """
+        var agent_form = $('#agent_form');
+        setFormValidation(agent_form);
+        $('#btnSave').click(function(){
+            var valid = FormIsValid(agent_form);
+            if(valid){
+                var formserial = getFormData(agent_form);
+                $.post('/agent/save_agent', formserial, function(data){
+                    var result = JSON.parse(data);
+                    if(result.success === 'true'){
+                        $.redirect('/agent');
+                    } else {
+                        showNotification(result.status, result.message);
+                    };
+                    return false;
+                });
+            }
+        });
+        $('#btnBack, #btnCancel').click(function(){
+             $.redirect('/agent');
+        });
+        $('#btnDelete').click(function(){
+            var name = $('#name').val();
+            var surname = $('#surname').val();
+            Swal.fire({
+                title: 'Are you sure?',
+                text: "You won't be able to revert this!",
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonColor: '#41b853',
+                cancelButtonColor: '#ff1a6e',
+                confirmButtonText: 'Yes, Delete!'
+                }).then((result) => {
+                if (result.value) {
+                    var kwargs = {
+                        'agent_id': $(this).data('agentId'),
+                    }
+                    $.post('/agent/delete_agent?', kwargs, function(data){
+                        var result = JSON.parse(data);
+                        if(result.success === true){
+                            Swal.fire(
+                                'Deleted!',
+                                '"'+name+' '+surname+'" has been deleted.',
+                                'success'
+                            ).then((result) => {
+                                $.redirect('/agent');
+                            })
+                        };
+                        return false;
+                    });
+                }
+            });
+        });
+        """
+        return dict(title="Edit Sales Agent | Calabash", html=html, javascript=javascript)
+
+    @expose()
+    def delete_agent(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+        agent_id = kwargs.get('agent_id', None)
+        if not agent_id:
+            print('DEBUG: NO agent_id')
+            return json.dumps({'success': False, 'message': 'Something went wrong, please try again.', 'status': 'danger'})
+        this = DBSession.query(UserMerchantAgentLink). \
+                filter(UserMerchantAgentLink.user_id_merchant == usernow.user_id). \
+                filter(UserMerchantAgentLink.user_id_agent == agent_id). \
+                first()
+        if not this:
+            print('DEBUG: NO Sales Agent')
+            return json.dumps({'success': False, 'message': 'Something went wrong, please try again.', 'status': 'danger'})
+        this.active = False
+        this_user = DBSession.query(User). \
+                filter(User.user_id == agent_id). \
+                filter(User.active == True). \
+                first()
+
+        deleted = delete_salesrole({
+            'merchant': usernow.myimali_username,
+            'username': this_user.myimali_username
+        })
+        if not deleted.get('success'):
+            return json.dumps({'success': False})
+
+        this_user.active = False
+        DBSession.flush()
+        return json.dumps({'success': True})
+
+    @expose()
+    def save_agent(self, *args, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            print('DEBUG: NO username')
+            return json.dumps({'success': 'false', 'message': 'Username cannot be empty', 'status': 'danger'})
+
+        agent_id = kwargs.get('id', None)
+
+        username_exists = DBSession.query(User). \
+            filter(User.username == username)
+        if agent_id:
+            username_exists = username_exists.filter(User.user_id != agent_id)
+        username_exists = username_exists.first()
+
+        if username_exists:
+            print(f'DEBUG: Username "{username}" already exists')
+            return json.dumps({'success': 'false', 'message': 'This username has already been picked, please choose another one.', 'status': 'danger'})
+
+        name = kwargs.get('name', None)
+        if not name:
+            print('DEBUG: NO name')
+            return json.dumps({'success': 'false', 'message': 'Name cannot be empty', 'status': 'danger'})
+        surname = kwargs.get('surname', None)
+        if not surname:
+            print('DEBUG: NO surname')
+            return json.dumps({'success': 'false', 'message': 'Surname cannot be empty', 'status': 'danger'})
+        mobile = kwargs.get('mobile', None)
+        if not mobile:
+            print('DEBUG: NO mobile')
+            return json.dumps({'success': 'false', 'message': 'Mobile cannot be empty', 'status': 'danger'})
+        email = kwargs.get('email', None)
+        if not email:
+            print('DEBUG: NO email')
+            return json.dumps({'success': 'false', 'message': 'Email cannot be empty', 'status': 'danger'})
+        if kwargs.get('id'):
+            return self.save_edit_agent(**kwargs)
+        return self.save_new_agent(**kwargs)
+
+    def save_new_agent(self, *args, **kwargs):
+            print('save kwargs', kwargs)
+            usernow = request.identity.get('user', {})
+            password  = 'D3v3l0p3r'
+            kwargs['password'] = password
+            myimali_response = self.save_new_agent_myimali(**kwargs)
+            print()
+            print('myimali_response', myimali_response)
+            print()
+            if not myimali_response.get('success'):
+                message = myimali_response.get('data', 'Something went wrong, please try again.')
+                return json.dumps({'success': 'false', 'message': message, 'status': 'danger'})
+            data = myimali_response.get('data', None)
+            myimali_reference = data.get('reference', None)
+            print('myimali_reference', myimali_reference)
+            if not myimali_reference:
+                return json.dumps({'success': 'false', 'message': 'Something went wrong, please try again', 'status': 'danger'})
+            kwargs['myimali_reference'] = myimali_reference
+            kwargs['user_agent_id'] = COMMON.get_or_create_user(**kwargs)
+            merchant_link_id = COMMON.create_merchant_agent_link(**kwargs)
+            first_name = kwargs.get('name', None)
+            surname = kwargs.get('surname', None)
+            flash(f'{first_name} {surname} has been assigned a sales role, we also sent the sales agent an email with a magic link for password setup.', 'success')
+            return json.dumps({'success': 'true'})
+
+    def save_new_agent_myimali(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+        my_imali_request = {
+            "merchant_username": usernow.myimali_username,
+            "username": kwargs.get('username', None),
+            "password": kwargs.get('password', None),
+            "email": kwargs.get('email', None),
+            "mobile_number": kwargs.get('mobile', None),
+            "first_name": kwargs.get('name', None),
+            "surname": kwargs.get('surname', None)
+            }
+        return register_salesrole(my_imali_request)
+
+    def save_edit_agent(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+        agent_id = kwargs.get('id', None)
+        if not agent_id:
+            print('DEBUG: NO agent_id')
+            return json.dumps({'success': 'false', 'message': 'No agent_id provided, please try again.', 'status': 'danger'})
+        this = DBSession.query(User). \
+                filter(User.user_id == agent_id). \
+                first()
+        if not this:
+            print('DEBUG: NO Agent for agent_id')
+            return json.dumps({'success': 'false', 'message': 'No Agent found for the Id provided, please try again.', 'status': 'danger'})
+        this.username = kwargs.get('username', None)
+        this.name = kwargs.get('name', None)
+        this.surname = kwargs.get('surname', None)
+        this.mobile = kwargs.get('mobile', None)
+        this.email = kwargs.get('email', None)
+        this.display_name = f'{this.name} {this.surname}'
+        this.created = datetime.now()
+        this.added_by = usernow.user_id
+        this.myimali_username = f'MI-{this.username}'
+        this.myimali_reference = f'MIREF-{this.username}'
+        DBSession.flush()
+        merchant_link = DBSession.query(UserMerchantAgentLink). \
+                filter(UserMerchantAgentLink.user_id_agent == agent_id). \
+                filter(UserMerchantAgentLink.user_id_merchant == usernow.user_id). \
+                first()
+        allow_refunds = True if kwargs.get('allow_refunds') == 'on' else False
+        merchant_link.allow_refunds = allow_refunds
+        DBSession.flush()
+        flash('Sales Agent updated, we also sent the sales agent an email with a magic link for password setup.', 'success')
+        return json.dumps({'success': 'true'})

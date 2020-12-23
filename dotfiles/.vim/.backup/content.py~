@@ -1,0 +1,1572 @@
+# -*- coding: utf-8 -*-
+"""ContentController controller module"""
+
+import os, json, geocoder, requests, cgi, base64, logging, hashlib
+from datetime import datetime
+from sqlalchemy import func, desc, asc
+from pkg_resources import resource_filename
+from tg import expose, require, redirect, validate, flash, url, request, response, predicates
+
+from eiffel_back.model import *
+from eiffel_back.lib.tg_utils import *
+from eiffel_back.lib.base import BaseController
+from eiffel_back.lib.tg_decorators import *
+from eiffel_back.lib.tgfileuploader import FileUploader
+from eiffel_back.lib.tg_generic_reportlab import PDFCreator, Paragraph
+from eiffel_back.controllers.common import CommonController
+from dotenv import dotenv_values
+
+dotenv_values = dotenv_values()
+COMMON = CommonController()
+
+FILENAME = os.path.abspath(resource_filename('eiffel_back', 'public'))
+PUBLIC_DIRNAME = os.path.join(FILENAME)
+PDF_DIRNAME = os.path.join(PUBLIC_DIRNAME, 'pdf')
+IMAGES_DIRNAME = os.path.join(PUBLIC_DIRNAME, 'images')
+CATALOG_DIRNAME = os.path.join(IMAGES_DIRNAME, 'catalog_pictures')
+FRONT_BASE_URL = dotenv_values.get('FRONT_BASE_URL')
+FRONT_SET_IMAGE = os.path.join(FRONT_BASE_URL, 'set_image')
+FRONT_IMAGES_DIRNAME = os.path.join(FRONT_BASE_URL, 'img')
+FRONT_API_KEY = dotenv_values.get('FRONT_API_KEY')
+
+LOGGER = logging.getLogger(__name__)
+
+LIMIT = 20
+
+__all__ = ['ContentController']
+
+class ContentController(BaseController):
+
+    @require(CustomNotAnonymous())
+    @expose('eiffel_back.templates.generic')
+    def home_page(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+
+        title = "Home Page"
+
+        hidden_input = banner_filename = logo_filename  = ""
+        title = desc = ''
+
+        this = Splash.latest_entry()
+        if this:
+            hidden_input = COMMON.get_hidden_input(**{'id': 'splash_id', 'value': this.id})
+            if this.banner_filename:
+                banner_filename = os.path.join(FRONT_IMAGES_DIRNAME, this.banner_filename)
+            if this.logo_filename:
+                logo_filename = os.path.join(FRONT_IMAGES_DIRNAME, this.logo_filename)
+            if this.title:
+                title = this.title
+            if this.desc:
+                desc = this.desc
+
+        html = f"""
+        <div class='row'>
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header card-header-primary card-header-icon">
+                        <div class="card-icon">
+                            <i class="material-icons">wallpaper</i>
+                        </div>
+                        <h4 class="card-title">Header Logo</h4>
+                    </div>
+                    <div class="card-body">
+                        <img src='{logo_filename}' style="max-width: 200px"/><br>
+                        <button id="uploadLogoBtn" type="button" data-splash='icon' class="btn btn-primary upload mt-3">Click to Upload Icon</button>
+                        <h6 class="card-category text-gray">Recommended Size: 320 x 240 in pixels</h6>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-header card-header-primary card-header-icon">
+                        <div class="card-icon">
+                            <i class="material-icons">text_format</i>
+                        </div>
+                        <h4 class="card-title">Home Page</h4>
+                    </div>
+                    <div class="card-body">
+                        <form id='form_splash'>
+                            {hidden_input}
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="form-group">
+                                        <label class="bmd-label-floating">Title</label>
+                                        <input id='title' name='title' type="text" class="form-control" value="{title}">
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-md-12">
+                                    <div class="form-group">
+                                        <label>Description</label>
+                                        <div class="form-group">
+                                            <textarea id='desc' name='desc' class="form-control" rows="5" maxlength="200">{desc}</textarea>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <button type="submit" class="btn btn-primary pull-right save">Update Home Page</button>
+                            <div class="clearfix"></div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header card-header-primary card-header-icon">
+                        <div class="card-icon">
+                            <i class="material-icons">image</i>
+                        </div>
+                        <h4 class="card-title">Banner Image</h4>
+                    </div>
+                    <div class="card-body">
+                        <img src='{banner_filename}' style='max-width: 100%;'/><br>
+                        <button id="uploadBannerBtn" type="submit" data-splash='banner' class="btn btn-primary upload mt-3">Click to Upload Banner</button>
+                        <h6 class="card-category text-gray">Recommended Size: 1920 x 1080 in pixels</h6>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <form method="POST" enctype="multipart/form-data" id="uploadForm">
+            <input id="fileInput" type="file" name="file" hidden/>
+            <input id="typeInput" type="text" name="type" value="logo" hidden/>
+            <input type="submit" value="Submit" id="btnSubmit" hidden/>
+        </form>
+        """
+        javascript = """
+        var uploadLogoBtn = $('#uploadLogoBtn');
+        var uploadBannerBtn = $('#uploadBannerBtn');
+        var btnSubmit = $("#btnSubmit");
+        var fileInput = $('#fileInput');
+        var typeInput = $('#typeInput');
+
+        uploadLogoBtn.click(function(){
+            typeInput.val('logo');
+            fileInput.trigger('click', function(){
+                return false;
+            });
+        });
+        uploadBannerBtn.click(function(){
+            typeInput.val('banner');
+            fileInput.trigger('click', function(){
+                return false;
+            });
+        });
+
+        fileInput.change(function(){
+            btnSubmit.trigger('click', function(){
+                return false;
+            });
+        });
+
+        btnSubmit.click(function (event) {
+            event.preventDefault();
+            var form = $('#uploadForm')[0];
+            var data = new FormData(form);
+            $.ajax({
+                type: "POST",
+                enctype: 'multipart/form-data',
+                url: "/content/post_image",
+                data: data,
+                processData: false,
+                contentType: false,
+                cache: false,
+                timeout: 600000,
+                success: function (data) {
+                    var result = JSON.parse(data);
+                    if(result.success === true){
+                        $.redirect('/home_page');
+                    } else {
+                        showNotification(result.status, result.message)
+                    }
+                },
+                error: function (e) {
+                    console.log("ERROR : ", e);
+                }
+            });
+
+        });
+
+        $('.save').click(function(e){
+            e.preventDefault();
+            var data = $('#form_splash').serialize();
+            $.post('/content/save_update_splash?', data, function(data){
+                if(data=='true'){
+                    $.redirect('/home_page');
+                };
+                return false;
+            });
+        });
+        """
+        return dict(title=title, html=html, javascript=javascript)
+
+    @expose()
+    def get_navbar_html(self, *args, **kwargs):
+        if not request.identity: return ''
+        html = f"""
+        <div class="container-fluid">
+            <button class="navbar-toggler" type="button" data-toggle="collapse" aria-controls="navigation-index"
+                aria-expanded="false" aria-label="Toggle navigation">
+                <span class="sr-only">Toggle navigation</span>
+                <span class="navbar-toggler-icon icon-bar"></span>
+                <span class="navbar-toggler-icon icon-bar"></span>
+                <span class="navbar-toggler-icon icon-bar"></span>
+            </button>
+            <div class="collapse navbar-collapse justify-content-end">
+                <ul class="navbar-nav">
+                    <li class="nav-item dropdown">
+                        <a class="nav-link" href="#" id="navbarDropdownMenuLink" data-toggle="dropdown"
+                            aria-haspopup="true" aria-expanded="false">
+                            <i class="material-icons">notifications</i>
+                            <span class="notification">0</span>
+                            <p class="d-lg-none d-md-block">
+                                Some Actions
+                            </p>
+                        </a>
+                        <div class="dropdown-menu dropdown-menu-right" aria-labelledby="navbarDropdownMenuLink">
+                            <a class="dropdown-item" href="#">No new notifications</a>
+                        </div>
+                    </li>
+                    <li class="nav-item dropdown">
+                        <a class="nav-link" href="javascript:;" id="navbarDropdownProfile" data-toggle="dropdown"
+                            aria-haspopup="true" aria-expanded="false">
+                            <i class="material-icons">person</i>
+                            <p class="d-lg-none d-md-block">
+                                Account
+                            </p>
+                        </a>
+                        <div class="dropdown-menu dropdown-menu-right" aria-labelledby="navbarDropdownProfile">
+                            <a class="dropdown-item" href="/profile">Profile</a>
+                            <div class="dropdown-divider"></div>
+                            <a class="dropdown-item" href="/logout_handler">Log out</a>
+                        </div>
+                    </li>
+                </ul>
+                
+            </div>
+        </div>
+        """
+        return html
+
+    @require(CustomNotAnonymous())
+    @expose()
+    def post_image(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+        upload_type = kwargs.get('type', 'banner')
+
+        file_obj = kwargs.get('file', None)
+        if not hasattr(file_obj, 'file'):
+            print('DEBUG (POST_IMAGE): File is empty')
+            return json.dumps({'success': False, 'message': 'You have not selected a file.  Please do so to continue.', 'status': 'danger'})
+
+        new_file = file_obj.file.read()
+        encoding = base64.b64encode(new_file).decode('utf-8')
+
+        checksum = self.get_checksum(encoding)
+        if not checksum:
+            return json.dumps({'success': False, 'message': 'You have not selected a file.  Please do so to continue.', 'status': 'danger'})
+
+        this = Splash.latest_entry()
+        if not this:
+            this = Splash()
+            this.added_by = usernow.id
+            DBSession.add(this)
+            DBSession.flush()
+
+        file_ext = os.path.splitext(file_obj.filename)
+        now = datetime.now()
+        strnow = now.strftime("%d%m%Y%H%M")
+
+        old_filename = ''
+        sane_filename = ''
+        if upload_type == 'banner':
+            sane_filename = f'banner{strnow}{file_ext[1]}'
+            old_filename = this.banner_filename
+            this.banner_filename = sane_filename
+            DBSession.flush()
+
+        if upload_type == 'logo':
+            sane_filename = f'logo{strnow}{file_ext[1]}'
+            old_filename = this.logo_filename
+            this.logo_filename = sane_filename
+            DBSession.flush()
+
+        request_kwargs = {
+            'filename': sane_filename,
+            'file': encoding,
+            'type': file_obj.type,
+            'old_filename': old_filename,
+            'checksum': checksum
+        }
+
+        headers = {
+            'API': FRONT_API_KEY,
+            'Content-Type': 'application/x-www-form-urlencoded',
+        }
+
+        target = '/api/set_image'
+
+        res = self.post_to_endpoint(target, headers, request_kwargs)
+        print('Response from Eiffel Front: ', res)
+        success = res.get('success', False)
+        if not success:
+            message = res.get('message', 'We could not process the file upload at this time, please try again later.')
+            return json.dumps({'success': False, 'message': message, 'status': 'danger'})
+
+        return json.dumps({'success': True, 'message': 'Upload successful.', 'status':'success'})
+
+    def get_checksum(self, b64_string=None):
+        h = hashlib.sha256()
+        h.update(b64_string.encode('utf-8'))
+        return h.hexdigest()
+
+    def post_to_endpoint(self, target=None, headers=None, data=None, **kwargs):
+        if not target or not headers:
+            return {}
+
+        url = f'{FRONT_BASE_URL}/{target}'
+        try:
+            r = requests.post(url, headers=headers, json=data)
+        except requests.exceptions.ConnectionError:
+            LOGGER.warning(f'{target} failed due to ConnectionError')
+            return {}
+
+        try:
+            result = r.json()
+        except Exception as e:
+            LOGGER.warning(f'{target} failed due to: {e}')
+            result = False
+        return result
+
+    @expose()
+    def get_modal_upload(self, *args, **kwargs):
+        image_type = kwargs.get('image_type', None)
+        card_title = 'Upload Icon' if image_type == 'icon' else 'Upload Banner'
+        html = f"""
+        <div class="modal fade" id="modal_upload" tabindex="-1" role="dialog" aria-labelledby="myuploadLabel" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered modal-lg" role="document">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h4 class="card-title">{card_title}</h4>
+                    </div>
+                    <div class="modal-body">
+                        <div class='dropzone' image_type='{image_type}' id='dropzone_upload'></div>
+                    </div>
+                    <div class="modal-footer">
+                        <button id='start_upload' class="btn btn-primary">Save</button>
+                        <button id='uploadBack' class="btn btn-outline-primary">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        javascript = """
+        <script>
+        $(document).ready(function(){
+            var uploadDropzone = new Dropzone('#dropzone_upload', {
+                maxFiles: 1,
+                maxFilesize: 256,
+                parallelUploads: 1,
+                uploadMultiple: false,
+                autoProcessQueue: false,
+                acceptedFiles: '.png, .jpg, .tif',
+                url: '/content/handle_file_upload',
+                params: {
+                    // To pass extra keys into the uploader
+                    'image_type' : $('#dropzone_upload').attr('image_type'),
+                },
+                success: function(file, response){
+                    // console.log(file, response);
+                    $.redirect('/home_page');
+                },
+            });
+            $("#start_upload").click(function(){
+                uploadDropzone.processQueue();
+            });
+            $('#uploadBack').click(function(){
+                $('#modal_upload').modal('hide');
+            });
+            $('#modal_upload').modal();
+        });
+        </script>
+     	"""
+        return html + javascript
+
+    @expose()
+    def save_update_splash(self, *args, **kwargs):
+        this = Splash.by_id(kwargs.get('splash_id'))
+        if not this: return 'false'
+        desc = kwargs.get('desc', None)
+        this.title = kwargs.get('title', None)
+        this.desc = desc if desc else this.desc
+        return 'true'
+
+    @require(CustomNotAnonymous())
+    @expose('eiffel_back.templates.generic')
+    def social_media(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+        title = "Social Media"
+        htmltbl = self.get_social_htmltbl(**kwargs)
+        html = f"""
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header card-header-primary card-header-icon">
+                        <div class="card-icon">
+                            <i class="material-icons">people</i>
+                        </div>
+                        <h4 class="card-title">Social Media</h4>
+                    </div>
+                    <div class="card-body">
+                        <div class="toolbar">
+                        </div>
+                        <div class="material-datatables">
+                            {htmltbl}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        javascript = """
+          $('.edit').click(function(){
+            var kwargs = {social_media_id : $(this).attr('social_media_id')};
+            $('#dialogdiv').load('/content/get_modal_social_media?', kwargs, function(data){
+                return false;
+            });
+        });
+        """
+        return dict(title=title, html=html, javascript=javascript)
+
+    @expose()
+    def get_modal_social_media(self, *args, **kwargs):
+        social_media_id = kwargs.get('social_media_id', None)
+        this = self.get_active_social_by_id(social_media_id)
+        icon = this.icon if this else ''
+        url = this.url if this else ''
+        if not this: return ''
+        hidden_input = COMMON.get_hidden_input(**{'id': 'social_media_id', 'value': social_media_id}) if this else ''
+        card_title = f"Edit '{this.title}'" if this else 'New Social Media Link'
+        checked = 'checked' if this.active else ''
+        html = f"""
+  	        <div class="modal fade" id="modal_social_media" tabindex="-1" role="dialog" aria-labelledby="mycategoryLabel" aria-hidden="true">
+		<div class="modal-dialog modal-dialog-centered " role="document">
+			<div class="modal-content">
+				<div class="modal-header">
+					<h4 class="card-title">{card_title}</h4>
+				</div>
+				<div class="modal-body">
+                <form id="form_social_media" class="form-horizontal">
+                    {hidden_input}
+                    <div class="row">
+                      <label class="col-sm-4 col-form-label">Social Media Link</label>
+                      <div class="col-sm-8">
+                        <div class="form-group bmd-form-group is-filled">
+                          <input type="text" class="form-control" value="{url}" name="url" id ="url" >
+                        </div>
+                      </div>
+                    </div>
+                    <div class="row">
+                      <label class="col-sm-4 col-form-label label-checkbox">Active</label>
+                      <div class="col-sm-8 checkbox-radios">
+                        <div class="form-check">
+                          <label class="form-check-label">
+                            <input class="form-check-input" type="checkbox" name="active" id="active" {checked}>
+                            <span class="form-check-sign">
+                              <span class="check"></span>
+                            </span>
+                          </label>
+                        </div>
+
+                      </div>
+                    </div>
+                  </form>
+				</div>
+				<div class="modal-footer">
+					<button id='save_edit_social' class="btn btn-primary">Save</button>
+					<button id='social_media_back' class="btn btn-outline-primary">Cancel</button>
+				</div>
+			</div>
+		</div>
+	</div>
+        """
+        javascript = """
+        <script>
+          $('#save_edit_social').click(function(){
+                      var data = $('#form_social_media').serialize();
+                    $.post('/content/save_edit_social_media?', data, function(data){
+                        var result = JSON.parse(data);
+                        if(result.success === true){
+                               $.redirect(result.redirect);
+                        };
+                        return false;
+                    });
+            });
+        $('#social_media_back').click(function(){
+            $('#modal_social_media').modal('hide');
+        });
+        $('#modal_social_media').modal();
+        </script>
+     	"""
+        return html + javascript
+
+    def get_social_htmltbl(self, *args, **kwargs):
+        outputlist = []
+        dbase_query = self.get_active_social_list(**kwargs)
+        for item in dbase_query:
+            outputlist.append({
+                'icon' : f'<span class="mdi mdi-24px {item.icon}"></span>',
+                'desc': item.title,
+                'url': item.url,
+                'active': COMMON.get_binary_check_or_cross(item.active),
+                'actions': f'<div social_media_id="{item.id}" class="btn btn-link btn-warning btn-just-icon edit"><i class="material-icons">dvr</i></div>',
+
+                             })
+        dbcolumnlist=[
+                'icon',
+                'desc',
+                'url',
+                'active',
+                'actions',
+                    ]
+        theadlist=[
+                'Icon',
+                'Title',
+                'Link',
+                'Active',
+                'Actions'
+                ]
+        tdclasslist = [
+                '',
+                '',
+                '',
+                'text-center',
+                'text-right',
+                ]
+        return build_html_table_material(outputlist, dbcolumnlist, theadlist, "allsocial", tdclasslist)
+
+    @require(CustomNotAnonymous())
+    @expose('eiffel_back.templates.generic')
+    def safety_tips(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+        title = "Safety Tips"
+        htmltbl = self.get_safety_htmltbl(**kwargs)
+        html = f"""
+    	<div class="row">
+		<div class="col-md-12">
+			<div class="card">
+				<div class="card-header card-header-primary card-header-icon">
+					<div class="row">
+						<div class="col-md-6">
+							<div class="card-icon">
+								<i class="material-icons">help</i>
+							</div>
+							<h4 class="card-title">Safety Tips</h4>
+						</div>
+				 	</div>
+				</div>
+				<div class="card-body pt-0">
+                    <div class="toolbar text-right">
+                        <button class="btn btn-primary" id="create_new_safety_tip">Create</button>
+                    </div>
+					<div class="material-datatables">
+						{htmltbl}
+					</div>
+				</div>
+			</div>
+		    </div>
+	    </div>
+        """
+        javascript = """
+              $("#create_new_safety_tip").click(function(){
+                  $('#dialogdiv').load('/content/get_modal_new_safety_tips?', function(data){
+                     return false;
+                  });
+                });
+           """
+
+        return dict(title=title, html=html, javascript=javascript)
+
+    @expose()
+    def get_modal_new_safety_tips(self, *args, **kwargs):
+        html = f"""
+        <div class="modal fade" id="modal_safety_tips" tabindex="-1" role="dialog" aria-labelledby="mycategoryLabel" aria-hidden="true">
+    		<div class="modal-dialog modal-dialog-centered modal-lg" role="document">
+    			<div class="modal-content">
+    				<div class="modal-header">
+    					<h4 class="card-title">New Safety Tip</h4>
+    				</div>
+    				<div class="modal-body">
+                    <form id="form_safety_tips" class="form-horizontal">
+                    <div class="row">
+                          <label class="col-sm-4 col-form-label">Safety Tip Description</label>
+                          <div class="col-sm-8">
+                            <div class="form-group bmd-form-group is-filled">
+                              <input type="text" class="form-control" name="desc" id ="desc" >
+                            </div>
+                          </div>
+                        </div>
+                      </form>
+    				</div>
+    				<div class="modal-footer">
+    					<button id='save_new_safety_tips' class="btn btn-primary">Save</button>
+    					<button id='safety_tips_back' class="btn btn-outline-primary">Cancel</button>
+    				</div>
+    			</div>
+    		</div>
+    	</div>
+            """
+        javascript = """
+            <script>
+              $('#save_new_safety_tips').click(function(){
+                    var data = $('#form_safety_tips').serialize();
+                    $.post('/content/save_new_safety_tips?', data, function(data){
+                        var result = JSON.parse(data);
+                        if(result.success === true){
+                            $.redirect(result.redirect);
+                        };
+                        return false;
+                    });
+                });
+            $('#safety_tips_back').click(function(){
+                $('#modal_safety_tips').modal('hide');
+            });
+            $('#modal_safety_tips').modal();
+            </script>
+         	"""
+        return html + javascript
+
+    def get_safety_htmltbl(self, *args, **kwargs):
+        outputlist = []
+        dbase_query = SafetyTips.get_all('desc')
+        for item in dbase_query:
+            outputlist.append({
+                'desc': item.desc,
+                'actions': f'<div safety_tip_id="{item.id}" class="btn btn-link btn-warning btn-just-icon edit"><i class="material-icons">dvr</i></div>',
+                             })
+        dbcolumnlist=[
+                'desc',
+                'actions',
+                    ]
+        theadlist=[
+                'Description',
+                'Actions'
+                ]
+        tdclasslist = [
+                '',
+                'text-right',
+                ]
+        html= build_html_table_material(outputlist, dbcolumnlist, theadlist, "allsafety", tdclasslist)
+        javascript = """
+        <script>
+              $('.edit').click(function(){
+                var kwargs = {safety_tip_id : $(this).attr('safety_tip_id')};
+                $('#dialogdiv').load('/content/get_modal_edit_safety_tip?', kwargs, function(data){
+                    return false;
+                });
+            });
+            </script>
+            """
+        return html + javascript
+
+    @expose()
+    def get_modal_edit_safety_tip(self, *args, **kwargs):
+        safety_tip_id = kwargs.get('safety_tip_id', None)
+        this = SafetyTips.by_id(safety_tip_id)
+        if not this: return ''
+        card_title = f"Edit '{this.desc}'" if this else ''
+        hidden_input = COMMON.get_hidden_input(**{'id': 'safety_tip_id', 'value': safety_tip_id}) if this else ''
+        checked = 'checked' if this.active else ''
+        html = f"""
+      	        <div class="modal fade" id="modal_safety_tip_edit" tabindex="-1" role="dialog" aria-labelledby="mycategoryLabel" aria-hidden="true">
+    		<div class="modal-dialog modal-dialog-centered modal-lg " role="document">
+    			<div class="modal-content">
+    				<div class="modal-header">
+    					<h4 class="card-title">{card_title}</h4>
+    				</div>
+    				<div class="modal-body">
+                    <form id="form_safety_tip" class="form-horizontal">
+                    {hidden_input}
+                        <div class="row">
+                          <label class="col-sm-4 col-form-label">Description</label>
+                          <div class="col-sm-8">
+                            <div class="form-group bmd-form-group is-filled">
+                              <input type="text" class="form-control" value="{this.desc}" name="desc" id ="desc" >
+                            </div>
+                          </div>
+                        </div>
+                        <div class="row">
+                          <label class="col-sm-4 col-form-label label-checkbox">Active</label>
+                          <div class="col-sm-8 checkbox-radios">
+                            <div class="form-check">
+                              <label class="form-check-label">
+                                <input class="form-check-input" type="checkbox" name="active" id="active" {checked}>
+                                <span class="form-check-sign">
+                                  <span class="check"></span>
+                                </span>
+                              </label>
+                            </div>
+
+                          </div>
+                        </div>
+                      </form>
+    				</div>
+    				<div class="modal-footer">
+    					<button id='save_edit_safety_tip' class="btn btn-primary">Save</button>
+    					<button id='safety_tip_back' class="btn btn-outline-primary">Cancel</button>
+    				</div>
+    			</div>
+    		</div>
+    	</div>
+            """
+        javascript = """
+        <script>
+            $('#save_edit_safety_tip').click(function(){
+                var data = $('#form_safety_tip').serialize();
+                $.post('/content/save_edit_safety_tip?', data, function(data){
+                    var result = JSON.parse(data);
+                    if(result.success === true){
+                            $.redirect(result.redirect);
+                    };
+                    return false;
+                });
+            });
+            $('#safety_tip_back').click(function(){
+                $('#modal_safety_tip_edit').modal('hide');
+            });
+            $('#modal_safety_tip_edit').modal();
+        </script>
+        """
+        return html + javascript
+
+    @require(CustomNotAnonymous())
+    @expose('eiffel_back.templates.generic')
+    def safety_zones(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+        title = "Safety Tips"
+        htmltbl = self.get_safety_zones_htmltbl(**kwargs)
+        html = f"""
+    	<div class="row">
+		<div class="col-md-12">
+			<div class="card">
+				<div class="card-header card-header-primary card-header-icon">
+					<div class="row">
+						<div class="col-md-6">
+							<div class="card-icon">
+								<i class="material-icons">my_location</i>
+							</div>
+							<h4 class="card-title">Safety Zones</h4>
+						</div>
+				 	</div>
+				</div>
+				<div class="card-body pt-0">
+                    <div class="toolbar text-right">
+                        <button id="create_new_safety_tip" class="btn btn-primary" onclick="window.location.href ='/safety_zone_edit'">Create</button>
+                    </div>
+					<div class="material-datatables">
+						{htmltbl}
+					</div>
+				</div>
+			</div>
+		    </div>
+	    </div>
+        """
+        javascript = """
+
+        """
+        return dict(title=title, html=html, javascript=javascript)
+
+    def get_safety_zones_htmltbl(self, *args, **kwargs):
+        outputlist = []
+        dbase_query = SafetyZones.get_all('desc')
+        for item in dbase_query:
+
+            item_location = Location.by_id(item.location_id)
+            if not item_location:
+                continue
+
+            outputlist.append({
+                'desc': item.desc,
+                'address': item_location.address1,
+                'active': COMMON.get_binary_check_or_cross(item.active),
+                'actions': f'<div safety_zone_id="{item.id}" class="btn btn-link btn-warning btn-just-icon edit"><i class="material-icons">dvr</i></div>',
+                             })
+        dbcolumnlist=[
+                'desc',
+                'address',
+                'active',
+                'actions',
+                    ]
+        theadlist=[
+                'Description',
+                'Address',
+                'Active',
+                'Actions'
+                ]
+        tdclasslist = [
+                '',
+                '',
+                'text-center',
+                'text-right',
+                ]
+        html= build_html_table_material(outputlist, dbcolumnlist, theadlist, "safety_zones", tdclasslist)
+        javascript = """
+        <script>
+            $('.edit').click(function(){
+                var kwargs = {safety_zone_id : $(this).attr('safety_zone_id')};
+                $.redirect('/safety_zone_edit', kwargs);
+            });
+        </script>
+        """
+        return html + javascript
+
+    @require(CustomNotAnonymous())
+    @expose('eiffel_back.templates.generic')
+    def safety_zone_edit(self, *args, **kwargs):
+        safety_zone_id = kwargs.get('safety_zone_id', None)
+        safety_zone = SafetyZones.by_id(safety_zone_id)
+        zone_location = Location.by_id(safety_zone.location_id) if safety_zone else {}
+        latitude = zone_location.lat if zone_location else '-33.9328078'
+        longitude = zone_location.lng if zone_location else '18.864447'
+        usernow = request.identity.get('user', {})
+        safety_zone_form = self.get_safety_zone_htmlform(**kwargs)
+        title = "Safety Zones"
+        html = f"""
+        <div class="content">
+            <div class="container-fluid">
+                <div class="row">
+                    <div class="col-md-9">
+                        <div class="card">
+                            <div class="card-header card-header-icon card-header-info">
+                                <div class="card-icon">
+                                    <i class="material-icons">edit_location</i>
+                                </div>
+                                <h4 id="safetyZoneHeader" data-lat="{latitude}" data-lng="{longitude}" safety_zone_id="{safety_zone_id}" class="card-title">Choose a Location</h4>
+                            </div>
+                            <div class="card-body">
+                                <div id="mapid" style="
+                                    height: calc(100vh - 230px);
+                                    display: flex;
+                                    align-items: center;
+                                    justify-content: center;
+                                    position: relative;
+                                ">
+                                </div>
+                                <div id="search_box" style="
+                                    height: 65px;
+                                    width: 41%;
+                                    background: white;
+                                    position: absolute;
+                                    top: 35px;
+                                    right: 35px;
+                                    padding: 10px 25px;
+                                    border-radius: 10px;
+                                    z-index: 400;
+                                    box-shadow: 0 1px 4px 0 rgba(0, 0, 0, 0.14);
+                                ">
+                                    <span class="bmd-form-group">
+                                        <input id="searchphrase" type="text" class="form-control search" list="locations" placeholder="Search" value="">
+                                        <datalist id="locations"></datalist>
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card">
+                            <div class="card-header card-header-icon card-header-primary">
+                                <div class="card-icon">
+                                    <i class="material-icons">edit</i>
+                                </div>
+                                <h4 class="card-title">Zone Details</h4>
+                            </div>
+                            <div class="card-body">
+                                {safety_zone_form}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        javascript = """
+            var mapMarkers = {}
+
+            var safetyZoneHeader = $('#safetyZoneHeader');
+            var latitude = $(safetyZoneHeader).data('lat');
+            var longitude = $(safetyZoneHeader).data('lng');
+
+            var map = L.map('mapid', {
+                maxZoom: 19,
+                minZoom: 6
+            }).setView([latitude, longitude], 15);
+            if ($(safetyZoneHeader).attr('safety_zone_id') != 'None'){
+                mapMarkers = L.marker([latitude, longitude]).addTo(map);
+                map.setZoom(19);
+            };
+
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 19,
+                attribution: '&copy; <a href="https://openstreetmap.org/copyright">OpenStreetMap contributors</a>'
+            }).addTo(map);
+
+            var popup = L.popup();
+            function onMapClick(e) {
+                if(mapMarkers != undefined){
+                    map.removeLayer(mapMarkers);
+                }
+                mapMarkers = L.marker([e.latlng.lat, e.latlng.lng]).addTo(map);
+                $('#latitude').val(e.latlng.lat).change();
+                $('#longitude').val(e.latlng.lng).change();
+                var kwargs = {
+                    'lat': e.latlng.lat,
+                    'lng': e.latlng.lng,
+                }
+                $.get('/content/geocode_latlng', kwargs, function(data){
+                    var result = JSON.parse(data);
+                    if(result.success === 'true'){
+                      $('#address').val(result.data).change();
+                      $('#display_name').focus();
+                    }
+                    return false;
+                });
+            }
+
+            map.on('click', onMapClick);
+
+            var changeInterval = null;
+            $('#searchphrase').keyup(function(e){
+                clearInterval(changeInterval)
+                changeInterval = setInterval(function(){
+                    clearInterval(changeInterval)
+                    var kwargs = {
+                        'searchterm': $('#searchphrase').val(),
+                    }
+                    $.get('/content/search_locations', kwargs, function(data){
+                        var result = JSON.parse(data);
+                        if(result.success === 'true'){
+                            var dataList = $('#locations');
+                            dataList.append(result.data);
+                        }
+                        return false;
+                    });
+                    return false;
+                }, 200);
+            });
+            $('#searchphrase').change(function(){
+                var searchPhrase = $('#searchphrase').val();
+                var optionSelected = $('#locations option').filter(function(){
+                    return this.value == searchPhrase;
+                });
+                var latitude = optionSelected.data('lat');
+                var longitude = optionSelected.data('lng');
+                if(mapMarkers != undefined){
+                    map.removeLayer(mapMarkers);
+                }
+                mapMarkers = L.marker([latitude, longitude]).addTo(map);
+                map.setView([latitude, longitude]);
+                $('#latitude').val(optionSelected.data('lat')).change();
+                $('#longitude').val(optionSelected.data('lng')).change();
+                $('#address').val(optionSelected.val()).change();
+                $('#display_name').focus();
+                return false;
+            });
+        """
+
+        return dict(title=title, html=html, javascript=javascript)
+
+    def get_safety_zone_htmlform(self, *args, **kwargs):
+        safety_zone_id = kwargs.get('safety_zone_id', None)
+        hidden_id = f'<input id="safety_zone_id" name="safety_zone_id" hidden value="{safety_zone_id}">' if safety_zone_id else ''
+        safety_zone = SafetyZones.by_id(safety_zone_id)
+        display_name = safety_zone.desc if safety_zone else ''
+        zone_location = {}
+        if safety_zone:
+            zone_location = Location.by_id(safety_zone.location_id)
+        latitude = zone_location.lat if zone_location else ''
+        longitude = zone_location.lng if zone_location else ''
+        address = zone_location.address1 if zone_location else ''
+        html = f"""
+            <form id="safety_zone_form">
+                <div class="col-md-12">
+                    <div class="form-group bmd-form-group is-filled">
+                        {hidden_id}
+                        <label class="bmd-label-floating" required>Display Name</label>
+                        <input id="display_name" name="display_name" type="text" class="form-control" required value="{display_name}" >
+                    </div>
+                </div>
+                <div class="col-md-12">
+                    <div class="form-group bmd-form-group is-filled">
+                        <label class="bmd-label-floating" required>Latitude</label>
+                        <input id="latitude" name="latitude" type="text" class="form-control" required  readonly value="{latitude}">
+                    </div>
+                </div>
+                <div class="col-md-12">
+                    <div class="form-group bmd-form-group is-filled">
+                        <label class="bmd-label-floating" required>Longitude</label>
+                        <input id="longitude" name="longitude" type="text" class="form-control" required  readonly value="{longitude}">
+                    </div>
+                </div>
+                <div class="col-md-12">
+                    <div class="form-group bmd-form-group is-filled">
+                        <label class="bmd-label-floating" required>Address</label>
+                        <input id="address" name="address" type="text" class="form-control" required  readonly value="{address}">
+                    </div>
+                </div>
+            </form>
+            <div class="row w-100">
+                <button id="saveBtn" class="btn btn-primary ml-auto">Save</button>
+                <button class="btn btn-primary ml-2" onclick="window.location.href ='/safety_zones'">Cancel</button>
+            </div>
+        """
+        javascript = """
+        <script>
+            var safety_zone_form = '#safety_zone_form';
+            setFormValidation(safety_zone_form);
+            $('#saveBtn').click(function(){
+                var valid_safety_zone_form = FormIsValid(safety_zone_form);
+                if(valid_safety_zone_form){
+                    var formserial = getFormData(safety_zone_form);
+                    $.post('/content/save_safety_zone?', formserial, function(data){
+                        var result = JSON.parse(data);
+                        if(result.success === 'true'){
+                          $.redirect('/safety_zones');
+                        }
+                        return false;
+                    })
+                }
+            });
+        </script>
+        """
+        return html + javascript
+
+    @expose()
+    def geocode_latlng(self, *args, **kwargs):
+        latitude = kwargs.get('lat', None)
+        longitude = kwargs.get('lng', None)
+        g = geocoder.osm([latitude, longitude], method='reverse')
+        geojson_features = g.geojson.get('features')
+        address = geojson_features[0].get('properties').get('raw').get('address')
+        address_list = []
+        street = address.get('street', None)
+        if street: address_list.append(street)
+        road = address.get('road', None)
+        if road: address_list.append(road)
+        suburb = address.get('suburb', None)
+        if suburb: address_list.append(suburb)
+        city = address.get('city', None)
+        if city: address_list.append(city)
+        town = address.get('town', None)
+        if town: address_list.append(town)
+        province = address.get('state', None)
+        if province: address_list.append(province)
+        country = address.get('country', None)
+        if country: address_list.append(country)
+        postcode = address.get('postcode', None)
+        if postcode: address_list.append(postcode)
+        address_string = ', '.join(address_list)
+        return json.dumps({'success': 'true', 'data': address_string})
+
+    @expose()
+    def save_safety_zone(self, *args, **kwargs):
+        safety_zone_id = kwargs.get('safety_zone_id', None)
+        if safety_zone_id:
+            return self.save_edit_safety_zone(**kwargs)
+        return self.save_new_safety_zone(**kwargs)
+
+    def save_new_safety_zone(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+        display_name = kwargs.get('display_name', None)
+        if not display_name:
+            return json.dumps({'success': 'false', 'message': 'Please complete the Display Name field', 'status': 'danger'})
+        latitude = kwargs.get('latitude', None)
+        if not latitude:
+            return json.dumps({'success': 'false', 'message': 'Please complete the Latitude field', 'status': 'danger'})
+        longitude = kwargs.get('longitude', None)
+        if not longitude:
+            return json.dumps({'success': 'false', 'message': 'Please complete the Longitude field', 'status': 'danger'})
+        address = kwargs.get('address', None)
+        if not address:
+            return json.dumps({'success': 'false', 'message': 'Please complete the Address field', 'status': 'danger'})
+
+        location_id = self.save_new_location(**kwargs)
+        if not location_id:
+            return json.dumps({'success': 'false', 'message': 'Could not save the location.', 'status': 'danger'})
+
+        this = SafetyZones()
+        this.desc = display_name
+        this.location_id = location_id
+        this.added = datetime.now()
+        this.added_by = usernow.id
+        this.active = True
+        DBSession.add(this)
+        DBSession.flush()
+        return json.dumps({'success': 'true', 'message': f'Safety Zone {display_name} successfully created.', 'status': 'success'})
+
+    def save_edit_safety_zone(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+        safety_zone_id = kwargs.get('safety_zone_id', None)
+        if not safety_zone_id:
+            return json.dumps({'success': 'false', 'message': 'No Safety Zone record selected', 'status': 'danger'})
+        display_name = kwargs.get('display_name', None)
+        if not display_name:
+            return json.dumps({'success': 'false', 'message': 'Please complete the Display Name field', 'status': 'danger'})
+        latitude = kwargs.get('latitude', None)
+        if not latitude:
+            return json.dumps({'success': 'false', 'message': 'Please complete the Latitude field', 'status': 'danger'})
+        longitude = kwargs.get('longitude', None)
+        if not longitude:
+            return json.dumps({'success': 'false', 'message': 'Please complete the Longitude field', 'status': 'danger'})
+        address = kwargs.get('address', None)
+        if not address:
+            return json.dumps({'success': 'false', 'message': 'Please complete the Address field', 'status': 'danger'})
+        safety_zone = SafetyZones.by_id(safety_zone_id)
+        if not safety_zone:
+            return json.dumps({'success': 'false', 'message': 'The Safety zone you are trying to safe is not active in the database, please try again', 'status': 'danger'})
+        kwargs['location_id'] = safety_zone.location_id
+        location_id = self.save_edit_location(**kwargs)
+        this = SafetyZones.by_id(safety_zone_id)
+        this.desc = display_name
+        this.location_id = location_id
+        this.active = True
+        DBSession.flush()
+        return json.dumps({'success': 'true', 'message': f'Safety Zone {display_name} successfully created.', 'status': 'success'})
+
+
+    @expose()
+    def save_new_location(self, *args, **kwargs):
+        latitude = kwargs.get('latitude', None)
+        if not latitude:
+            print('NO latitude')
+            return None
+        longitude = kwargs.get('longitude', None)
+        if not longitude:
+            print('NO longitude')
+            return None
+        address = kwargs.get('address', None)
+        if not address:
+            print('NO address')
+            return None
+        usernow = request.identity.get('user', {})
+        location = Location()
+        location.address1 = address
+        location.lat = latitude
+        location.lng = longitude
+        location.added = datetime.now()
+        location.added_by = usernow.id
+        location.active = True
+        DBSession.add(location)
+        DBSession.flush()
+        return location.id
+
+    @expose()
+    def save_edit_location(self, *args, **kwargs):
+        location_id = kwargs.get('location_id', None)
+        if not location_id:
+            print('NO  location_id')
+            return None
+        latitude = kwargs.get('latitude', None)
+        if not latitude:
+            print('NO latitude')
+            return None
+        longitude = kwargs.get('longitude', None)
+        if not longitude:
+            print('NO longitude')
+            return None
+        address = kwargs.get('address', None)
+        if not address:
+            print('NO address')
+            return None
+        usernow = request.identity.get('user', {})
+        location = Location.by_id(location_id)
+        location.address1 = address
+        location.lat = latitude
+        location.lng = longitude
+        location.active = True
+        DBSession.flush()
+        return location.id
+
+    @expose()
+    def search_locations(self, *args, **kwargs):
+        searchterm = kwargs.get('searchterm', None)
+        if not searchterm: return ''
+        g = geocoder.osm(f'{searchterm}, South Africa', maxRows=10)
+        locations = ""
+        for item in g:
+            loc_data = item.osm
+            latitude = loc_data.get('y', '')
+            longitude = loc_data.get('x', '')
+            locations += f"""
+            <option class="locationOption" value="{item.address}" data-lng="{longitude}" data-lat="{latitude}">
+            """
+        return json.dumps({'success': 'true', 'data': locations})
+
+    @require(CustomNotAnonymous())
+    @expose('eiffel_back.templates.generic')
+    def support(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+        title = "Support"
+        htmltbl = self.get_support_htmltbl(**kwargs)
+        html = f"""
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header card-header-primary card-header-icon">
+                        <div class="card-icon">
+                            <i class="material-icons">contact_support</i>
+                        </div>
+                        <h4 class="card-title">Support</h4>
+                    </div>
+                    <div class="card-body">
+                        <div class="toolbar">
+                        </div>
+                        <div class="material-datatables">
+                            {htmltbl}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        javascript = """
+        """
+        return dict(title=title, html=html, javascript=javascript)
+
+    def get_support_htmltbl(self, *args, **kwargs):
+        outputlist = []
+        dbase_query = []
+        for item in dbase_query:
+            outputlist.append({
+                'student': '',
+                'message': '',
+                'date': '',
+                'actions': '',
+                             })
+        dbcolumnlist=[
+            'student',
+            'message',
+            'date',
+            'actions',
+        ]
+        theadlist=[
+            'Student',
+            'Message',
+            'Date',
+            'Actions'
+        ]
+        tdclasslist = []
+        return build_html_table_material(outputlist, dbcolumnlist, theadlist, "allsupport", tdclasslist)
+
+    def get_hidden_input(self, *args, **kwargs):
+        input_id = kwargs.get('id', 'id')
+        input_value = kwargs.get('value', None)
+        return f"""<input style='display:none;' type="text" id="{input_id}" name="{input_id}" class="form-control" value="{input_value}"/>"""
+
+    @expose()
+    def handle_file_upload(self, *args, **kwargs):
+        image_type = kwargs.get('image_type', None)
+        usernow = request.identity.get('user', {})
+        kwargs['size_limit'] = 256000000 # 256 MB
+        kwargs['allowed_extensions'] = ['.png', '.jpg', '.tif']
+        uploader.handle_file_upload(name=f'{image_type}.png')
+        kwargs['upload_dir'] = FRONT_IMAGES_DIRNAME
+        uploader = FileUploader(**kwargs)
+        return uploader.handle_file_upload(name=f'{image_type}.png')
+
+    @expose()
+    def save_edit_social_media(self, *args, **kwargs):
+        usernow = request.identity['user']
+        this = self.get_active_social_by_id(kwargs.get('social_media_id'))
+        if not this: return ''
+        this.url = kwargs.get('url', None)
+        this.active = True if kwargs.get('active') and kwargs.get('active') == 'on' else False
+        DBSession.flush()
+        redirect_url = '/content/social_media'
+        return json.dumps({'success': True, 'redirect': redirect_url})
+
+    @expose()
+    def save_new_safety_tips(self, *args, **kwargs):
+        usernow = request.identity['user']
+        this = SafetyTips()
+        this.desc = kwargs.get('desc', None)
+        this.added_by = usernow.id
+        DBSession.add(this)
+        DBSession.flush()
+        redirect_url = '/content/safety_tips'
+        return json.dumps({'success': True, 'redirect': redirect_url})
+
+    @expose()
+    def save_edit_safety_tip(self, *args, **kwargs):
+        usernow = request.identity['user']
+        this = SafetyTips.by_id(kwargs.get('safety_tip_id'))
+        if not this: return ''
+        this.desc = kwargs.get('desc', None)
+        this.active = True if kwargs.get('active') and kwargs.get('active') == 'on' else False
+        this.added_by=usernow.id
+        DBSession.flush()
+        redirect_url = '/content/safety_tips'
+        return json.dumps({'success': True, 'redirect': redirect_url})
+
+    def get_active_social_list(self, *args, **kwargs):
+        dbase_query = DBSession.query(SocialLinks). \
+            order_by(asc(SocialLinks.id)). \
+            limit(LIMIT)
+        return dbase_query
+
+    @expose()
+    def get_active_social_by_id(self, mobile_app_id=None, *args, **kwargs):
+        return DBSession.query(SocialLinks). \
+            filter(SocialLinks.id == mobile_app_id). \
+            first()
+
+    @require(CustomNotAnonymous())
+    @expose('eiffel_back.templates.generic')
+    def mobile_app_links(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+        title = "Mobile App Links"
+        htmltbl = self.get_mobile_app_link_htmltbl(**kwargs)
+        html = f"""
+    	<div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header card-header-primary card-header-icon">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="card-icon">
+                                    <i class="material-icons">system_update</i>
+                                </div>
+                                <h4 class="card-title">Mobile App Links</h4>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-body pt-0">
+                        <div class="toolbar text-right">
+                            <button id="createBtn" class="btn btn-primary" >Create</button>
+                        </div>
+                        <div class="material-datatables">
+                            {htmltbl}
+                        </div>
+                    </div>
+                </div>
+		    </div>
+	    </div>
+        """
+        javascript = """
+            $('#createBtn').click(function(){
+                $('#dialogdiv').load('/content/get_mobile_app_modal', function(data){
+                    return false;
+                });
+            });
+        """
+        return dict(title=title, html=html, javascript=javascript)
+
+    def get_mobile_app_link_htmltbl(self, *args, **kwargs):
+        outputlist = []
+        dbase_query = MobileAppLinks.get_all('title')
+        for item in dbase_query:
+            outputlist.append({
+                'title': item.title,
+                'url': item.url,
+                'active': COMMON.get_binary_check_or_cross(item.active),
+                'actions': f'<div mobile_app_link_id="{item.id}" class="btn btn-link btn-warning btn-just-icon edit"><i class="material-icons">dvr</i></div>',
+            })
+        dbcolumnlist=[
+                'title',
+                'url',
+                'active',
+                'actions',
+                    ]
+        theadlist=[
+                'Title',
+                'Url',
+                'Active',
+                'Actions'
+                ]
+        tdclasslist = [
+                '',
+                '',
+                'text-center',
+                'text-right',
+                ]
+        html= build_html_table_material(outputlist, dbcolumnlist, theadlist, "mobile_app_link_table", tdclasslist)
+        javascript = """
+        <script>
+            $('.edit').click(function(){
+                var kwargs = { mobile_app_link_id : $(this).attr('mobile_app_link_id') };
+                $('#dialogdiv').load('/content/get_mobile_app_modal', kwargs);
+            });
+        </script>
+        """
+        return html + javascript
+
+    @expose()
+    def get_mobile_app_modal(self, *args, **kwargs):
+        mobile_app_link_id = kwargs.get('mobile_app_link_id', None)
+        app_link = MobileAppLinks.by_id(mobile_app_link_id)
+        form_params = {'app_link': app_link} if app_link else {}
+        modal_title = 'New Mobile App Link' if not mobile_app_link_id else 'Edit Mobile App Link'
+        mobile_app_form = self.get_mobileapp_link_form(**form_params)
+        params = {
+            'modal_id': 'mobileAppLink',
+            'modal_title': modal_title,
+            'modal_body': mobile_app_form,
+        }
+        return create_bootstrap_modal(**params)
+
+    @expose()
+    def get_mobileapp_link_form(self, *args, **kwargs):
+        app_link = kwargs.get('app_link', None)
+        title_dict = {
+            'wrapper_class': 'row col-md-12',
+            'label_attrs': 'required',
+            'input_id': 'title',
+            'label_val': 'Title',
+            'input_attrs': 'required',
+            'input_val': f'value="{app_link.title}"' if app_link else ''
+        }
+        url_dict = {
+            'wrapper_class': 'row col-md-12',
+            'label_attrs': 'required',
+            'input_id': 'url',
+            'label_val': 'Url',
+            'input_attrs': 'required',
+            'input_val': f'value="{app_link.url}"' if app_link else ''
+        }
+        filename = f'value="{app_link.filename}"' if app_link else ''
+        required = 'required' if not app_link else ''
+        store_logo_dict = {
+            'input_type': 'custom',
+            'input_field': create_fileinput_html(**{
+                'input_id': 'file',
+                'input_attrs': f'{filename} {required}',
+                'file_input_attrs': required,
+                'label_text': 'Choose App Store logo...'
+            })
+        }
+        action_dict = {
+            'input_wrapper_class': 'text-right',
+            'input_type': 'custom',
+            'input_field': '''
+                <button id="submitBtn" type="button" class="btn btn-primary">Save</button>
+                <button type="button" class="btn btn-outline-primary" data-dismiss="modal">Cancel</button>
+            '''
+        }
+        params_list = [
+            title_dict,
+            url_dict,
+            store_logo_dict,
+            action_dict,
+        ]
+        if app_link:
+            id_dict = {
+                'input_id': 'id',
+                'input_type': 'hidden',
+                'input_val': f'value="{app_link.id}"'
+            }
+            params_list.append(id_dict)
+
+        javascript = """
+        <script>
+            var appLinkForm = '#app_link_form';
+            setFormValidation(appLinkForm);
+            $('#submitBtn').click(function(e){
+                e.preventDefault();
+                var valid = FormIsValid(appLinkForm);
+                if(valid){
+                    var form = $('#app_link_form')[0];
+                    var data = new FormData(form);
+                    $.ajax({
+                        type: "POST",
+                        enctype: 'multipart/form-data',
+                        url: "/content/save_mobile_app_link",
+                        data: data,
+                        processData: false,
+                        contentType: false,
+                        cache: false,
+                        timeout: 600000,
+                        success: function (data) {
+                            var result = JSON.parse(data);
+                            if(result.success === true){
+                                $.redirect('/mobile_app_links');
+
+                            } else {
+                                showNotification(result.status, result.message)
+                            }
+                        },
+                        error: function (e) {
+                            console.log("ERROR : ", e);
+                        }
+                    });
+                }
+            });
+        </script>
+        """
+        return build_html_form('app_link_form', params_list) + javascript
+
+    @expose()
+    def save_mobile_app_link(self, *args, **kwargs):
+        key_list = ['title','url']
+        result = kwargs_valitator(key_list, **kwargs)
+        if not result.get('success'):
+            return json.dumps({'success': False, 'message': result.get('message'), 'status': 'danger'})
+
+        if not 'id' in kwargs.keys():
+            return self.create_mobile_app_link(**kwargs)
+        return self.update_mobile_app_link(**kwargs)
+
+    def upload_file(self, *args, **kwargs):
+        file_obj = kwargs.get('file')
+        if not hasattr(file_obj, 'file'):
+            return json.dumps({'success': False, 'message': 'You need to select an App Store logo.', 'status': 'danger'})
+        now = datetime.now()
+        file_id = now.strftime("%Y%m%d%H%M%S")
+        file_ext = os.path.splitext(file_obj.filename)
+        filename = f'{file_id}_app_logo{file_ext[1]}'
+        allowed_ext = ['.jpg', '.jpeg', '.png', '.gif']
+        upload_result = json.loads(COMMON.upload_file(filename, file_obj, allowed_ext, 0.5, IMAGES_DIRNAME, **kwargs))
+        success = upload_result.get('success', None)
+        if not success:
+            message = upload_result.get('error', 'We could not save the file provided, please try again.')
+            return json.dumps({'success': False, 'message': message, 'status': 'danger'})
+        filename = upload_result.get('name', None)
+        if not filename:
+            return json.dumps({'success': False, 'message': 'We could not save the file provided, please try again.', 'status': 'danger'})
+        return json.dumps({'success': True, 'data': filename})
+
+    def create_mobile_app_link(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+        result = json.loads(self.upload_file(**kwargs))
+        if not result.get('success'): return result
+        filename = result.get('data', None)
+        if not filename:
+            return json.dumps({'success': False, 'message': 'We could not process this request, please try again.', 'status': 'danger'})
+        this = MobileAppLinks()
+        this.title = kwargs.get('title', None)
+        this.filename = filename
+        this.url = kwargs.get('url', None)
+        this.added_by = usernow.id
+        this.added = datetime.now()
+        this.active = True
+        DBSession.add(this)
+        DBSession.flush()
+        flash(f'"{this.title}" was created successfully.', 'success')
+        return json.dumps({'success': True, 'message': f'"{this.title}" was created successfully.', 'status':'success'})
+
+    def update_mobile_app_link(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+        app_link_id = kwargs.get('id', None)
+        if not app_link_id: return json.dumps({'success': False, 'message': 'Please select a record to update.', 'status': 'danger'})
+        file_obj = kwargs.get('file')
+        new_filename = None
+        if hasattr(file_obj, 'file'):
+            result = self.upload_file(**kwargs)
+            if not result.get('success'): return result
+            new_filename = result.get('data', None)
+
+        this = MobileAppLinks.by_id(app_link_id)
+        if not this:
+            return json.dumps({'success': False, 'message': 'We could not locate the record that you are trying to save.', 'status':'danger'})
+        this.title = kwargs.get('title', None)
+        this.filename = new_filename if new_filename else this.filename
+        this.url = kwargs.get('url', None)
+        DBSession.flush()
+        flash(f'"{this.title}" was updated successfully.', 'success')
+        return json.dumps({'success': True, 'message': f'"{this.title}" was updated successfully.', 'status':'success'})

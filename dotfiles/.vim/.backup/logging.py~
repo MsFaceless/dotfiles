@@ -1,0 +1,127 @@
+"""Bank controller module"""
+import urllib.parse
+from tg.predicates import has_permission
+
+from tg.i18n import ugettext as _, lazy_ugettext as l_
+import string
+import datetime
+# from tg.i18n import ugettext as _
+# from tg import predicates
+from sqlalchemy import func, desc, asc
+from tg import expose, require, redirect, validate, flash, url, request, response, predicates
+
+from tanzanite.model import *
+from tanzanite.lib.tg_utils import *
+from tanzanite.lib.base import BaseController
+
+class LoggingController(BaseController):
+
+    # allow_only = has_permission(
+    #     'Supervisor',
+    #     msg=l_('Only for people with the "Supervisor" permission')
+    # )
+    def add_audit_log(self, *args, **kwargs):
+        #TESTED TGJ 20200211
+        audit_action_id  = kwargs.get('audit_action_id', None)
+        audit_type_id = kwargs.get('audit_type_id', None)
+        key = kwargs.get('key', 0)
+        key_auxiliary_1 = kwargs.get('key_auxillary', 0)
+        key_auxiliary_2 = kwargs.get('key_auxillary2', 0)
+        message = kwargs.get('message', 'Unknown Audit')
+        card_id = kwargs.get('card_id', 0)
+        usernow = kwargs.get('usernow', None)
+        print()
+        print('add_audit_log')
+        print(kwargs)
+        print()
+        if not usernow:
+            usernow = DBSession.query(User).filter(User.name=='Nobody').first()
+        user_id = usernow.id
+        
+        #mandatory fields.
+        print('Audit', kwargs)
+        if not audit_action_id \
+           or not audit_type_id \
+           or not user_id \
+           or not message: return 'false'
+
+        print('Audit usernow: ', usernow)
+        print('Audit user id: ', user_id)
+        this = Audit()
+        print(this)
+        this.audit_action_id = audit_action_id
+        this.audit_type_id = audit_type_id
+        this.key = key
+        this.level_1_type_id = 0
+        this.key_auxiliary_1 = key_auxiliary_1
+        this.level_2_type_id = 0
+        this.key_auxiliary_2 = key_auxiliary_2
+        this.level_3_type_id = 0
+        this.card_id = card_id
+        this.message = message
+        this.date_time = datetime.now()
+        this.user_id = user_id
+        DBSession.add(this)
+        DBSession.flush()
+        print()
+        print('dir DBSession')
+        print(dir(DBSession))
+        print()
+        print(this)
+        print(this.id)
+    
+        # print('Audit record: ')
+        # print('this.audit_action_id', this.audit_action_id)
+        # print('this.audit_type_id', this.audit_type_id)
+        # print('this.key', this.key)
+        # print('this.level_1_type_id', this.level_1_type_id)
+        # print('this.key_auxiliary_1', this.key_auxiliary_1)
+        # print('this.level_2_type_id', this.level_2_type_id)
+        # print('this.key_auxiliary_2', this.key_auxiliary_2)
+        # print('this.level_3_type_id', this.level_3_type_id)
+        # print('this.card_id', this.card_id)
+        # print('this.message', this.message)
+        # print('this.date_time', this.date_time)
+        # print('this.user_id', this.user_id)
+        print('Audit record written? ')
+
+        return 'true'
+
+    def add_movement_audit_log(self, *args, **kwargs):
+        #TESTED TGJ 20200211
+        audit_action_id  = kwargs.get('audit_action_id', None)
+        audit_type_id = kwargs.get('audit_type_id', None)
+        key = kwargs.get('key', None)
+        packing_type_id = kwargs.get('packing_type_id', None)
+        key_auxillary = kwargs.get('key_auxillary', None)
+        packing_type_id2 = kwargs.get('packing_type_id2', None)
+        key_auxillary2 = kwargs.get('key_auxillary2', None)
+        packing_type_id3 = kwargs.get('packing_type_id3', None)
+        key_auxillary3 = kwargs.get('key_auxillary3', None)
+        message = kwargs.get('message', None)
+        card_id = kwargs.get('card_id', None)
+        #mandatory fields.
+        if not audit_action_id \
+           or not audit_type_id \
+           or not key \
+           or not packing_type_id \
+           or not message: return 'false'
+        usernow = request.identity.get('user', {})
+        this = Audit()
+        this.audit_action_id = audit_action_id
+        this.audit_type_id = audit_type_id
+        this.key = key
+        this.level1_type_id = packing_type_id
+        this.key_auxillary = key_auxillary
+        this.level2_type_id = packing_type_id2
+        this.key_auxillary2 = key_auxillary2
+        this.level3_type_id = packing_type_id3
+        this.key_auxillary3 = key_auxillary3
+        this.message = message
+        this.date_time = datetime.now()
+        this.user_id = usernow.id
+        this.card_id = card_id
+        DBSession.add(this)
+        DBSession.flush()
+        return 'true'
+    

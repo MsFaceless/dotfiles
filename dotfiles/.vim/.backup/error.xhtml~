@@ -1,0 +1,30 @@
+<html py:extends="master.xhtml" py:strip="True">
+    <head py:block="head" py:strip="True">
+        <title py:block="master_title">A ${code} error has Occurred</title>
+    </head>
+
+<body py:block="body" py:strip="True">
+
+<?python
+import re
+mf = re.compile(r'(</?)script', re.IGNORECASE)
+def fixmessage(message):
+    return mf.sub(r'\1noscript', message)
+?>
+<div class="row">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header">
+                <div class="row d-flex">
+                    <div class="col-md-6">
+                        <h4 class="card-title">
+                            ${literal(fixmessage(message))}
+                        </h4>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>

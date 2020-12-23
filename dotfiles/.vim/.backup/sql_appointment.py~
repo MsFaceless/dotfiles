@@ -1,0 +1,166 @@
+# -*- coding: utf-8 -*-
+
+import os
+from datetime import datetime
+from hashlib import sha256
+
+from sqlalchemy import Table, ForeignKey, Column
+from sqlalchemy.types import Unicode, Integer, DateTime, Boolean
+from sqlalchemy.orm import relation, synonym
+
+from rocket.model import DeclarativeBase, metadata, DBSession
+from rocket.lib.model_utils import PhatBase, common_columns, get_phat_table, get_type_table
+
+# ********************* Appointment Types ***********************************#
+AppointmentStatusType = get_type_table(model_name='AppointmentStatus', table_name='appointment_status') # waiting, started, etc.
+AppointmentDurationType = get_type_table(model_name='AppointmentDuration', table_name='appointment_duration') # appointment, interval, leave, etc.
+
+# ********************* Appointment Duration and Time ***********************************#
+tbl_appointment_duration = {
+    '__tablename__': 'tbl_appointment_duration',
+    'duration_type_id': common_columns.get('integer_not_nullable')(),
+    'duration_in_minutes': common_columns.get('integer_not_nullable')(),
+}
+AppointmentDuration = get_phat_table(model_name='AppointmentDuration', columndict=tbl_appointment_duration)
+
+tbl_appointment_time = {
+    '__tablename__': 'tbl_appointment_time',
+    'start_time': common_columns.get('time_not_nullable')(),
+    'end_time': common_columns.get('time_not_nullable')(),
+    'timeout_in_minutes': common_columns.get('integer_not_nullable')(),
+}
+AppointmentTime = get_phat_table(model_name='AppointmentTime', columndict=tbl_appointment_time)
+
+# ********************* Appointment Role ***********************************#
+tbl_appointment_role = {
+    '__tablename__': 'tbl_appointment_role',
+    'name': common_columns.get('title_not_nullable')(),
+    'bln_have_appointment': common_columns.get('boolean_default_true')(),
+}
+AppointmentRole = get_phat_table(model_name='AppointmentRole', columndict=tbl_appointment_role)
+
+tbl_appointment_role_day_of_week = {
+   '__tablename__': 'tbl_appointment_role_day_of_week',
+    'appointment_role_id': common_columns.get('integer_not_nullable')(),
+    'day_of_week': common_columns.get('integer_not_nullable')(),
+    'appointment_duration_id': common_columns.get('integer_not_nullable')(),
+    'appointment_time_id': common_columns.get('integer_not_nullable')(),
+}
+AppointmentRoleDayOfWeek = get_phat_table(model_name='AppointmentRoleDayOfWeek', columndict=tbl_appointment_role_day_of_week)
+
+# ********************* System Owner ***********************************#
+tbl_system_owner = {
+    '__tablename__': 'tbl_system_owner',
+    'entity_organisation_id': common_columns.get('integer_not_nullable')(),
+}
+EntityOrganisationSystemOwner = get_phat_table(model_name='EntityOrganisationSystemOwner', columndict=tbl_system_owner)
+
+# ********************* Branch ***********************************#
+tbl_system_owner_branch = {
+    '__tablename__': 'tbl_system_owner_branch',
+    'system_owner_id': common_columns.get('integer_not_nullable')(),
+    'entity_organisation_branch_id': common_columns.get('integer_not_nullable')(),
+}
+SystemOwnerBranch = get_phat_table(model_name='SystemOwnerBranch', columndict=tbl_system_owner_branch)
+
+tbl_branch_day_of_week = {
+    '__tablename__': 'tbl_branch_day_of_week',
+    'system_owner_branch_id': common_columns.get('integer_not_nullable')(),
+    'day_of_week': common_columns.get('integer_not_nullable')(),
+    'appointment_duration_id': common_columns.get('integer_not_nullable')(),
+    'appointment_time_id': common_columns.get('integer_not_nullable')(),
+}
+BranchDayOfWeek = get_phat_table(model_name='BranchDayOfWeek', columndict=tbl_branch_day_of_week)
+
+tbl_branch_role = {
+    '__tablename__': 'tbl_branch_role',
+    'system_owner_branch_id': common_columns.get('integer_not_nullable')(),
+    'appointment_role_id': common_columns.get('integer_not_nullable')(),
+}
+BranchRole = get_phat_table(model_name='BranchRole', columndict=tbl_branch_role)
+
+# ********************* User ***********************************#
+tbl_system_owner_branch_user = {
+    '__tablename__': 'tbl_system_owner_branch_user',
+    'system_owner_branch_id': common_columns.get('integer_not_nullable')(),
+    'user_id': common_columns.get('integer_not_nullable')(),
+    'appointment_role_id': common_columns.get('integer_not_nullable')(),
+}
+SystemOwnerBranchUser = get_phat_table(model_name='SystemOwnerBranchUser', columndict=tbl_system_owner_branch_user)
+
+# ********************* Appointment ***********************************#
+tbl_appointment = {
+    '__tablename__': 'tbl_appointment',
+    'system_owner_branch_user_id': common_columns.get('integer_not_nullable')(),
+    'start_datetime': common_columns.get('datetime_not_nullable')(),
+    'end_datetime': common_columns.get('datetime_not_nullable')(),
+    'entity_id': common_columns.get('integer_not_nullable')(),
+    'is_virtual': common_columns.get('boolean_default_false')(),
+}
+Appointment = get_phat_table(model_name='Appointment', columndict=tbl_appointment)
+
+# ********************* Appointment Children ***********************************#
+
+tbl_appointment_virtual = {
+    '__tablename__': 'tbl_appointment_virtual',
+    'appointment_id': common_columns.get('integer_not_nullable')(),
+    'url': common_columns.get('description_not_nullable')(),
+}
+AppointmentVirtual = get_phat_table(model_name='AppointmentVirtual', columndict=tbl_appointment_virtual)
+
+tbl_appointment_claim = {
+    '__tablename__': 'tbl_appointment_claim',
+    'appointment_id': common_columns.get('integer_not_nullable')(),
+    'claim_id': common_columns.get('integer_not_nullable')(),
+}
+AppointmentClaim = get_phat_table(model_name='AppointmentClaim', columndict=tbl_appointment_claim)
+
+tbl_appointment_policy = {
+    '__tablename__': 'tbl_appointment_policy',
+    'appointment_id': common_columns.get('integer_not_nullable')(),
+    'policy_id': common_columns.get('integer_not_nullable')(),
+}
+AppointmentPolicy = get_phat_table(model_name='AppointmentPolicy', columndict=tbl_appointment_policy)
+
+tbl_appointment_policy_benefit = {
+    '__tablename__': 'tbl_appointment_policy_benefit',
+    'appointment_policy_id': common_columns.get('integer_not_nullable')(),
+    'benefit_id': common_columns.get('integer_not_nullable')(),
+}
+AppointmentPolicyBenefit = get_phat_table(model_name='AppointmentPolicyBenefit', columndict=tbl_appointment_policy_benefit)
+
+tbl_appointment_status = {
+    '__tablename__': 'tbl_appointment_status',
+    'user_group_calendar_appointment_id': common_columns.get('integer_not_nullable')(),
+    'appointment_status_type_id': common_columns.get('integer_not_nullable')(),
+}
+AppointmentStatus = get_phat_table(model_name='AppointmentStatus', columndict=tbl_appointment_status)
+
+tbl_appointment_file = {
+    '__tablename__': 'tbl_appointment_file',
+    'user_group_calendar_appointment_id': common_columns.get('integer_not_nullable')(),
+    'file_id': common_columns.get('integer_not_nullable')(),
+}
+AppointmentFile = get_phat_table(model_name='AppointmentFile', columndict=tbl_appointment_file)
+
+tbl_appointment_note = {
+    '__tablename__': 'tbl_appointment_note',
+    'user_group_calendar_appointment_id': common_columns.get('integer_not_nullable')(),
+    'note': common_columns.get('longtext_not_nullable')(),
+}
+AppointmentNote = get_phat_table(model_name='AppointmentNote', columndict=tbl_appointment_note)
+
+# ********************* Appointment Links ***********************************#
+tbl_recurring_appointment_link = {
+    '__tablename__': 'tbl_recurring_appointment_link',
+    'appointment_id': common_columns.get('integer_not_nullable')(),
+    'next_appointment_id': common_columns.get('integer_not_nullable')(),
+}
+RecurringAppointmentLink = get_phat_table(model_name='RecurringAppointmentLink', columndict=tbl_recurring_appointment_link)
+
+tbl_previous_appointment_link = {
+    '__tablename__': 'tbl_previous_appointment_link',
+    'appointment_id': common_columns.get('integer_not_nullable')(),
+    'previous_appointment_id': common_columns.get('integer_not_nullable')(),
+}
+PreviousAppointmentLink = get_phat_table(model_name='PreviousAppointmentLink', columndict=tbl_previous_appointment_link)

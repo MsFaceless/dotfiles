@@ -1,0 +1,255 @@
+# -*- coding: utf-8 -*-
+"""Category controller module"""
+import os, json
+from tg import expose, redirect, validate, flash, url
+# from tg.i18n import ugettext as _
+# from tg import predicates
+
+from eiffel_front.lib.base import BaseController
+from eiffel_front.lib.tg_decorators import *
+from eiffel_front.controllers.posts import PostsController
+from eiffel_front.controllers.common import CommonController
+from eiffel_front.controllers.my_account import AccountController
+from eiffel_front.model import *
+from sqlalchemy import func
+from eiffel_front.lib.tg_utils import *
+
+POSTS = PostsController()
+COMMON = CommonController()
+MY_ACCOUNT = AccountController()
+MOBILE_BREAK_WIDTH = 680
+
+class CategoryController(BaseController):
+
+    # Uncomment this line if your controller requires an authenticated user
+    # allow_only = CustomNotAnonymous()
+
+    @expose('eiffel_front.templates.generic')
+    def index(self, *args, **kwargs):
+        search_html = POSTS.get_search_input_card()
+        jumbotron_sml = COMMON.get_jumbo_particle_html()
+        html = f"""
+        {jumbotron_sml}
+        <div class="container position-relative">
+            {search_html}
+        </div>
+        <div id="allCategoriesDiv"></div>
+        """
+        javascript = """
+        $('#mainNav .nav-item').removeClass('active');
+        $('#categoryLink').addClass('active');
+        var kwargs = {
+            'width': $(window).width(),
+        }
+        $('#allCategoriesDiv').load('/categories/get_all_categories', kwargs);
+        """
+        return dict(title="Categories", html=html, javascript=javascript)
+
+    @expose()
+    def get_all_categories(self, *args, **kwargs):
+        width = str_to_int(kwargs.get('width', MOBILE_BREAK_WIDTH))
+        if width < MOBILE_BREAK_WIDTH:
+            return self.get_mobile_categories(False)
+        dbase_query = DBSession.query(Category). \
+            filter(Category.active == True). \
+            order_by(Category.title.asc()). \
+            all()
+        categories_list = ""
+        for category in dbase_query:
+            categories_list += self.get_category_item(category, limit=False)
+        html = f"""
+        <div class="container">
+            <section class="section">
+                <div class="container">
+                    <div class="row">
+                        <div class="col-12">
+                            <div class="section-title mt-5 mb-5">
+                                <h2>All Categories</h2>
+                            </div>
+                            <div class="row mb-5">
+                                {categories_list}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </div>
+        """
+        javascript = self.get_search_categories_javascript()
+        return html + javascript
+
+    @expose()
+    def get_mobile_categories(self, limit=True, *args, **kwargs):
+        dbase_query = DBSession.query(Category). \
+            filter(Category.count > 0). \
+            filter(Category.active == True). \
+            order_by(desc(Category.count)). \
+            order_by(asc(Category.title))
+
+        if limit:
+            dbase_query = dbase_query.limit(4)
+
+        else:
+            dbase_query = dbase_query.all()
+
+        html = f"""
+        <div class="container mt-4">
+            <div class="accordion mx-2" id="categoryAccordion">"""
+
+        for item in dbase_query:
+            cat_item = self.get_mobile_accordion_item(item, limit)
+            html += f"""
+                {cat_item}
+            """
+        html += f"""
+            </div>
+        </div>
+        """
+        return html
+
+    def get_mobile_accordion_item(self,category, limit=True, *args, **kwargs):
+        if not category: return ''
+        dbase_query = DBSession.query(Subcategory). \
+            filter(Subcategory.category_id == category.id). \
+            filter(Subcategory.active == True). \
+            filter(Subcategory.count > 0). \
+            order_by(desc(Subcategory.count)). \
+            order_by(asc(Subcategory.title))
+
+        if limit:
+            dbase_query = dbase_query.limit(5)
+
+        else:
+            dbase_query = dbase_query.all()
+
+        subcategories_list = ''
+        for subcat in dbase_query:
+            subcategories_list += f"""
+            <li class="py-2">
+                <a class='search_subcategory' subcategory_id='{subcat.id}'>
+                    {subcat.title} - {subcat.count} items
+                </a>
+            </li>
+            """
+
+        html = f"""
+        <div class="card category_card">
+            <div class="card-header collapsed d-flex align-items-center" id="heading{category.id}" data-toggle="collapse" data-target="#cat{category.id}" aria-expanded="true" aria-controls="cat{category.id}">
+                <i class="icon-bg-1 mdi mdi-14px {category.icon}"></i>
+                <h4 class="mb-0 ml-2">{category.title}</h4>
+            </div>
+            <div id="cat{category.id}" class="collapse" aria-labelledby="heading{category.id}" data-parent="#categoryAccordion">
+                <div class="card-body">
+                    <ul class="category-list">
+                        {subcategories_list}
+                    </ul>
+                </div>
+            </div>
+        </div>
+        """
+        javascript = self.get_search_categories_javascript()
+        return html + javascript
+
+
+    @expose()
+    def get_trending_categories(self, *args, **kwargs):
+        width = str_to_int(kwargs.get('width', MOBILE_BREAK_WIDTH))
+        dbase_query = []
+        categories_list = ""
+        if width < MOBILE_BREAK_WIDTH:
+            categories_list = self.get_mobile_categories()
+        else :
+            dbase_query = DBSession.query(Category). \
+                filter(Category.active == True). \
+                order_by(Category.count.desc()). \
+                limit(4)
+
+            for category in dbase_query:
+                categories_list += self.get_category_item(category)
+        html = f"""
+        <div class="container mt-5">
+            <section class="section">
+                <div class="container">
+                    <div class="row">
+                        <div class="col-12">
+                            <div class="section-title mt-5">
+                                <h2>Trending Categories</h2>
+                            </div>
+                            <div class="row mb-5 mt-5">
+                                {categories_list}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </div>
+        """
+        javascript = self.get_search_categories_javascript()
+        return html + javascript
+
+    @expose()
+    def get_search_categories_javascript(self, *args, **kwargs):
+        javascript = """
+        <script>
+            $('.search_subcategory').click(function(event){
+                event.preventDefault();
+                $.redirect('/posts/search', {
+                    subcategory_id : $(this).attr('subcategory_id'),
+                });
+            });
+            $('.search_category').click(function(event){
+                event.preventDefault();
+                $.redirect('/posts/search', {
+                    category_id : $(this).attr('category_id'),
+                });
+            });
+            $('.card-header:eq(0)').trigger('click');
+        </script>
+        """
+        return javascript
+
+    @expose()
+    def get_category_item(self, category, limit=True, *args, **kwargs):
+        if not category:
+            return ""
+
+        dbase_query = DBSession.query(Subcategory). \
+            filter(Subcategory.category_id == category.id). \
+            filter(Subcategory.active == True). \
+            order_by(desc(Subcategory.count)). \
+            order_by(asc(Subcategory.title))
+
+        if limit:
+            dbase_query = dbase_query.limit(5)
+
+        else:
+            dbase_query = dbase_query.all()
+
+        subcategories_list = ""
+        for subcat in dbase_query:
+            subcategories_list += f"""
+            <li>
+                <a class='search_subcategory' subcategory_id='{subcat.id}'>
+                    {subcat.title}
+                </a>
+            </li>
+            """
+
+        html = f"""
+        <div class="col-lg-3 offset-lg-0 col-md-5 offset-md-1 col-sm-6 col-6">
+            <div class="category-block">
+                <div class="header">
+                    <i class="icon-bg-1 mdi mdi-14px {category.icon}"></i>
+                    <h4 class="mt-3">
+                        <a class='search_category' category_id='{category.id}'>
+                            {category.title}
+                        </a>
+                    </h4>
+                </div>
+                <ul class="category-list">
+                    {subcategories_list}
+                </ul>
+            </div>
+        </div>
+        """
+        return html

@@ -1,0 +1,75 @@
+from fabric import Connection, Config
+from invoke import Responder
+import sys
+
+prefix_list = ['3vault', 'qagateway', 'qawww', 'qamerchant', 'qaeiffelcorpbackoffice', 'qaeiffelcorp']
+dbbpop_prefix_list = ['3vault', 'qagateway', 'qawww', 'qamerchant', 'qaeiffelcorpdb', 'qaeiffelcorpbackoffice', 'qaeiffelcorp']
+
+
+def dbpop(targets=[]):
+    for prefix in targets:
+        url = f"https://{prefix}.calabashpay.africa"
+        domain = f"{prefix}.calabashpay.africa"
+
+        connection = Connection(f"ubuntu@{domain}", connect_kwargs={'key_filename':f"{prefix}.pem"})
+        print(domain)
+        watchers = []
+
+        sudo_responder = Responder(pattern=r'\[sudo\] password:', response='\n')
+        watchers.append(sudo_responder)
+        mysql_responder = Responder(pattern=r'Enter password:', response='developpass\n')
+        watchers.append(mysql_responder)
+
+        connection.run("cd /home/ubuntu/enviros/deployed_env/deployed_app && source fresca", watchers=watchers, pty=True)
+
+def update(targets=[]):
+    for target in targets:
+        prefix = target
+        url = f"https://{prefix}.calabashpay.africa"
+        domain = f"{prefix}.calabashpay.africa"
+
+        connection = Connection(f"ubuntu@{domain}", connect_kwargs={'key_filename':f"{prefix}.pem"})
+        print(domain)
+        watchers = []
+
+        sudo_responder = Responder(pattern=r'\[sudo\] password:', response='\n')
+        watchers.append(sudo_responder)
+        mysql_responder = Responder(pattern=r'Enter password:', response='developpass\n')
+        watchers.append(mysql_responder)
+        ssh_pass_responder = Responder(pattern=r"developer@dotxml.duckdns.org's password:", response="WolfNippleChips\n")
+        watchers.append(ssh_pass_responder)
+
+        connection.sudo("systemctl stop nginx", watchers=watchers, pty=True)
+        connection.sudo("systemctl stop gunicorn", watchers=watchers, pty=True)
+        connection.run("cd /home/ubuntu/enviros/deployed_env/deployed_app && hg pull && hg update aws_qa --clean", watchers=watchers, pty=True)
+        connection.sudo("systemctl start gunicorn", watchers=watchers, pty=True)
+        connection.sudo("systemctl start nginx", watchers=watchers, pty=True)
+
+
+def main():
+    args = sys.argv
+    if len(args) < 2: 
+        print("Not enough arguments")
+        return False
+    arg0 = args[0]
+    command = args[1]
+    targets = args[2:]
+    if command == 'pop': func = dbpop
+    elif command == 'update': func = update
+    else: 
+        print("No command found")
+        return False
+    if targets: func(targets)
+    elif not targets and command=='pop':
+        print("No targets found")
+        print("Defaulting to all Calabash Vertical Instances as Targets. Proceed? (fordefsies/N)")
+        all_prompt = input()
+        if all_prompt != "fordefsies": return False
+        elif all_prompt == "fordefsies": targets = dbbpop_prefix_list
+        func(targets)
+    return True
+
+if __name__ == "__main__":
+    main()
+    #EXAMPLE USAGE:
+    # python fresca.py update merchant

@@ -1,0 +1,113 @@
+# -*- coding: utf-8 -*-
+"""Loyalty Controller"""
+
+from tg import expose
+
+from calabash import model
+from calabash.model import *
+
+from calabash.lib.base import BaseController
+from calabash.lib.html_utils import *
+from calabash.lib.transaction_utils import make_transaction
+
+from calabash.controllers.wallet import WalletController
+
+import calabash.lib.vault_utils as VAULT
+
+WALLET = WalletController()
+
+class LoyaltyController(BaseController):
+
+    @expose('json')
+    def get_balance(self, *args, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            return error_response('get_balance failed: username not found')
+
+        wallet_catalog_member_loyalty = WalletCatalog.by_attr_first('name', 'Calabash Member Loyalty')
+        if not wallet_catalog_member_loyalty:
+            return error_response('loyalty/get_balance failed: member loyalty wallet catalog not found')
+
+        wallet = DBSession.query(Wallet).filter_by(username=username).filter_by(wallet_catalog_id=wallet_catalog_member_loyalty.id).first()
+        if wallet:
+            balance = "{:.2f}".format(wallet.available_balance)
+            return success_response([{'balance' : balance}])
+
+        wallet_catalog_merchant_loyalty = WalletCatalog.by_attr_first('name', 'Calabash Merchant Loyalty')
+        if not wallet_catalog_merchant_loyalty:
+            return error_response('loyalty/get_balance failed: merchant loyalty wallet catalog not found')
+
+        wallet = DBSession.query(Wallet).filter_by(username=username).filter_by(wallet_catalog_id=wallet_catalog_merchant_loyalty.id).first()
+        if wallet:
+            balance = "{:.2f}".format(wallet.available_balance)
+            return success_response([{'balance' : balance}])
+
+        return error_response('get_balance failed: wallet not found')
+
+    @expose('json')
+    def get_transaction_history(self, *args, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            return error_response('loyalty/get_transaction_history failed: username not found')
+
+        wallet_catalog_main_member = WalletCatalog.by_attr_first('name', 'Calabash Member Loyalty')
+        if not wallet_catalog_main_member:
+            return error_response('loyalty/get_transaction_history failed: member loyalty wallet catalog not found')
+
+        wallet = DBSession.query(Wallet).filter_by(username=username).filter_by(wallet_catalog_id=wallet_catalog_main_member.id).first()
+        if wallet:
+            return WALLET.get_transactions_by_wallet_id(wallet.id)
+
+        wallet_catalog_main_merchant = WalletCatalog.by_attr_first('name', 'Calabash Merchant Loyalty')
+        if not wallet_catalog_main_merchant:
+            return error_response('loyalty/get_transaction_history failed: merchant loyalty wallet catalog not found')
+
+        wallet = DBSession.query(Wallet).filter_by(username=username).filter_by(wallet_catalog_id=wallet_catalog_main_merchant.id).first()
+        if wallet:
+            return WALLET.get_transactions_by_wallet_id(wallet.id)
+
+        return error_response('get_transaction_history failed: username is not a Loyalty member or Loyalty Merchant')
+
+    @expose('json')
+    def transfer_to_main(self, *args, **kwargs):
+        # TRANSACTION TYPE: transfer_loyalty_to_main
+        username = kwargs.get('username', None)
+        if not username:
+            return error_response('loyalty/transfer_to_main failed: username not found')
+
+        amount = kwargs.get('amount', None)
+        if not amount:
+            return error_response('loyalty/transfer_to_main failed: amount not found')
+
+        try:
+            amount = int(amount)
+        except:
+            return error_response('loyalty/transfer_to_main failed: failed to int amount')
+
+        transaction_type = TransactionType.by_attr_first('name', 'transfer_loyalty_to_main')
+        if not transaction_type:
+            return error_response('loyalty/transfer_to_main failed: transaction_type not found')
+
+        wallet_catalog_member_loyalty = WalletCatalog.by_attr_first('name', 'Calabash Member Loyalty')
+        if not wallet_catalog_member_loyalty:
+            return error_response('loyalty/transfer_to_main failed: member loyalty catalog not found')
+
+        wallet_catalog_member_main = WalletCatalog.by_attr_first('name', 'Calabash Member Main')
+        if not wallet_catalog_member_main:
+            return error_response('loyalty/transfer_to_main failed: member main catalog not found')
+
+        request_dict = {
+            'transaction_type_id': transaction_type.id,
+            'from_wallet_username': username,
+            'from_wallet_catalog_id': wallet_catalog_member_loyalty.id,
+            'to_wallet_username': username,
+            'to_wallet_catalog_id': wallet_catalog_member_main.id,
+            'amount': amount
+        }
+        result = make_transaction(**request_dict)
+        print(result)
+
+        # incoming args: username
+        # TODO create a 100% allocation from and to
+        # TODO explicitly find the loyalty wallet for incoming username and use to_wallet_id in make_transaction
+        return error_response('not done')

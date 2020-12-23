@@ -1,0 +1,105 @@
+# -*- coding: utf-8 -*-
+"""Background Controller"""
+
+import logging
+import transaction
+
+from datetime import datetime
+
+from calabash.model import *
+
+from calabash.lib.html_utils import *
+from calabash.lib.base import BaseController
+from calabash.lib.myimali_api_gateway import MyImaliApiGateway
+
+from calabash.controllers.registration import RegistrationController
+
+MYIMALI = MyImaliApiGateway()
+REGISTRATION = RegistrationController()
+
+LOGGER = logging.getLogger(__name__)
+
+class BackgroundController(BaseController):
+
+    def update_transaction_history(self, *args, **kwargs):
+        walletlist = Wallet.get_all('id')
+        for wallet in walletlist:
+            start = datetime.now()
+
+            kwargs['username'] = wallet.username
+            result = MYIMALI.get_transaction_history(**kwargs)
+            success = result.get('success', False)
+            if not success:
+                error = result.get('error', '')
+                transfer_result = REGISTRATION.auto_transfer_user_api_key(error, wallet.username)
+                if transfer_result:
+                    result = MYIMALI.get_transaction_history(**kwargs)
+                    success = result.get('success', False)
+                    if not success:
+                        end = datetime.now()
+                        LOGGER.info(f'Updating {wallet.username.upper()} took {end - start}. No result')
+                        continue
+
+            statement = result.get('statement', [])
+            if not statement:
+                end = datetime.now()
+                LOGGER.info(f'Updating {wallet.username.upper()} took {end - start}. No statement')
+                continue
+
+            self.save_transaction_history(wallet.username, statement)
+            end = datetime.now()
+            LOGGER.info(f'Updating {wallet.username.upper()} took {end - start}. Success')
+        transaction.commit()
+        LOGGER.info(f'Completed update_transaction_history at {datetime.now()}')
+        return True
+
+    def save_transaction_history(self, username='', statement=[], *args, **kwargs):
+        for hist in statement:
+
+            TrxId = hist.get('TrxId', None)
+            if not TrxId:
+                continue
+
+            other = hist.get('other', None)
+            the_type = hist.get('type', None)
+            the_date = hist.get('date', None)
+            the_time = hist.get('time', None)
+            seconds = hist.get('seconds', None)
+            the_datetime = str_to_date(f'{the_date} {the_time}:{seconds}', '%Y%m%d %H:%M:%S')
+            reference = hist.get('paymentReference', None)
+            balance = hist.get('balance', None)
+
+            amount = hist.get('amount', 0)
+            amount = int(amount)
+            is_negative = True if amount <= 0 else False
+
+            exists = DBSession.query(TransactionHistory). \
+                    filter_by(username=username). \
+                    filter_by(date=the_date). \
+                    filter_by(type=the_type). \
+                    filter_by(amount=amount). \
+                    filter_by(time=the_time). \
+                    filter_by(balance=balance). \
+                    filter_by(other=other). \
+                    filter_by(TrxId=TrxId). \
+                    filter_by(reference=reference). \
+                    first()
+            if not exists:
+                new = TransactionHistory()
+                new.datetime = the_datetime
+                new.username = username
+                new.the_date = the_date
+                new.date = str_to_date(the_date, '%Y%m%d')
+                new.type = the_type
+                new.the_time = the_time
+                new.time = str_to_date(the_time, '%H:%M')
+                new.seconds = seconds
+                new.amount = amount
+                new.is_negative = is_negative
+                new.balance = balance
+                new.other = other
+                new.TrxId = TrxId
+                new.reference = reference
+                DBSession.add(new)
+                DBSession.flush()
+        return True

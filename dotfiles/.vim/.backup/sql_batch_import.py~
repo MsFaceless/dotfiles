@@ -1,0 +1,134 @@
+# -*- coding: utf-8 -*-
+
+import os
+from datetime import datetime
+from hashlib import sha256
+
+from sqlalchemy import Table, ForeignKey, Column
+from sqlalchemy.types import Unicode, Integer, DateTime, Boolean
+from sqlalchemy.orm import relation, synonym
+
+from rocket.model import DeclarativeBase, metadata, DBSession
+from rocket.lib.model_utils import PhatBase, common_columns, get_phat_table, get_type_table
+
+# ********************* Batch Import ***********************************#
+
+BatchImportType = get_type_table(model_name='BatchImport', table_name='batch_import')
+
+tbl_batch_import = {
+    '__tablename__': 'tbl_batch_import',
+    'import_type_id': common_columns.get('integer_not_nullable')(),
+    'filename': common_columns.get('description_not_nullable')(),
+    'processed': common_columns.get('datetime')(),
+    'total_count': common_columns.get('integer')(),
+    'accepted_count': common_columns.get('integer')(),
+    'pre_voucher_count': common_columns.get('integer_default')(0),
+    'rejected_count': common_columns.get('integer')(),
+    'notes': common_columns.get('description_not_nullable')(),
+    #'is_complete_load': common_columns.get('boolean_default_false')(),
+    #'is_complete_update': common_columns.get('boolean_default_false')(),
+    #'is_successful': common_columns.get('boolean_default_false')(),
+    }
+BatchImport = get_phat_table(model_name='BatchImport', columndict=tbl_batch_import)
+
+# Added to accomodate OMVIM functionality. TGJ - 10 Nov 2020
+tbl_batch_import_product_owner = {
+    '__tablename__': 'tbl_batch_import_product_owner',
+    'batch_import_id': common_columns.get('integer_not_nullable')(),
+    'entity_org_product_owner_id': common_columns.get('integer')(),
+    }
+BatchImportProductOwner = get_phat_table(model_name='BatchImportProductOwner', columndict=tbl_batch_import_product_owner)
+
+tbl_batch_import_audit = {
+    '__tablename__': 'tbl_batch_import_audit',
+    'batch_import_id': common_columns.get('integer_not_nullable')(),
+    'audit_date_time': common_columns.get('datetime')(), #: common_columns.get('datetime_default_now')(),
+    'audit': common_columns.get('description_not_nullable')(),
+    }
+BatchImportAudit = get_phat_table(model_name='BatchImportAudit', columndict=tbl_batch_import_audit)
+
+tbl_batch_import_error = {
+    '__tablename__': 'tbl_batch_import_error',
+    'batch_import_id': common_columns.get('integer_not_nullable')(),
+    'message': common_columns.get('longtext_not_nullable')(),
+    }
+BatchImportError = get_phat_table(model_name='BatchImportError', columndict=tbl_batch_import_error)
+
+# ********************* Member Request ***********************************#
+
+# tbl_member_request = {
+#     '__tablename__': 'tbl_member_request',
+#     'batch_import_id': common_columns.get('integer_not_nullable')(),
+#     'identity_number': common_columns.get('description_not_nullable')(),
+#     'first_name': common_columns.get('description_not_nullable')(),
+#     'surname': common_columns.get('description_not_nullable')(),
+#     'preferred_name': common_columns.get('description')(),
+#     'mobile_number': common_columns.get('description')(),
+#     'intermediary_code': common_columns.get('code')(),
+#     'gender': common_columns.get('title')(),
+#     'gender_type_id': common_columns.get('integer')(),
+#     'date_of_birth': common_columns.get('date')(),
+#     'language': common_columns.get('title')(),
+#     'language_type_id': common_columns.get('integer')(),
+#     'startdate': common_columns.get('date')(),
+#     'client_code': common_columns.get('code')(),
+#     'client_id': common_columns.get('integer')(),
+#     'client_reference': common_columns.get('description')(),
+#     }
+# MemberRequest = get_phat_table(model_name='MemberRequest', columndict=tbl_member_request)
+
+tbl_batch_import_entity_person_link = {
+    '__tablename__': 'tbl_batch_import_entity_person_link',
+    'batch_import_id': common_columns.get('integer_not_nullable')(),
+    'entity_person_id': common_columns.get('integer_not_nullable')(),
+}
+BatchImportEntityPersonLink = get_phat_table(model_name='BatchImportEntityPersonLink', columndict=tbl_batch_import_entity_person_link)
+
+# ********************* Policy Request ***********************************#
+
+tbl_policy_request = {
+    '__tablename__': 'tbl_policy_request',
+    'batch_import_id': common_columns.get('integer_not_nullable')(),
+    'identity_number': common_columns.get('description_not_nullable')(),
+    'product_code': common_columns.get('code_not_nullable')(),
+    'purchase_date': common_columns.get('date')(), #: common_columns.get('date_not_nullable')(),
+    }
+PolicyRequest = get_phat_table(model_name='PolicyRequest', columndict=tbl_policy_request)
+
+tbl_batch_import_policy = {
+    '__tablename__': 'tbl_batch_import_policy',
+    'batch_import_id': common_columns.get('integer_not_nullable')(),
+    'policy_id': common_columns.get('integer_not_nullable')(),
+}
+BatchImportPolicy = get_phat_table(model_name='BatchImportPolicy', columndict=tbl_batch_import_policy)
+
+#################################### Added for Omvim ###################################
+# ********************* Voucher Request ***********************************#
+tbl_voucher_request = {
+    '__tablename__': 'tbl_voucher_request',
+    'batch_import_id': common_columns.get('integer_not_nullable')(),
+    'mobile_number': common_columns.get('description_not_nullable')(),
+    'product_code': common_columns.get('code_not_nullable')(),
+    'product_id': common_columns.get('integer_not_nullable')(),
+    'purchase_date': common_columns.get('date')(), #: common_columns.get('date_not_nullable')(),
+    }
+VoucherRequest = get_phat_table(model_name='VoucherRequest', columndict=tbl_voucher_request)
+
+# Used on main
+#  tbl_batch_import_pre_purchase = {
+#     '__tablename__': 'tbl_batch_import_pre_purchase',
+#     'batch_import_id': common_columns.get('integer_not_nullable')(),
+#     'pre_voucher_count': common_columns.get('integer_default')(0),
+#     }
+# BatchImportPrePurchase = get_phat_table(model_name='BatchImportPrePurchase', columndict=tbl_batch_import_pre_purchase)
+
+tbl_voucher_pre_purchase = {
+    '__tablename__': 'tbl_voucher_pre_purchase',
+    'batch_import_id': common_columns.get('integer_not_nullable')(),
+    'member_id': common_columns.get('integer_not_nullable')(),
+    'product_id': common_columns.get('integer_not_nullable')(),
+    'purchase_date': common_columns.get('date')(),
+    'cover_start_date': common_columns.get('date')(),
+    'cover_end_date': common_columns.get('date')(),
+    }
+VoucherPrePurchase = get_phat_table(model_name='VoucherPrePurchase', columndict=tbl_voucher_pre_purchase)

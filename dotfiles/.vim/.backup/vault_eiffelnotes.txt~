@@ -1,0 +1,22 @@
+NEW
+title - done
+name - done
+surname - done
+preferred = default name - done
+
+identity type - done
+identity no - done
+mobile
+email - done
+
+EDIT
+entity id 
+mobile
+second email
+
+GET IDENTITY TYPE LIST
+list of dicts
+
+GET USER PROFILE
+entity id
+get list of dicts

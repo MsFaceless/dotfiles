@@ -1,0 +1,1148 @@
+# -*- coding: utf-8 -*-
+"""Debit Order module"""
+
+import logging
+
+from tg import predicates, require, expose, request, redirect
+from tg.i18n import ugettext as _
+from tg.i18n import lazy_ugettext as l_
+
+from rocket.model import *
+
+from rocket.lib.tg_utils import *
+from rocket.lib.html_utils import create_checkbox_html
+from rocket.lib.base import BaseController
+from rocket.lib.type_utils import TypeDictionary
+
+from rocket.controllers.common import CommonController
+from rocket.controllers.product import ProductController
+from rocket.controllers.beneficiary import BeneficiaryController
+
+from sqlalchemy import func, desc, asc, or_
+
+from datetime import datetime
+from dateutil.relativedelta import relativedelta
+
+LOGGER = logging.getLogger(__name__)
+
+TYPEUTIL = TypeDictionary()
+COMMON = CommonController()
+DBQUERY_LIMIT = 15
+
+POLICY_ID = 1
+DUE_DATE = "2020-11-20"
+PAYMENT_PROVIDER_ID = 1
+
+# final payment allocations
+allocation_catalogue_1_id = 1
+allocation_share_1 = 30
+allocation_catalogue_2_id = 2
+allocation_share_2 = 70
+
+# final payment allocations reversals
+allocation_catalogue_1_rev_id = 3
+allocation_catalogue_2_rev_id = 4
+
+
+class DebitOrderController(BaseController):
+
+    @require(predicates.not_anonymous())
+    @expose('rocket.templates.generic')
+    def index(self, *args, **kwargs):
+        self.run_fake_data()
+        self.create_new_premium_due(**{'policy_id': POLICY_ID, 'due_date': DUE_DATE, 'payment_provider_id': PAYMENT_PROVIDER_ID})
+        self.run_transactions(**{'policy_id': POLICY_ID, 'due_date': DUE_DATE, 'payment_provider_id': PAYMENT_PROVIDER_ID})
+        self.allocate_transactions_to_debit_order_runs(**{'policy_id': POLICY_ID, 'due_date': DUE_DATE, 'payment_provider_id': PAYMENT_PROVIDER_ID})
+        html = 'Hello there'
+        javascript = ''
+        title = _("Debit Order")
+        return dict(title=title, html=html, javascript=javascript)
+
+    def temp_policy(self):
+        policy = Policy.by_id(POLICY_ID)
+        if not policy:
+            fake_data = FakePolicyData(). \
+                temp_create_policy(). \
+                temp_create_policy_benefit(). \
+                temp_create_policy_benefit_premium(). \
+                temp_policy_premium_schedule()
+
+    def temp_payment_provider(self):
+        payment_provider_query = PaymentProvider.by_id(PAYMENT_PROVIDER_ID)
+        if not payment_provider_query:
+            fake_payment_provider = FakePaymentProvider(). \
+                payment_provider(). \
+                payment_provider_lead_time(). \
+                payment_provider_debit_order_run_setup(1, 15). \
+                payment_provider_debit_order_run_setup(16, 15). \
+                payment_provider_debit_order_runs()
+
+    def run_fake_data(self):
+        self.temp_policy()
+        self.temp_payment_provider()
+
+    def create_new_premium_due(self, *args, **kwargs):
+        policy_id = kwargs.get('policy_id', None)
+        if not policy_id:
+            print('No policy_id from kwargs')
+            return ''
+        due_date = kwargs.get('due_date', None)
+        if not due_date:
+            print('No due_date from kwargs')
+            return ''
+        due_date = datetime.strptime(due_date, "%Y-%m-%d").date()
+        SETTLEMENT_STATE_AWAITING = TYPEUTIL.get_id_of_name('premium_due_settlement_state_type', 'awaiting_settlement')
+        premium_due = PremiumDue()
+        premium_due.premium_due_date = due_date
+        premium_due.policy_id = policy_id
+        premium_due.premium_due_settlement_state_id = SETTLEMENT_STATE_AWAITING
+        DBSession.add(premium_due)
+        DBSession.flush()
+
+    def run_transactions(self, *args, **kwargs):
+        policy_id = kwargs.get('policy_id', None)
+        if not policy_id:
+            print('No policy_id from kwargs')
+            return ''
+        due_date = kwargs.get('due_date', None)
+        if not due_date:
+            print('No due_date from kwargs')
+            return ''
+        due_date = datetime.strptime(due_date, "%Y-%m-%d").date()
+        payment_provider_id = kwargs.get('payment_provider_id', None)
+        if not payment_provider_id:
+            print('No payment_provider_id from kwargs')
+            return ''
+
+        debit_order_transaction = DebitOrderTransaction(policy_id=policy_id, due_date=due_date, payment_provider_id=payment_provider_id)
+        debit_order_transaction. \
+            get_premium_schedule(). \
+            get_payer_entity_id(). \
+            get_outstanding_premium_dues(). \
+            grab_outstanding_balances_premium_dues(). \
+            create_transaction_line_item(). \
+            create_premium_due_payment_line_items()
+
+    def allocate_transactions_to_debit_order_runs(self, *args, **kwargs):
+        due_date = kwargs.get('due_date', None)
+        if not due_date:
+            print('No due_date from kwargs')
+            return ''
+        due_date = datetime.strptime(due_date, "%Y-%m-%d").date()
+        payment_provider_id = kwargs.get('payment_provider_id', None)
+        if not payment_provider_id:
+            print('No payment_provider_id from kwargs')
+            return ''
+
+        initialise_do_run = InitialiseDebitOrderRun(payment_provider_id=payment_provider_id, due_date=due_date)
+        initialise_do_run. \
+            set_do_runs_to_collection_phase(). \
+            set_do_runs_to_lead_phase(). \
+            set_do_runs_to_completed_phase(). \
+            get_latest_available_debit_order_run(). \
+            gather_pending_debit_order_transactions(). \
+            assign_transactions_to_debit_order_run()
+
+
+class FakePolicyData:
+
+    def __init__(self):
+        self.policy_benefit_id = None
+
+    def temp_create_policy(self):
+        policy = Policy()
+        policy.policy_number = 1234
+        policy.product_id = 1
+        policy.policy_payer_entity_id = 1
+        policy.policy_owner_entity_id = 2
+        DBSession.add(policy)
+        DBSession.flush()
+        print('^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^', policy.id)
+        return self
+
+    # TODO temp method
+    def temp_create_policy_benefit(self):
+        """For now this is just fake data"""
+        policy_benefit = PolicyBenefit()
+        policy_benefit.policy_id = POLICY_ID
+        policy_benefit.product_benefit_id = 1
+        policy_benefit.cover_and_exclusion_id = 3
+        policy_benefit.is_compulsory = True
+        DBSession.add(policy_benefit)
+        DBSession.flush()
+        self.policy_benefit_id = policy_benefit.id
+        return self
+
+    def temp_create_policy_benefit_premium(self):
+        policy_benefit_premium = PolicyBenefitPremium()
+        policy_benefit_premium.policy_benefit_id = self.policy_benefit_id
+        policy_benefit_premium.initial_annual_premium_amount = 10_000
+        policy_benefit_premium.premium_annual_increase_percentage = 2
+        DBSession.add(policy_benefit_premium)
+        DBSession.flush()
+        return self
+
+    def temp_policy_owner_and_payer(self):
+        policy = Policy.by_id(POLICY_ID)
+        policy.policy_owner_entity_id = 1
+        policy.policy_payer_entity_id = 1
+        DBSession.flush()
+        return self
+
+    def temp_policy_premium_schedule(self):
+        policy_premium_schedule = PolicyPremiumSchedule()
+        policy_premium_schedule.policy_id = POLICY_ID
+        policy_premium_schedule.date_of_first_payment_due = datetime.today()  # TODO play around with dates
+        policy_premium_schedule.policy_premium_due_on_type_id = 1  # TODO play around with types
+        policy_premium_schedule.premium_payment_frequency_id = 1  # TODO play around with frequencies
+        policy_premium_schedule.adjustment_factor = 3
+        DBSession.add(policy_premium_schedule)
+        DBSession.flush()
+        return self
+
+
+class FakePaymentProvider:
+
+    def __init__(self):
+        self.payment_provider_id = 6
+
+    def payment_provider(self):
+        payment_provider = PaymentProvider()
+        payment_provider.entity_organisation_id = 1
+        payment_provider.reference = "Temp_entry"
+        payment_provider.minimum_amount = 100
+        payment_provider.maximum_amount = 10_000_000
+        DBSession.add(payment_provider)
+        DBSession.flush()
+        self.payment_provider_id = payment_provider.id
+        return self
+
+    def payment_provider_lead_time(self):
+        payment_provider_lead_time = PaymentProviderLeadTime()
+        payment_provider_lead_time.payment_provider_id = self.payment_provider_id
+        payment_provider_lead_time.days = 5
+        payment_provider_lead_time.latest_before_bank_holiday = True
+        DBSession.add(payment_provider_lead_time)
+        DBSession.flush()
+        return self
+
+    def payment_provider_debit_order_run_setup(self, start_day, length_of_run):
+        old_do_setups = DBSession.query(PaymentProviderDebitOrderRunSetup). \
+            filter(PaymentProviderDebitOrderRunSetup.bln_active == True). \
+            filter(PaymentProviderDebitOrderRunSetup.payment_provider_id == self.payment_provider_id). \
+            filter(PaymentProviderDebitOrderRunSetup.run_start_day_of_month == start_day). \
+            all()
+        if old_do_setups:
+            print('DO_run_setup already exists')
+            return self
+        payment_provider_debit_order_run_setup = PaymentProviderDebitOrderRunSetup()
+        payment_provider_debit_order_run_setup.payment_provider_id = self.payment_provider_id
+        payment_provider_debit_order_run_setup.run_start_day_of_month = start_day
+        payment_provider_debit_order_run_setup.length_of_run_in_days = length_of_run
+        payment_provider_debit_order_run_setup.latest_before_bank_holiday = False  # TODO for leza this will always be false
+        DBSession.add(payment_provider_debit_order_run_setup)
+        DBSession.flush()
+        return self
+
+    def payment_provider_debit_order_runs(self):
+        do_run_setup_db_query = DBSession.query(PaymentProviderDebitOrderRunSetup). \
+            filter(PaymentProviderDebitOrderRunSetup.bln_active == True). \
+            filter(PaymentProviderDebitOrderRunSetup.payment_provider_id == self.payment_provider_id). \
+            all()
+        setup_start_day_dict = {}
+        for setup in do_run_setup_db_query:
+            setup_start_day_dict.update({setup.run_start_day_of_month: setup.id})
+
+        payment_provider_lead_time_obj = PaymentProviderLeadTime.by_attr_first('payment_provider_id', self.payment_provider_id)
+        if not payment_provider_lead_time_obj:
+            print(f'No PaymentProviderLeadTime by attr payment_provider_id: {self.payment_provider_id}')
+            return ''
+        lead_time = payment_provider_lead_time_obj.days
+
+        list_of_start_days = list(setup_start_day_dict.keys())
+        list_of_start_days.sort(reverse=True)
+        do_run_setup_dict = {}
+        today = datetime.today()
+        current_end_date = today + relativedelta(day=31)
+        complement_end_date = today + relativedelta(months=1) + relativedelta(day=31)
+        for i in list_of_start_days:
+            current_start_date = today.replace(day=i)
+            complement_start_date = complement_end_date.replace(day=i)
+            setup_id = setup_start_day_dict[i]
+            do_run_setup_dict.update({setup_id:
+                                     {
+                                        'current': {
+                                            'start_date': current_start_date,
+                                            'end_date': current_end_date
+                                        },
+                                        'complement': {
+                                            'start_date': complement_start_date,
+                                            'end_date': complement_end_date
+                                        }
+                                     }})
+            current_end_date = current_start_date - timedelta(days=1)
+            complement_end_date = complement_start_date - timedelta(days=1)
+
+        for key, value in do_run_setup_dict.items():
+            current_start_date = value['current'].get('start_date')
+            current_do_run = DBSession.query(DebitOrderRun). \
+                filter(DebitOrderRun.bln_active == True). \
+                filter(DebitOrderRun.payment_provider_debit_order_run_setup_id == key). \
+                filter(DebitOrderRun.start_date == current_start_date.strftime("%Y-%m-%d")). \
+                first()
+            if not current_do_run:
+                current_run_end_date = value['current'].get('end_date')
+
+                if current_start_date > today:
+                    do_run_status = "pre_collection"
+                elif current_run_end_date <= today:
+                    do_run_status = "completed"
+                elif current_start_date <= today <= (current_run_end_date - timedelta(days=lead_time)):
+                    do_run_status = "collection"
+                else:
+                    do_run_status = "lead"
+                debit_order_state_type_id = TYPEUTIL.get_id_of_name('debit_order_run_state_type', do_run_status)
+
+                current_run = DebitOrderRun()
+                current_run.payment_provider_debit_order_run_setup_id = key
+                current_run.start_date = current_start_date
+                current_run.end_date = current_run_end_date
+                current_run.strike_date = current_run_end_date  # TODO need to account for non-business days here
+                current_run.debit_order_run_state_type_id = debit_order_state_type_id
+                DBSession.add(current_run)
+                DBSession.flush()
+                self.__create_debit_order_run_collections_file(current_run.id)
+
+            complement_run_start_date = value['complement'].get('start_date')
+            complement_do_run = DBSession.query(DebitOrderRun). \
+                filter(DebitOrderRun.bln_active == True). \
+                filter(DebitOrderRun.payment_provider_debit_order_run_setup_id == key). \
+                filter(DebitOrderRun.start_date == complement_run_start_date.strftime("%Y-%m-%d")). \
+                first()
+            if not complement_do_run:
+                complement_run_end_date = value['complement'].get('end_date')
+
+                if complement_run_start_date > today:
+                    do_run_status = "pre_collection"
+                elif complement_run_end_date <= today:
+                    do_run_status = "completed"
+                elif complement_run_start_date <= today <= (complement_run_end_date - timedelta(days=lead_time)):
+                    do_run_status = "collection"
+                else:
+                    do_run_status = "lead"
+                debit_order_state_type_id = TYPEUTIL.get_id_of_name('debit_order_run_state_type', do_run_status)
+
+                complement_do_run = DebitOrderRun()
+                complement_do_run.payment_provider_debit_order_run_setup_id = key
+                complement_do_run.start_date = complement_run_start_date
+                complement_do_run.end_date = complement_run_end_date
+                complement_do_run.strike_date = complement_run_end_date  # TODO need to account for non-business days here
+                complement_do_run.debit_order_run_state_type_id = debit_order_state_type_id
+                DBSession.add(complement_do_run)
+                DBSession.flush()
+                self.__create_debit_order_run_collections_file(complement_do_run.id)
+
+    def __create_debit_order_run_collections_file(self, debit_order_run_id):
+        COLLECTIONS_FILE_TYPE_ID = TYPEUTIL.get_id_of_name('debit_order_run_file_type', 'collection_file')
+        debit_order_run_file = DebitOrderRunFile()
+        debit_order_run_file.debit_order_run_id = debit_order_run_id
+        debit_order_run_file.debit_order_run_file_type_id = COLLECTIONS_FILE_TYPE_ID
+        debit_order_run_file.datetime_file_generated = datetime.now()
+        debit_order_run_file.file_name = 'This is a temp file name; need a better name soon'
+        debit_order_run_file.file_location = 'Some directory'
+        DBSession.add(debit_order_run_file)
+        DBSession.flush()
+
+
+class DebitOrderTransaction:
+
+    def __init__(self, policy_id, due_date, payment_provider_id):
+        self.policy_id = policy_id
+        self.due_date = due_date
+        self.payment_provider_id = payment_provider_id
+        self.outstanding_premium_dues_query = None
+        self.premium_schedule_query = None
+        self.transaction_amount = None
+        self.policy_payer_entity_id = None
+        self.transaction_id = None
+        self.result = None
+
+    def get_premium_schedule(self):
+        if self.result:
+            return self
+        premium_schedule_db_query = DBSession.query(PolicyPremiumSchedule). \
+            filter(PolicyPremiumSchedule.bln_active == True). \
+            filter(PolicyPremiumSchedule.policy_id == self.policy_id). \
+            first()
+        if not premium_schedule_db_query:
+            self.result = {'success': False, 'data': f'Could not find an active PremiumSchedule with policy_id {self.policy_id}'}
+            return self
+        self.premium_schedule_query = premium_schedule_db_query
+        return self
+
+    def get_payer_entity_id(self):
+        if self.result:
+            return self
+        policy_db_query = Policy.by_id(self.policy_id)
+        if not policy_db_query:
+            self.result = {'success': False, 'data': f'Could not find an active Policy with id {self.policy_id}'}
+            print(f'No Policy by id: {self.policy_id}')
+            return self
+        policy_payer_id = policy_db_query.policy_payer_entity_id
+        self.policy_payer_entity_id = policy_payer_id
+        return self
+
+    def get_outstanding_premium_dues(self):
+        if self.result:
+            return self
+        SETTLEMENT_STATE_FULLY_SETTLED = TYPEUTIL.get_id_of_name('premium_due_settlement_state_type', 'fully_settled')
+        premium_due_db_query = DBSession.query(PremiumDue). \
+            filter(PremiumDue.policy_id == self.policy_id). \
+            filter(PremiumDue.bln_active == True). \
+            filter(PremiumDue.premium_due_settlement_state_id != SETTLEMENT_STATE_FULLY_SETTLED). \
+            all()
+        if not premium_due_db_query:
+            print('No outstanding PremiumDue')
+        self.outstanding_premium_dues_query = premium_due_db_query
+        return self
+
+    def grab_outstanding_balances_premium_dues(self):
+        if self.result:
+            return self
+        outstanding_balance = 0
+        for premium_due in self.outstanding_premium_dues_query:
+            premium_calculator = PremiumCalculator()
+            outstanding_amount = premium_calculator. \
+                with_premium_schedule_query_object(self.premium_schedule_query). \
+                with_premium_due_query_object(premium_due). \
+                calculate_premiums_paid(). \
+                calculate_premiums_due(). \
+                return_outstanding_balance()
+            result = outstanding_amount.get('data', 'PremiumCalculator: Did not run')
+            if not outstanding_amount.get('success', False):
+                failure_message = 'DebitOrderTransaction: ' + result
+                self.result = {'success': False, 'data': failure_message}
+                return self
+            print('^&^&^&&^&^&^&^&^&^&^&&^&^&^&^ ', result)
+            outstanding_balance += result
+        self.transaction_amount = outstanding_balance
+        return self
+
+    def create_transaction_line_item(self):
+        if self.result:
+            return self
+        print('%%%%%%%%%%%%%%%%%%%%%%% transaction_amount: ', self.transaction_amount)
+        TRANSACTION_PAYMENT_RECEIVED_ID = TYPEUTIL.get_id_of_name('transaction_type', 'payment_received')
+        TRANSACTION_STATE_PENDING_ID = TYPEUTIL.get_id_of_name('transaction_state_type', 'pending')
+        try:
+            transaction = Transaction()
+            # transaction.entity_id = self.policy_payer_entity_id
+            transaction.transaction_type_id = TRANSACTION_PAYMENT_RECEIVED_ID
+            transaction.amount = self.transaction_amount
+            transaction.transaction_state_type_id = TRANSACTION_STATE_PENDING_ID
+            DBSession.add(transaction)
+            DBSession.flush()
+            transaction_id = transaction.id
+        except Exception as e:
+            print(e)
+            self.result = {'success': False, 'data': 'DebitOrderTransaction: failed to create Transaction line item'}
+            return self
+        payment_received_line_item = self.__create_transaction_type_payment_received_line_item(transaction_id)
+        if not payment_received_line_item.get('success'):
+            self.result = payment_received_line_item
+            return self
+        payment_received_line_item_id = payment_received_line_item.get('data')
+        payment_received_debit_order_line_item = self.__create_transaction_type_payment_received_debit_order_line_item(payment_received_line_item_id)
+        if not payment_received_debit_order_line_item.get('success'):
+            self.result = payment_received_debit_order_line_item
+            return self
+        self.transaction_id = transaction_id
+        return self
+
+    def __create_transaction_type_payment_received_line_item(self, transaction_id: int):
+        if self.result:
+            return self
+        PAYMENT_RECEIVED_DEBIT_ORDER_ID = TYPEUTIL.get_id_of_name('payment_received_type', 'debit_order')
+        try:
+            transaction_type_payment_received = TransactionTypePaymentReceived()
+            transaction_type_payment_received.entity_id = self.policy_payer_entity_id
+            transaction_type_payment_received.transaction_id = transaction_id
+            transaction_type_payment_received.payment_received_type_id = PAYMENT_RECEIVED_DEBIT_ORDER_ID
+            DBSession.add(transaction_type_payment_received)
+            DBSession.flush()
+            transaction_type_payment_received_id = transaction_type_payment_received.id
+            result = {'success': True, 'data': transaction_type_payment_received_id}
+        except Exception as e:
+            print(e)
+            result = {'success': False, 'data': 'DebitOrderTransaction: failed to create TransactionTypePaymentReceived line item'}
+        return result
+
+    def __create_transaction_type_payment_received_debit_order_line_item(self, transaction_type_payment_received_id):
+        if self.result:
+            return self
+        try:
+            transaction_type_payment_received_debit_order = TransactionTypePaymentReceivedDebitOrder()
+            transaction_type_payment_received_debit_order.transaction_type_payment_received_id = transaction_type_payment_received_id
+            transaction_type_payment_received_debit_order.due_date = self.due_date
+            transaction_type_payment_received_debit_order.payment_provider_id = self.payment_provider_id
+            DBSession.add(transaction_type_payment_received_debit_order)
+            DBSession.flush()
+            payment_received_debit_order_id = transaction_type_payment_received_debit_order.id
+            result = {'success': True, 'data': payment_received_debit_order_id}
+        except Exception as e:
+            print(e)
+            result = {'success': False, 'data': 'DebitOrderTransaction: failed to create TransactionTypePaymentReceivedDebitOrder line item'}
+        return result
+
+    # def __create_transaction_distribution_line_item(self, amount):  # TODO use to create premium_due_payment
+    #     DISTRIBUTION_PREMIUM_ID = TYPEUTIL.get_id_of_name('transaction_distribution_type', 'premium')
+    #     transaction_distribution = TransactionDistribution()
+    #     transaction_distribution.transaction_distribution_type_id = DISTRIBUTION_PREMIUM_ID
+    #     transaction_distribution.amount = amount
+    #     DBSession.add(transaction_distribution)
+    #     DBSession.flush()
+    #     return transaction_distribution.id
+
+    def create_premium_due_payment_line_items(self):
+        if self.result:
+            return self
+        for premium_due in self.outstanding_premium_dues_query:
+            debit_order_premium_due_payment = DebitOrderPremiumDuePayment()
+            debit_order_premium_due_payment. \
+                with_premium_due_query_object(premium_due). \
+                with_transaction_id(self.transaction_id). \
+                with_with_premium_schedule_query_object(self.premium_schedule_query). \
+                calculate_outstanding_balance_due(). \
+                create_final_premium_due_payment_line_item(). \
+                reverse_partials()
+        return self
+
+
+class DebitOrderPremiumDuePayment:
+
+    def __init__(self):
+        self.premium_due_query_object = None
+        self.transaction_id = None
+        self.premium_schedule_query_object = None
+        self.final_payment_amount = None
+        self.result = None
+
+    def with_premium_due_query_object(self, premium_due_query_object):
+        if self.result:
+            return self
+        if not premium_due_query_object:
+            self.result = {'success': False, 'data': 'DebitOrderPremiumDuePayment: no premium_due_query_object'}
+            return self
+        self.premium_due_query_object = premium_due_query_object
+        return self
+
+    def with_transaction_id(self, transaction_id):
+        if self.result:
+            return self
+        if not transaction_id:
+            self.result = {'success': False, 'data': 'DebitOrderPremiumDuePayment: no transaction_id'}
+            return self
+        self.transaction_id = transaction_id
+        return self
+
+    def with_with_premium_schedule_query_object(self, premium_schedule_query_object):
+        if self.result:
+            return self
+        if not premium_schedule_query_object:
+            self.result = {'success': False, 'data': 'DebitOrderPremiumDuePayment: no premium_schedule_query_object'}
+            return self
+        self.premium_schedule_query_object = premium_schedule_query_object
+        return self
+
+    def calculate_outstanding_balance_due(self):
+        if self.result:
+            return self
+        premium_calculator = PremiumCalculator()
+        outstanding_balance = premium_calculator. \
+            with_premium_schedule_query_object(self.premium_schedule_query_object). \
+            with_premium_due_query_object(self.premium_due_query_object). \
+            calculate_premiums_due(). \
+            calculate_premiums_paid().\
+            return_outstanding_balance()
+        result = outstanding_balance.get('data', 'PremiumCalculator: Did not run')
+        if not outstanding_balance.get('success', False):
+            failure_message = 'DebitOrderPremiumDuePayment: ' + result
+            self.result = {'success': False, 'data': failure_message}
+            return self
+        self.final_payment_amount = result
+        return self
+
+    def create_final_premium_due_payment_line_item(self):
+        if self.result:
+            return self
+        PAYMENT_STATE_PENDING_ID = TYPEUTIL.get_id_of_name('premium_due_payment_state_type', 'pending')
+        PAYMENT_TYPE_FINAL_ID = TYPEUTIL.get_id_of_name('premium_due_payment_type', 'final')
+        premium_due_payment_line_item = self.__create_premium_due_line_item(PAYMENT_TYPE_FINAL_ID,
+                                                                            PAYMENT_STATE_PENDING_ID,
+                                                                            self.transaction_id,
+                                                                            self.final_payment_amount)
+        if not premium_due_payment_line_item.get('success'):
+            self.result = premium_due_payment_line_item
+        return self
+
+    def __create_premium_due_line_item(self, payment_type_id, payment_state_id, transaction_id, amount):
+        if self.result:
+            return self
+        transaction_distribution_line_item = self.__create_transaction_distribution_line_item(amount, transaction_id)
+        if not transaction_distribution_line_item.get('success'):
+            return transaction_distribution_line_item
+        transaction_distribution_id = transaction_distribution_line_item.get('data')
+        self.__create_allocation_ran_line_item(transaction_distribution_id)
+        try:
+            premium_due_payment = PremiumDuePayment()
+            premium_due_payment.premium_due_id = self.premium_due_query_object.id
+            premium_due_payment.premium_due_payment_type_id = payment_type_id
+            premium_due_payment.transaction_distribution_id = transaction_distribution_id
+            premium_due_payment.premium_due_payment_state_type_id = payment_state_id
+            premium_due_payment.reversed = False
+            DBSession.add(premium_due_payment)
+            DBSession.flush()
+            premium_due_payment_id = premium_due_payment.id
+            result = {'success': True, 'data': premium_due_payment_id}
+        except Exception as e:
+            print(e)
+            result = {'success': False, 'data': 'DebitOrderPremiumDuePayment: failed to create PremiumDuePayment line item.'}
+        return result
+
+    def reverse_partials(self):
+        if self.result:
+            return self
+        PAYMENT_STATE_TYPE_SUCCESS_ID = TYPEUTIL.get_id_of_name('premium_due_payment_state_type', 'success')
+        PAYMENT_TYPE_PARTIAL_ID = TYPEUTIL.get_id_of_name('premium_due_payment_type', 'partial')
+        payments_db_query = DBSession.query(PremiumDuePayment). \
+            filter(PremiumDuePayment.bln_active == True). \
+            filter(PremiumDuePayment.premium_due_id == self.premium_due_query_object.id). \
+            filter(PremiumDuePayment.reversed == False). \
+            filter(PremiumDuePayment.premium_due_payment_state_type_id == PAYMENT_STATE_TYPE_SUCCESS_ID). \
+            filter(PremiumDuePayment.premium_due_payment_type_id == PAYMENT_TYPE_PARTIAL_ID). \
+            all()
+        for payment in payments_db_query:
+            transaction_distribution_query = TransactionDistribution.by_id(payment.transaction_distribution_id)
+            if not transaction_distribution_query:
+                self.result = {'success': False, 'data': f'DebitOrderPremiumDuePayment: No TransactionDistribution by id: {payment.id}'}
+                print(f'No TransactionDistribution by id: {payment.id}')
+                return self
+            amount = transaction_distribution_query.amount
+            reverse_payment = self.__reverse_premium_due_payment(amount, payment)
+            if not reverse_payment.get('success'):
+                self.result = reverse_payment
+
+    def __reverse_premium_due_payment(self, amount, old_premium_due_payment_object):
+        if self.result:
+            return self
+        if not old_premium_due_payment_object:
+            result = {'success': False, 'data': 'DebitOrderPremiumDuePayment: no premium_due_object provided for reversal'}
+            return result
+        TRANSACTION_TYPE_REVERSAL_ID = TYPEUTIL.get_id_of_name('transaction_type', 'reversal')
+        TRANSACTION_STATE_PROCESSED = TYPEUTIL.get_id_of_name('transaction_state_type', 'processed')  # TODO need to think about this
+        try:
+            transaction = Transaction()
+            transaction.transaction_type_id = TRANSACTION_TYPE_REVERSAL_ID
+            transaction.transaction_state_type_id = TRANSACTION_STATE_PROCESSED
+            transaction.amount = amount
+            DBSession.add(transaction)
+            DBSession.flush()
+            transaction_id = transaction.id
+        except Exception as e:
+            print(e)
+            result = {'success': False, 'data': 'DebitOrderPremiumDuePayment: failed to create Transaction line item for reversal'}
+            return result
+
+        PAYMENT_TYPE_REVERSAL_ID = TYPEUTIL.get_id_of_name('premium_due_payment_type', 'reversal')
+        PAYMENT_STATE_TYPE_SUCCESS_ID = TYPEUTIL.get_id_of_name('premium_due_payment_state_type', 'success')
+        new_premium_due_payment_id = self.__create_premium_due_line_item(PAYMENT_TYPE_REVERSAL_ID,
+                                                                         PAYMENT_STATE_TYPE_SUCCESS_ID, transaction_id,
+                                                                         amount)
+        old_premium_due_payment_object.reversed = True
+        DBSession.flush()
+
+        premium_due_payment_reversal = PremiumDuePaymentTypeReversal()
+        premium_due_payment_reversal.premium_due_payment_id = new_premium_due_payment_id
+        premium_due_payment_reversal.old_premium_due_payment_id = old_premium_due_payment_object.id
+        DBSession.add(premium_due_payment_reversal)
+        DBSession.flush()
+        return True  # TODO add proper error catching
+
+    def __create_transaction_distribution_line_item(self, amount, transaction_id):
+        if self.result:
+            return self
+        DISTRIBUTION_PREMIUM_ID = TYPEUTIL.get_id_of_name('transaction_distribution_type', 'premium')
+        try:
+            transaction_distribution = TransactionDistribution()
+            transaction_distribution.transaction_distribution_type_id = DISTRIBUTION_PREMIUM_ID
+            transaction_distribution.amount = amount
+            transaction_distribution.transaction_id = transaction_id
+            DBSession.add(transaction_distribution)
+            DBSession.flush()
+            transaction_distribution_id = transaction_distribution.id
+            result = {'success': True, 'data': transaction_distribution_id}
+        except Exception as e:
+            print(e)
+            result = {'success': False, 'data': 'DebitOrderPremiumDuePayment: failed to create TransactionDistribution line item'}
+        return result
+
+    def __create_allocation_ran_line_item(self, transaction_distribution_id: int):
+        due_date = self.premium_due_query_object.premium_due_date
+        allocation = DebitOrderAllocation(due_date, transaction_distribution_id). \
+            with_premium_schedule_query_object(self.premium_schedule_query_object). \
+            get_policy_id(). \
+            gather_all_policy_benefits(). \
+            create_final_allocation_line_items(). \
+            allocation_result()
+        return allocation
+
+    def __create_reversal_transaction_line_item(self, partial_amount):
+        if self.result:
+            return self
+        TRANSACTION_PAYMENT_REVERSAL_ID = TYPEUTIL.get_id_of_name('transaction_type', 'reversal')
+        TRANSACTION_STATE_PENDING_ID = TYPEUTIL.get_id_of_name('transaction_state_type', 'pending')  # TODO need to think about this
+        try:
+            transaction = Transaction()
+            transaction.transaction_type_id = TRANSACTION_PAYMENT_REVERSAL_ID
+            transaction.amount = partial_amount
+            transaction.transaction_state_type_id = TRANSACTION_STATE_PENDING_ID
+            DBSession.add(transaction)
+            DBSession.flush()
+            transaction_id = transaction.id
+            result = {'success': True, 'data': transaction_id}
+        except Exception as e:
+            print(e)
+            result = {'success': False, 'data': 'DebitOrderPremiumDuePayment: failed to create Reversal Transaction line item'}
+        return result
+
+
+class DebitOrderAllocation:
+
+    def __init__(self, due_date, transaction_distribution_id):
+        self.transaction_distribution_id = transaction_distribution_id
+        self.due_date = due_date
+        self.policy_id = None
+        self.premium_schedule_query_object = None
+        self.policy_benefit_query = None
+        self.result = None
+
+    def with_premium_schedule_query_object(self, premium_schedule_query_object):
+        if self.result:
+            return self
+        if not premium_schedule_query_object:
+            self.result = {'success': False, 'data': 'DebitOrderAllocation: no premium_schedule_query_object'}
+            return self
+        self.premium_schedule_query_object = premium_schedule_query_object
+        return self
+
+    def get_policy_id(self):
+        if self.result:
+            return self
+        policy_id = self.premium_schedule_query_object.policy_id
+        self.policy_id = policy_id
+        return self
+
+    def gather_all_policy_benefits(self):  # TODO confirm whether to include deactivated benefits
+        if self.result:
+            return self
+        benefit_db_query = DBSession.query(PolicyBenefit). \
+            filter(PolicyBenefit.policy_id == self.policy_id). \
+            all()
+        if not benefit_db_query:
+            self.result = {'success': False, 'data': f'DebitOrderAllocation: No PolicyBenefit with policy_id {self.policy_id}'}
+            return self
+        self.policy_benefit_query = benefit_db_query
+        return self
+
+    def __benefit_premium_amount(self, benefit_query_obj):
+        adjustment_factor = self.premium_schedule_query_object.adjustment_factor
+        payment_frequency_id = self.premium_schedule_query_object.premium_payment_frequency_id
+
+        FREQUENCY_DAILY_ID = TYPEUTIL.get_id_of_name('frequency_type', 'daily')
+        FREQUENCY_MONTHLY_ID = TYPEUTIL.get_id_of_name('frequency_type', 'monthly')
+        FREQUENCY_SEMI_ANNUALLY_ID = TYPEUTIL.get_id_of_name('frequency_type', 'semi_annually')
+
+        if payment_frequency_id == FREQUENCY_DAILY_ID:
+            frequency_divider = 365
+        elif payment_frequency_id == FREQUENCY_SEMI_ANNUALLY_ID:
+            frequency_divider = 2
+        elif payment_frequency_id == FREQUENCY_MONTHLY_ID:
+            frequency_divider = 12
+        else:
+            frequency_divider = 1
+
+        premium_db_query = DBSession.query(PolicyBenefitPremium). \
+            filter(PolicyBenefitPremium.bln_active == True). \
+            filter(PolicyBenefitPremium.policy_benefit_id == benefit_query_obj.id). \
+            first()
+        if not premium_db_query:
+            self.result = {'success': False,
+                           'data': f'DebitOrderAllocation: No premium for PolicyBenefit with id {benefit_query_obj.id}'}
+            print(f'Something went wrong, could not find premium for benefit {benefit_query_obj.id}')
+            return self
+        initial_premium = premium_db_query.initial_annual_premium_amount
+        annual_increase = premium_db_query.premium_annual_increase_percentage
+        date_added = premium_db_query.added
+        years_since_started = relativedelta(self.due_date, date_added).years
+
+        present_value_annual_premium = float(initial_premium) * (
+                    (1 + (float(annual_increase) / 100)) ** years_since_started)  # TODO what about remainders?
+
+        net_benefit_premium = float(present_value_annual_premium) / frequency_divider * (1 + (adjustment_factor / 100))
+        result = {'success': True, 'data': net_benefit_premium}
+        return result
+
+    def __create_allocation_benefit_link_line_item(self, benefit_id: int, allocation_ran_id: int):
+        try:
+            allocation_ran_benefit_link = AllocationRanPolicyBenefitLink()
+            allocation_ran_benefit_link.allocation_ran_id = allocation_ran_id
+            allocation_ran_benefit_link.policy_benefit_id = benefit_id
+            DBSession.add(allocation_ran_benefit_link)
+            DBSession.flush()
+            allocation_ran_benefit_link_id = allocation_ran_benefit_link.id
+            result = {'success': True, 'data': allocation_ran_benefit_link_id}
+        except Exception as e:
+            print(e)
+            result = {'success': False, 'data': 'DebitOrderAllocation: failed to create AllocationRanPolicyBenefitLink line item'}
+        return result
+
+    def create_final_allocation_line_items(self):
+        for benefit in self.policy_benefit_query:
+            premium = self.__benefit_premium_amount(benefit)
+            if not premium.get('success'):
+                self.result = premium
+                return self
+            premium_amount = premium.get('data')
+            # TODO waiting to see what the final form of allocations will take
+            allocation_ran = AllocationRan()
+            allocation_ran.allocation_catalogue_id = allocation_catalogue_1_id
+            allocation_ran.amount = premium_amount * allocation_share_1 / 100
+            allocation_ran.transaction_distribution_id = self.transaction_distribution_id
+            DBSession.add(allocation_ran)
+            DBSession.flush()
+            link_line_item = self.__create_allocation_benefit_link_line_item(benefit.id, allocation_ran.id)
+            if not link_line_item.get('success'):
+                self.result = link_line_item
+                return self
+        return self
+
+    def allocation_result(self):
+        if not self.result:
+            self.result = {'success': True}
+        return self.result
+
+
+class PremiumCalculator:
+
+    def __init__(self):
+        self.premium_due_query_object = None
+        self.premium_schedule_query_object = None
+        self.total_premiums_paid = None
+        self.total_premiums_due = None
+        self.result = None
+
+    def with_premium_due_query_object(self, premium_due_query_object):
+        if self.result:
+            return self
+        if not premium_due_query_object:
+            self.result = {'success': False, 'data': 'PremiumCalculator: no premium_due_query_object'}
+            return self
+        self.premium_due_query_object = premium_due_query_object
+        return self
+
+    def with_premium_schedule_query_object(self, premium_schedule_query_object):
+        if self.result:
+            return self
+        if not premium_schedule_query_object:
+            self.result = {'success': False, 'data': 'PremiumCalculator: no premium_schedule_query_object'}
+            return self
+        self.premium_schedule_query_object = premium_schedule_query_object
+        return self
+
+    def calculate_premiums_paid(self):
+        if self.result:
+            return self
+        total_premiums_paid = 0
+        premium_due_id = self.premium_due_query_object.id
+        PAYMENT_STATE_TYPE_SUCCESS_ID = TYPEUTIL.get_id_of_name('premium_due_payment_state_type', 'success')
+        payments_db_query = DBSession.query(PremiumDuePayment). \
+            filter(PremiumDuePayment.bln_active == True). \
+            filter(PremiumDuePayment.premium_due_id == premium_due_id). \
+            filter(PremiumDuePayment.reversed == False). \
+            filter(PremiumDuePayment.premium_due_payment_state_type_id == PAYMENT_STATE_TYPE_SUCCESS_ID). \
+            all()
+        if not payments_db_query:
+            print(f'PremiumCalculator: could not find any active, successful and not reversed PremiumDuePayment with premium_due_id {premium_due_id}')
+        for payment in payments_db_query:
+            transaction_distribution_id = payment.transaction_distribution_id
+            transaction_distribution = TransactionDistribution.by_id(transaction_distribution_id)
+            if not transaction_distribution:
+                self.result = {'success': False, 'data': f'PremiumCalculator: could not find TransactionDistribution with id {transaction_distribution_id}'}
+                print(f'No TransactionDistribution by id: {transaction_distribution_id}')
+                return self
+            transaction_amount = transaction_distribution.amount
+            total_premiums_paid += transaction_amount
+        self.total_premiums_paid = total_premiums_paid
+        return self
+
+    def calculate_premiums_due(self):
+        if self.result:
+            return self
+        premium_due_calculator = PremiumDueCalculator(). \
+            get_premium_due_obj(self.premium_due_query_object). \
+            get_premium_schedule_obj(self.premium_schedule_query_object). \
+            gather_all_policy_benefits(). \
+            calculate_total_premium_amount(). \
+            return_premium_amount()
+        result = premium_due_calculator.get('data', 'PremiumDueCalculator: Did not run')
+        if not premium_due_calculator.get('success', False):
+            failure_message = 'PremiumCalculator: ' + result
+            self.result = {'success': False, 'data': failure_message}
+            return self
+        self.total_premiums_due = result
+        return self
+
+    def return_total_premiums_due(self):
+        if not self.result:
+            self.result = {'success': True, 'data': self.total_premiums_due}
+        return self.result
+
+    def return_total_premiums_paid(self):
+        if not self.result:
+            self.result = {'success': True, 'data': self.total_premiums_paid}
+        return self.result
+
+    def return_outstanding_balance(self):
+        if not self.result:
+            outstanding_balance = self.total_premiums_due - self.total_premiums_paid
+            self.result = {'success': True, 'data': outstanding_balance}
+        return self.result
+
+
+class PremiumDueCalculator:
+
+    def __init__(self):
+        self.premium_due_db_query = None
+        self.premium_schedule_db_query = None
+        self.total_premium_amount = 0
+        self.policy_id = None
+        self.policy_benefit_query = None
+        self.due_date = None
+        self.result = None
+
+    def get_premium_due_obj(self, premium_due_db_obj):
+        if self.result:
+            return self
+        if not premium_due_db_obj:
+            self.result = {'success': False, 'data': 'PremiumDueCalculator: No premium_due_db_obj'}
+            return self
+        self.premium_due_db_query = premium_due_db_obj
+        self.policy_id = premium_due_db_obj.policy_id
+        self.due_date = premium_due_db_obj.premium_due_date
+        return self
+
+    def get_premium_schedule_obj(self, premium_schedule_db_query):
+        if self.result:
+            return self
+        if not premium_schedule_db_query:
+            self.result = {'success': False, 'data': 'PremiumDueCalculator: No premium_schedule_db_query'}
+            return self
+        self.premium_schedule_db_query = premium_schedule_db_query
+        return self
+
+    def gather_all_policy_benefits(self):  # TODO confirm whether to include deactivated benefits
+        if self.result:
+            return self
+        benefit_db_query = DBSession.query(PolicyBenefit). \
+            filter(PolicyBenefit.policy_id == self.policy_id). \
+            all()
+        if not benefit_db_query:
+            self.result = {'success': False, 'data': f'PremiumDueCalculator: No PolicyBenefit with policy_id {self.policy_id}'}
+            return self
+        self.policy_benefit_query = benefit_db_query
+        return self
+
+    def calculate_total_premium_amount(self):
+        """Total premium is the sum of all benefit premiums"""
+        if self.result:
+            return self
+        # if self.premium_schedule_db_query:
+        #     adjustment_factor = self.premium_schedule_db_query.adjustment_factor
+        #     payment_frequency_id = self.premium_schedule_db_query.premium_payment_frequency_id
+        # else:
+        #     adjustment_factor = 0
+        #     payment_frequency_id = 1
+
+        adjustment_factor = self.premium_schedule_db_query.adjustment_factor
+        payment_frequency_id = self.premium_schedule_db_query.premium_payment_frequency_id
+
+        FREQUENCY_DAILY_ID = TYPEUTIL.get_id_of_name('frequency_type', 'daily')
+        FREQUENCY_MONTHLY_ID = TYPEUTIL.get_id_of_name('frequency_type', 'monthly')
+        FREQUENCY_SEMI_ANNUALLY_ID = TYPEUTIL.get_id_of_name('frequency_type', 'semi_annually')
+
+        if payment_frequency_id == FREQUENCY_DAILY_ID:
+            frequency_divider = 365
+        elif payment_frequency_id == FREQUENCY_SEMI_ANNUALLY_ID:
+            frequency_divider = 2
+        elif payment_frequency_id == FREQUENCY_MONTHLY_ID:
+            frequency_divider = 12
+        else:
+            frequency_divider = 1
+
+        total_premium = 0
+        for benefit in self.policy_benefit_query:
+            premium_db_query = DBSession.query(PolicyBenefitPremium). \
+                filter(PolicyBenefitPremium.bln_active == True). \
+                filter(PolicyBenefitPremium.policy_benefit_id == benefit.id). \
+                first()
+            if not premium_db_query:
+                self.result = {'success': False, 'data': f'PremiumDueCalculator: No premium for PolicyBenefit with id {benefit.id}'}
+                print(f'Something went wrong, could not find premium for benefit {benefit.id}')
+                return self
+            initial_premium = premium_db_query.initial_annual_premium_amount
+            annual_increase = premium_db_query.premium_annual_increase_percentage
+            date_added = premium_db_query.added
+            years_since_started = relativedelta(self.due_date, date_added).years
+
+            present_value_annual_premium = float(initial_premium) * ((1 + (float(annual_increase)/100)) ** years_since_started)  # TODO what about remainders?
+
+            net_benefit_premium = float(present_value_annual_premium) / frequency_divider * (1 + (adjustment_factor/100))
+
+            total_premium += net_benefit_premium
+
+        self.total_premium_amount = total_premium
+        return self
+
+    def return_premium_amount(self):
+        if not self.result:
+            self.result = {'success': True, 'data': self.total_premium_amount}
+        return self.result
+
+
+class InitialiseDebitOrderRun:
+
+    def __init__(self, payment_provider_id, due_date):
+        self.payment_provider_id = payment_provider_id
+        self.due_date = due_date
+        self.available_debit_order_run = None
+        self.pending_debit_order_transactions = None
+
+    def set_do_runs_to_collection_phase(self):
+        """method checks today's date and compares to all DO runs"""
+        DO_STATE_COLLECTION = TYPEUTIL.get_id_of_name('debit_order_run_state_type', 'collection')
+        today_date = datetime.today().date()
+        do_run_query = DBSession.query(DebitOrderRun). \
+            filter(DebitOrderRun.bln_active == True). \
+            filter(DebitOrderRun.start_date == today_date.strftime("%Y-%m-%d")). \
+            filter(DebitOrderRun.debit_order_run_state_type_id != DO_STATE_COLLECTION). \
+            all()
+        for do_run in do_run_query:
+            do_run.debit_order_run_state_type_id = DO_STATE_COLLECTION
+            DBSession.flush()
+        return self
+
+    def set_do_runs_to_lead_phase(self):  # TODO need to fix this
+        """method checks today's date and compares to all DO runs"""
+        DO_STATE_LEAD = TYPEUTIL.get_id_of_name('debit_order_run_state_type', 'lead')
+        today_date = datetime.today().date()
+        payment_provider_lead_time = PaymentProviderLeadTime.by_attr_first('payment_provider_id', self.payment_provider_id)
+        if not payment_provider_lead_time:
+            print(f'No PaymentProviderLeadTime by attr payment_provider_id: {self.payment_provider_id}')
+            return self
+        lead_time = payment_provider_lead_time.days
+        lead_time_end_date = today_date + relativedelta(days=lead_time)
+        do_run_query = DBSession.query(DebitOrderRun). \
+            filter(DebitOrderRun.bln_active == True). \
+            filter(DebitOrderRun.end_date == lead_time_end_date.strftime("%Y-%m-%d")). \
+            filter(DebitOrderRun.debit_order_run_state_type_id != DO_STATE_LEAD). \
+            all()
+        for do_run in do_run_query:
+            do_run.debit_order_run_state_type_id = DO_STATE_LEAD
+            DBSession.flush()
+        return self
+
+    def set_do_runs_to_completed_phase(self):
+        """method checks today's date and compares to all DO runs"""
+        DO_STATE_COMPLETED = TYPEUTIL.get_id_of_name('debit_order_run_state_type', 'completed')
+        today_date = datetime.today().date()
+        do_run_query = DBSession.query(DebitOrderRun). \
+            filter(DebitOrderRun.bln_active == True). \
+            filter(DebitOrderRun.end_date == today_date.strftime("%Y-%m-%d")). \
+            filter(DebitOrderRun.debit_order_run_state_type_id != DO_STATE_COMPLETED). \
+            all()
+        for do_run in do_run_query:
+            do_run.debit_order_run_state_type_id = DO_STATE_COMPLETED
+            DBSession.flush()
+        return self
+
+    def __get_list_of_debit_order_run_setups(self):
+        do_run_setups_query = DBSession.query(PaymentProviderDebitOrderRunSetup.id). \
+            filter(PaymentProviderDebitOrderRunSetup.bln_active == True). \
+            filter(PaymentProviderDebitOrderRunSetup.payment_provider_id == self.payment_provider_id). \
+            filter(PaymentProviderDebitOrderRunSetup.run_start_day_of_month <= self.due_date.day). \
+            all()
+        list_of_setups = [value for value in do_run_setups_query]
+        return list_of_setups
+
+    def get_latest_available_debit_order_run(self):
+        """Note that if the current DO run is in lead time then we need to allocate to the next DO run"""  # TODO need to think about this
+        DO_STATE_LEAD = TYPEUTIL.get_id_of_name('debit_order_run_state_type', 'lead')
+        DO_STATE_COMPLETED = TYPEUTIL.get_id_of_name('debit_order_run_state_type', 'completed')
+        list_of_setups = self.__get_list_of_debit_order_run_setups()
+        current_do_run_query = DBSession.query(DebitOrderRun). \
+            filter(DebitOrderRun.bln_active == True). \
+            filter(DebitOrderRun.payment_provider_debit_order_run_setup_id.in_(list_of_setups)). \
+            filter(DebitOrderRun.debit_order_run_state_type_id != DO_STATE_LEAD). \
+            filter(DebitOrderRun.debit_order_run_state_type_id != DO_STATE_COMPLETED). \
+            filter(DebitOrderRun.end_date >= self.due_date.strftime("%Y-%m-%d")). \
+            order_by(desc(DebitOrderRun.start_date)). \
+            first()
+        self.available_debit_order_run = current_do_run_query
+        return self
+
+    def gather_pending_debit_order_transactions(self):
+        TRANSACTION_STATE_PENDING_ID = TYPEUTIL.get_id_of_name('transaction_state_type', 'pending')
+        TRANSACTION_TYPE_PAYMENT_RECEIVED_ID = TYPEUTIL.get_id_of_name('transaction_type', 'payment_received')
+        pending_transactions = DBSession.query(Transaction). \
+            filter(Transaction.bln_active == True). \
+            filter(Transaction.transaction_state_type_id == TRANSACTION_STATE_PENDING_ID). \
+            filter(Transaction.transaction_type_id == TRANSACTION_TYPE_PAYMENT_RECEIVED_ID). \
+            all()
+
+        debit_order_transaction_dict = {}
+        PAYMENT_RECEIVED_TYPE_DEBIT_ORDER_ID = TYPEUTIL.get_id_of_name('payment_received_type', 'debit_order')
+        for transaction in pending_transactions:
+            transaction_type_payment_received = TransactionTypePaymentReceived.by_attr_first('transaction_id', transaction.id)
+            if not transaction_type_payment_received:
+                print(f'No TransactionTypePaymentReceived by attr transaction_di: {transaction.id}')
+                return False
+            if transaction_type_payment_received.payment_received_type_id != PAYMENT_RECEIVED_TYPE_DEBIT_ORDER_ID:
+                continue
+            transaction_type_payment_received_debit_order = TransactionTypePaymentReceivedDebitOrder.by_attr_first('transaction_type_payment_received_id', transaction_type_payment_received.id)
+            if not transaction_type_payment_received_debit_order:
+                print(f'No TransactionPaymentReceivedDebitOrder by attr transaction_type_payment_received_id: {transaction_type_payment_received.id}')
+                return False
+            if transaction_type_payment_received_debit_order.payment_provider_id != self.payment_provider_id:
+                continue
+            due_date = transaction_type_payment_received_debit_order.due_date
+            debit_order_transaction_dict.update({transaction.id: due_date})
+        self.pending_debit_order_transactions = debit_order_transaction_dict
+        return self
+
+    def assign_transactions_to_debit_order_run(self):
+        current_do_run = self.available_debit_order_run
+        if not current_do_run:
+            return {'success': False, 'data': 'No Debit Order Run Available'}
+        end_date = current_do_run.end_date
+        TRANSACTION_STATE_PROCESSED_ID = TYPEUTIL.get_id_of_name('transaction_state_type', 'processed')
+        for transaction_id, due_date in self.pending_debit_order_transactions.items():
+            if due_date <= end_date:
+                transaction_debit_order_run_link = TransactionDebitOrderRunLink()
+                transaction_debit_order_run_link.debit_order_run_id = current_do_run.id
+                transaction_debit_order_run_link.transaction_id = transaction_id
+                DBSession.add(transaction_debit_order_run_link)
+                DBSession.flush()
+
+                transaction = Transaction.by_id(transaction_id)
+                transaction.transaction_state_type_id = TRANSACTION_STATE_PROCESSED_ID
+                DBSession.flush()

@@ -1,0 +1,20 @@
+# -*- coding: utf-8 -*-
+"""Utilities Controller"""
+
+from tg import expose
+
+from calabash.model import *
+from calabash.lib.html_utils import *
+from calabash.lib.base import BaseController
+from calabash.lib.type_utils import TypeDictionary
+
+import calabash.lib.vault_utils as VAULT
+
+TYPEDICT = TypeDictionary()
+
+class UtilitiesController(BaseController):
+
+    @expose('json')
+    def get_person_identity_types(self, *args, **kwargs):
+        outputlist = VAULT.get_person_identity_types()
+        return success_response(outputlist)

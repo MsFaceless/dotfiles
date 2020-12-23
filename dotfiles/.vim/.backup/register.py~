@@ -1,0 +1,1007 @@
+# -*- coding: utf-8 -*-
+"""Register controller module"""
+
+import qrcode, transaction
+
+from tg import predicates, expose, require, redirect, validate, \
+        flash, url, request, response, predicates
+
+from calmerchant_app.model import *
+from calmerchant_app.lib.base import BaseController
+from calmerchant_app.lib.tg_utils import *
+from calmerchant_app.lib.tg_decorators import time_it, CustomNotAnonymous
+from calmerchant_app.lib.gateway_utils import *
+from calmerchant_app.controllers.useraccess import UserController
+from calmerchant_app.controllers.common import CommonController
+from calmerchant_app.lib.email_creator import MerchantEmailCreator
+from calmerchant_app.lib.rsa_luhn_id_algo import get_rsa_id_dict
+from sqlalchemy import func, desc, asc, or_
+
+from dotenv import dotenv_values
+env_vars = dotenv_values()
+
+WEBSITE_URL = env_vars.get('WEBSITE_URL', None)
+FILENAME = os.path.abspath(resource_filename('calmerchant_app', 'public'))
+PUBLIC_DIRNAME = os.path.join(FILENAME)
+IMAGES_DIRNAME = os.path.join(PUBLIC_DIRNAME, 'img')
+
+COMMON = CommonController()
+USERCONT = UserController()
+
+class RegisterController(BaseController):
+
+    @expose('calmerchant_app.templates.prelogin')
+    def index(self, *args, **kwargs):
+        register_form = self.get_register_form()
+        html = f"""
+        <div class="container">
+            <div class="header-body">
+                <div class="row align-items-center">
+                    <div class="col-lg-6 col-12 mx-md-auto overlay-card-container">
+                        <h2 class="card-title text-white mt-4 text-center">Register as a Merchant</h2>
+                        <h5 class="text-white text-center p-3">
+                            Register to join the merchant network that rewards your customers out of the box.
+                        </h5>
+                        <div class="card bg-secondary shadow border-0 login-card">
+                            <div id="formDiv" class="card-body bg-white px-lg-5 py-lg-5">
+                                <div id="loadingDiv" style="display:none;">
+                                    <div class="d-flex align-items-center">
+                                        <div class="spinner-border text-primary" role="status"></div>
+                                        <span class="ml-2">
+                                            Processing...
+                                        </span>
+                                    </div>
+                                </div>
+                                <div id="errorMessage" style="display:none;">
+                                    <h3><strong>Oops!</strong></h3>
+                                    <span class="errorText">Something went wrong, please try again.</span>
+                                    <button id="retryBtn" type="button" class="btn btn-danger btn-block mt-4 text-white">Try Again</button>
+                                </div>
+                                {register_form}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        javascript = """
+            $('#retryBtn').click(function(){
+                $('#errorMessage').slideUp('slow');
+                $('#registerForm').slideDown('slow');
+                return false;
+            });
+        """
+        bg_image = "/img/prelogin/photo-15.jpg"
+        return dict(title='CΛLΛBΛSH Merchant', html=html, javascript=javascript, bg_image=bg_image, website_url=WEBSITE_URL)
+
+    def get_register_form(self, *args, **kwargs):
+        username_dict = {
+            'input_id': 'username',
+            'fa_icon': 'fas fa-key',
+            'input_wrapper_class': 'mb-4',
+            'input_type': 'text',
+            'input_attrs': 'placeholder="Username" required',
+            'input_val': ''
+        }
+        email_dict = {
+            'input_id': 'email',
+            'fa_icon': 'far fa-envelope',
+            'input_wrapper_class': 'mb-4',
+            'input_type': 'email',
+            'input_attrs': 'placeholder="Email" required',
+            'input_val': ''
+        }
+        mobile_dict = {
+            'input_id': 'mobile',
+            'fa_icon': 'fas fa-mobile-alt',
+            'input_wrapper_class': 'mb-4',
+            'input_attrs': 'placeholder="Mobile number" required',
+            'input_val': ''
+        }
+        password_dict = {
+            'input_type': 'widget',
+            'widget': self.reset_inputs()
+        }
+        accept_dict = {
+            'input_type': 'widget',
+            'widget': '''
+            <div class="custom-control custom-checkbox mb-5 ml-9px">
+                <input class="custom-control-input" name="accept" id="acceptCheck" type="checkbox" disabled>
+                <label class="custom-control-label" for="acceptCheck">
+                    <span>I accept the <a href="/terms">Terms and Conditions</a></span>
+                </label>
+            </div>
+            '''
+        }
+        action_dict = {
+            'input_type': 'widget',
+            'widget': '<button id="registerBtn" class="btn btn-primary btn-block" disabled>Register</button>'
+        }
+        params_list = [
+            username_dict,
+            email_dict,
+            mobile_dict,
+            password_dict,
+            accept_dict,
+            action_dict,
+        ]
+        javascript = """
+        <script>
+            var registerForm = $('#registerForm');
+            setFormValidation(registerForm);
+            var loadingDiv = $('#loadingDiv');
+            $('#registerBtn').click(function(e){
+                e.preventDefault();
+                var valid = FormIsValid(registerForm);
+                if(valid){
+                    var kwargs = {
+                        'mobile_number': $('#mobile').val(),
+                    }
+                    $.post('/register/send_otp', kwargs, function(resp){
+                        var otp_result = JSON.parse(resp);
+                        if (otp_result.success === true){
+                            const OTPSwal = Swal.mixin({
+                                customClass: {
+                                    cancelButton: 'btn btn-danger',
+                                    confirmButton: 'btn btn-primary'
+                                },
+                                buttonsStyling: false
+                            });
+
+                            OTPSwal.fire({
+                                title: 'Confirm OTP',
+                                text: "You will receive an SMS with an One-time PIN, please confirm it here.",
+                                input: 'text',
+                                inputAttributes: {
+                                    autocapitalize: 'off'
+                                },
+                                showCancelButton: true,
+                                confirmButtonText: 'Confirm',
+                                showLoaderOnConfirm: true,
+                                reverseButtons: true,
+                                preConfirm: (otp) => {
+                                    kwargs['otp'] = otp
+                                    $.post('/register/confirm_otp', kwargs, function(data){
+                                        var result = JSON.parse(data);
+                                        if(result.success === true){
+                                            registerMerchant();
+                                        } else {
+                                            reportError(result.message);
+                                        }
+                                    })
+                                },
+                            })
+                        } else {
+                            reportError(result.message);
+                        }
+                    })
+                }
+
+            });
+
+            var reportError = function(message){
+                const ErrorSwal = Swal.mixin({
+                    customClass: {
+                        confirmButton: 'btn btn-danger'
+                    },
+                    buttonsStyling: false
+                });
+
+                ErrorSwal.fire({
+                    title: 'Oops!',
+                    text: message,
+                    icon: 'error',
+                    confirmButtonText: 'Retry'
+                });
+                return false;
+            }
+
+            var registerMerchant = function(){
+                var valid = FormIsValid(registerForm);
+                if(valid){
+                    $('#registerForm').slideUp('slow');
+                    loadingDiv.slideDown('slow');
+                    var formserial = getFormData(registerForm);
+                    $.post('/register/register_merchant', formserial, function(data){
+                        var result = JSON.parse(data);
+                        if (result.success){
+                            $.redirect('/login_handler?login='+formserial.username+'&password='+formserial.password);
+                        } else {
+                            $('#errorMessage .errorText').text(result.message);
+                            loadingDiv.slideUp('slow');
+                            $('#errorMessage').slideDown('slow');
+                        }
+                        return false;
+                    });
+                }
+            }
+
+            var acceptCheck = $('#acceptCheck');
+            $(document).on('invalid_form', function(){
+                acceptCheck.attr('disabled', 'disabled');
+            });
+            $(document).on('valid_form', function(){
+                acceptCheck.removeAttr('disabled');
+            });
+
+            var registerBtn = $('#registerBtn');
+            acceptCheck.change(function(){
+                if(acceptCheck.is(':checked')){
+                    registerBtn.removeAttr('disabled');
+                } else {
+                    registerBtn.attr('disabled', 'disabled');
+                }
+            });
+
+            var passwordField = $('input[type="password"]');
+            var viewIcon = $('.view_password');
+            $(viewIcon).click(function(){
+                var inputType = $(passwordField).attr('type');
+                if (inputType == 'password'){
+                    $(passwordField).attr('type', 'text');
+                    $(viewIcon).removeClass('far fa-eye').addClass('far fa-eye-slash');
+                    return 'false';
+                } else if (inputType == 'text'){
+                    $(passwordField).attr('type', 'password');
+                    $(viewIcon).removeClass('far fa-eye-slash').addClass('far fa-eye');
+                    return 'false';
+                };
+            });
+        </script>
+        """
+        return build_html_prepend_form('registerForm', params_list, True) + javascript
+
+    @expose()
+    def send_otp(self, *args, **kwargs):
+        result = create_mobile_otp(**kwargs)
+        if not result.get('success'):
+            message = result.get('data', 'We could process this request, please try again later.')
+            return json.dumps({'success': False, 'message': message, 'status': 'danger'})
+        return json.dumps({'success': True, 'message': 'OTP sent', 'status': 'success'})
+
+    @expose()
+    def confirm_otp(self, *args, **kwargs):
+        result = confirm_mobile_otp(**kwargs)
+        if not result.get('success'):
+            message = result.get('data', 'We could process this request, please try again later.')
+            return json.dumps({'success': False, 'message': message, 'status': 'danger'})
+        return json.dumps({'success': True})
+
+    def reset_inputs(self, *args, **kwargs):
+        positive = kwargs.get('positive', 'far fa-check-circle')
+        negative = kwargs.get('negative', 'far fa-times-circle')
+        min_length = kwargs.get('min_length', 10)
+        max_length = kwargs.get('max_length', 128)
+        html = f"""
+            <div class="form-group password mb-4">
+                <div class="input-group input-group-alternative">
+                    <div class="input-group-prepend">
+                        <span class="input-group-text">
+                            <i class="fas fa-unlock-alt" aria-hidden="true"></i>
+                        </span>
+                    </div>
+                    <input id="newPassword" type="password" class="form-control" placeholder="Password" style="transition: all 0.15s ease 0s;"
+                        name="password" autocomplete="new-password" data-min-length="{min_length}" data-max-length="{max_length}">
+                    <div class="input-group-append">
+                        <span class="input-group-text"><i class="far fa-eye view_password"></i></span>
+                    </div>
+                </div>
+            </div>
+            <div class="input-group form-group">
+                <span class="policy_text">
+                    <b>Password should </b>
+                    <ul class="mb-0">
+                        <li id="length">
+                            be at least 10 characters long
+                            <i class="{positive} text-success" hidden></i>
+                            <i class="{negative} text-danger" hidden></i>
+                        </li>
+                        <li id="uppercase">
+                            contain at least one uppercase character
+                            <i class="{positive} text-success" hidden></i>
+                            <i class="{negative} text-danger" hidden></i>
+                        </li>
+                        <li id="lower">
+                            contain at least one lowercase character
+                            <i class="{positive} text-success" hidden></i>
+                            <i class="{negative} text-danger" hidden></i>
+                        </li>
+                        <li id="special">
+                            contain at least one special character
+                            <i class="{positive} text-success" hidden></i>
+                            <i class="{negative} text-danger" hidden></i>
+                        </li>
+                        <li id="digit">
+                            contain at least one digit
+                            <i class="{positive} text-success" hidden></i>
+                            <i class="{negative} text-danger" hidden></i>
+                        </li>
+                    </ul>
+                </span>
+            </div>
+
+            <div class="form-group password mb-4">
+                <div class="input-group input-group-alternative">
+                    <div class="input-group-prepend">
+                        <span class="input-group-text">
+                            <i class="fas fa-check-double" aria-hidden="true"></i>
+                        </span>
+                    </div>
+                    <input id="confirmPassword" type="password" class="form-control" placeholder="Confirm New Password" style="transition: all 0.15s ease 0s;"
+                        autocomplete="new-password" minlength="{min_length}" maxlength="{max_length}">
+                    <div class="input-group-append">
+                        <span class="input-group-text"><i class="far fa-eye view_password"></i></span>
+                    </div>
+                </div>
+                <small class="confirmPassword error text-danger" style="display: none;">Passwords don't match.</small>
+            </div>
+        """
+        javascript = """
+        <script>
+            var newPassword = $('#newPassword');
+            var confirmPassword = $('#confirmPassword');
+
+            var minLength = parseInt(newPassword.data('minLength'));
+            var maxLength = parseInt(newPassword.data('maxLength'));
+
+            var lengthRegex = new RegExp("^([a-zA-Z0-9!,%,&,@,#,$,^,*,?,_,~_-]){"+minLength+","+maxLength+"}$");
+            var _length, _lower, _upper, _digit, _special, _count;
+            _length = _lower = _upper = _digit = _special =  _count = false;
+
+            $(function(){
+                newPassword.keyup(function(e){
+
+                    var pass = newPassword.val();
+
+                    _upper = validatePassword(/[A-Z]/g, 'uppercase');
+                    _lower = validatePassword(/[a-z]/g, 'lower');
+                    _digit = validatePassword(/[0-9]/g, 'digit');
+                    _special = validatePassword(/([!,%,&,@,#,$,^,*,?,_,~])/g, 'special');
+                    _length = validatePassword(lengthRegex, 'length');
+
+                    if (_length && _lower && _upper && _digit && _special){
+                        $('#confirmPassword').removeAttr('disabled');
+                        newPassword.addClass('is-valid')
+                            .removeClass('is-invalid');
+                    } else {
+                        $('#confirmPassword').attr('disabled');
+                        newPassword.addClass('is-invalid')
+                            .removeClass('is-valid');
+                    }
+
+                    function validatePassword(pattern, selector, checkVar){
+                        if(pass.match(pattern)) {
+                            $('#'+selector+' .fa-check-circle').removeAttr('hidden');
+                            $('#'+selector+' .fa-times-circle').attr('hidden', 'hidden');
+                            return true;
+                        } else {
+                            $('#'+selector+' .fa-check-circle').attr('hidden', 'hidden');
+                            $('#'+selector+' .fa-times-circle').removeAttr('hidden');
+                            return false;
+                        }
+                    };
+                });
+
+                confirmPassword.keyup(function(e){
+                    var _this = $(e.currentTarget);
+                    var pass = newPassword.val();
+                    var confpass = $(_this).val();
+                    var btnChangePassword = $('#btnChangePassword');
+                    if(pass == confpass){
+                        btnChangePassword.removeAttr('disabled');
+                        _this.removeClass('is-invalid')
+                            .addClass('is-valid');
+                        $('.confirmPassword.error').fadeOut('slow');
+                            //.attr('hidden', 'hidden');
+                        $(document).trigger('valid_form');
+
+                    }else{
+                        btnChangePassword.attr('disabled', 'disabled');
+                        _this.removeClass('is-valid')
+                            .addClass('is-invalid');
+                        $('.confirmPassword.error').fadeIn('slow');
+                        $(document).trigger('invalid_form');
+                    }
+                });
+            })
+        </script>
+        """
+        return html + javascript
+
+    @expose()
+    def register_merchant(self, *args, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            return json.dumps({'success': False, 'message': "The 'username' field is a required field to continue.", 'status': 'danger'})
+
+        username_exists = DBSession.query(User). \
+            filter(User.username == username). \
+            first() # Search ALL users to disallow deactivated users to just sign up again
+        if username_exists:
+            return json.dumps({
+                'success': False,
+                'message': 'The username you chose is already in use, please select another.',
+                'status': 'danger'
+            })
+
+        email = kwargs.get('email', None)
+        if not email:
+            return json.dumps({'success': False, 'message': "The 'email' field is a required field to continue.", 'status': 'danger'})
+
+        email_exists = DBSession.query(User). \
+            filter(User.email == email). \
+            first() # Search ALL users to disallow deactivated users to just sign up again
+        if email_exists:
+            return json.dumps({
+                'success': False,
+                'message': 'The email you chose is already in use, please select another.',
+                'status': 'danger'
+            })
+
+        mobile = kwargs.get('mobile', None)
+        if not mobile:
+            return json.dumps({'success': False, 'message': "The 'mobile' field is a required field to continue.", 'status': 'danger'})
+
+        mobile_exists = DBSession.query(User). \
+            filter(User.mobile == mobile). \
+            first() # Search ALL users to disallow deactivated users to just sign up again
+        if mobile_exists:
+            return json.dumps({
+                'success': False,
+                'message': 'The mobile number you chose is already in use, please select another.',
+                'status': 'danger'
+            })
+        password = kwargs.get('password', None)
+        if not password:
+            return json.dumps({'success': False, 'message': "The 'password' field is a required field to continue.", 'status': 'danger'})
+
+        this = User()
+        this.username = username
+        this.email = email
+        this.mobile = mobile
+        this.password = password
+        this.myimali_username = get_random_string(16)
+        DBSession.add(this)
+        DBSession.flush()
+        return json.dumps({'success': True, 'message': 'Welcome to Calabash, please complete the wizard to get set up.', 'status': 'danger'})
+
+    @require(CustomNotAnonymous())
+    @expose('calmerchant_app.templates.generic')
+    def wizard(self, *args, **kwargs):
+        step = COMMON.get_registration_stage()
+
+        # if step > 3:
+            # return redirect('/')
+
+        register_active = 'active' if step == 1 else ''
+        account_active = 'active' if step == 2 else ''
+        docs_active = 'active' if step == 3 else ''
+
+        html = get_wizard_html(
+            wizard_id = 'register_wizard',
+            title = "Let's get to know your business",
+            sub_title = 'We will need a little more info to get you going.',
+            tab_list = [
+                {
+                    'step_id': 'register',
+                    'nav_title': 'Business info',
+                    'nav_icon': 'fas fa-building',
+                    'active': register_active,
+                    'tab_content': self.get_registration_form()
+                },
+                {
+                    'step_id': 'linkAccount',
+                    'nav_title': 'Bank Account',
+                    'nav_icon': 'fas fa-piggy-bank',
+                    'active': account_active,
+                    'tab_content': self.get_bank_account_form()
+                },
+                {
+                    'step_id': 'docs',
+                    'nav_title': 'Upload documents',
+                    'nav_icon': 'fas fa-file-upload',
+                    'active': docs_active,
+                    'tab_content': self.get_docs_form()
+                }
+            ]
+        )
+
+        javascript = """
+            createWizard(
+                // selector
+                '.card-wizard',
+
+                // onNext
+                function (tab, navigation, index) {
+                    var wizard = this;
+                    if(index == 1) {
+                        submitReg();
+                        return false;
+
+                    } else if (index == 2){
+                        linkBankAccount();
+                        return false;
+
+                    } else {
+                        return false;
+                    }
+                },
+
+                // onLast
+                function (tab, navigation, index) {
+                    submitDocs();
+                    return false;
+                }
+            );
+        """
+        return dict(title="Registration | Calabash", html=html, javascript=javascript)
+
+    @expose()
+    def validate_rsa_id(self, *args, **kwargs):
+        identity_number = kwargs.get('identity_number', None)
+        if not identity_number:
+            return json.dumps({'success': False, 'message': 'No Identity number present', 'status': 'success'})
+        result = get_rsa_id_dict(identity_number)
+        luhn_check = result.get('luhn_check', False)
+        if not luhn_check:
+            return json.dumps({'success': False, 'message': f'Failed to validate identity number: {identity_number}', 'status': 'danger'})
+        return json.dumps({'success': True, 'message': 'Id number valid', 'status': 'success'})
+
+
+    def get_registration_form(self, *args, **kwargs):
+        reg_inputs = COMMON.get_reg_inputs()
+        account_holder_inputs = COMMON.get_account_holder_inputs()
+        html = f"""
+        <form id="registration_form">
+            {reg_inputs}
+            {account_holder_inputs}
+        </form>
+        """
+        javascript = """
+        <script>
+            var registrationForm = $('#registration_form');
+            setFormValidation(registrationForm);
+
+            var submitReg = function(){
+                var passport_checked = $('input[type="radio"][value="passport"]').is(':checked');
+                var identity_checked = $('input[type="radio"][value="identity"]').is(':checked');
+
+                if(identity_checked){
+                    var kwargs = 'identity_number='+$('input[name="identity_number"').val();
+
+                    $.get('/register/validate_rsa_id?'+ kwargs, function(data){
+
+
+                        var id_result = JSON.parse(data);
+                        if(id_result.success === true){
+                            submitRegistrationForm();
+
+                        } else {
+                            var validator = registrationForm.validate();
+                            errors = {identity_number: 'Please supply a valid South Africa identity number'};
+                            validator.showErrors(errors);
+                            return false;
+                        }
+                    })
+                } else if (passport_checked){
+                    submitRegistrationForm();
+                }
+            };
+
+            function submitRegistrationForm(){
+                $('#dialogdiv').load('/processing_dialog');
+                var valid = FormIsValid(registrationForm);
+                if(valid){
+                    var formserial = getFormData(registrationForm);
+                    $.post('/register/submit_registration', formserial, function(data){
+                        var result = JSON.parse(data);
+                        if(result.success === true){
+                            $('#notifdiv').load('/home/get_notifications_html');
+                            $('#docsForm').load('/register/get_document_form_inputs', function(){return false;});
+                            $('#sidebar').load('/home/get_sidebar_html', function(data){return false;});
+                            $(document).trigger('modalClose');
+                            $('.nav-link[href="#linkAccount"]').trigger('click');
+                            return false;
+                        };
+                        return false;
+                    });
+                    return false;
+                }
+            }
+        </script>
+        """
+        return html + javascript
+
+    @expose()
+    def submit_registration(self, *args, **kwargs):
+        outputdict = {'success': False, 'message': 'Something went wrong, please try again.', 'status': 'danger'}
+        if not request.identity:
+            return json.dumps(outputdict)
+
+        usernow = request.identity.get('user', {})
+        email = kwargs.get('email', None)
+
+        myimali_username = get_random_string(16)
+        kwargs['username'] = myimali_username
+
+        password = get_random_string(16)
+        kwargs['password'] = password
+
+        kwargs['sendMail'] = False
+        kwargs['email'] = usernow.email
+        kwargs['mobile'] = usernow.mobile
+        kwargs['preferred_name'] = kwargs.get('company_name', None)
+
+        response = register_merchant(kwargs)
+        if not response.get('success'):
+            return json.dumps(outputdict)
+
+        data = response.get('data', None)
+        if not data:
+            return json.dumps(outputdict)
+
+        myimali_reference = data.get('REF', None)
+        if not myimali_reference:
+            return json.dumps(outputdict)
+
+        # Search ALL users to disallow deactivated users to just sign up again
+        merchant_exists = DBSession.query(User). \
+            filter(User.email == email). \
+            first()
+        if merchant_exists:
+            outputdict['message'] = 'The email you chose is already in use, please select another.'
+            return json.dumps(outputdict)
+
+        address_id = COMMON.get_or_create_address(**kwargs)
+        if not address_id:
+            outputdict['message'] = 'Please ensure that all required fields are completed to continue.'
+            return json.dumps(outputdict)
+
+        this = User.by_user_id(usernow.user_id)
+
+        other = kwargs.get('other', None)
+        industry_id = kwargs.get('industry_id', None)
+        if not industry_id:
+            kwargs['industry_id'] = this.industry_id
+
+        sub_industry_id = kwargs.get('sub_industry_id', None)
+        if not sub_industry_id:
+            kwargs['sub_industry_id'] = this.sub_industry_id
+
+        if other:
+            self.get_or_create_sub_industry_id(**kwargs)
+
+        this.name = kwargs.get('firstName', None)
+        this.surname = kwargs.get('surname', None)
+        this.display_name = f'{this.name} {this.surname}'
+        this.identity_number = kwargs.get('identity_number', None)
+        this.passport_number = kwargs.get('passport_number', None)
+        this.bln_kyced = False
+        this.bln_kyc_pending = False
+        this.myimali_username = myimali_username
+        this.myimali_reference = myimali_reference
+        this.mobile = kwargs.get('mobile', None)
+        this.store_name = kwargs.get('store_name', None)
+        this.company_name = kwargs.get('company_name', None)
+        this.trading_name = kwargs.get('trading_name', None)
+        this.merchant_type_id = kwargs.get('merchant_type_id', None)
+        this.registration_number = kwargs.get('registration_number', None)
+        this.industry_id = industry_id
+        this.sub_industry_id = kwargs.get('sub_industry_id', None)
+        this.vat_number = kwargs.get('vat_number', None)
+        this.address_id = address_id
+        this.age = str_to_int(kwargs.get('age', 0))
+        this.gender = kwargs.get('gender', None)
+        this.date_of_issue = str_to_date(kwargs.get('date_of_issue', None))
+        this.date_of_birth = str_to_date(kwargs.get('date_of_birth', None))
+        this.date_of_expiry = str_to_date(kwargs.get('date_of_expiry', None))
+        this.citizenship = kwargs.get('citizenship', None)
+        this.created = datetime.now()
+        this.active = True
+        DBSession.flush()
+        return json.dumps({'success': True, 'data': this.user_id})
+
+    @expose()
+    def get_bank_account_form(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+        bank_accounts = BankAccount.by_attr_all('added_by', usernow.user_id)
+        bank_account = None
+        if bank_accounts and len(bank_accounts) == 1:
+            bank_account = bank_accounts[0]
+        doc_inputs = COMMON.get_bank_account_inputs(bank_account)
+        html = f"""
+        <form id="bank_account_form">
+            {doc_inputs}
+        </form>
+        """
+        javascript = """
+        <script>
+            var linkBankAccount = function(){
+                $('#dialogdiv').load('/processing_dialog');
+                var bank_account_form = $('#bank_account_form');
+                setFormValidation(bank_account_form);
+                var valid = FormIsValid(bank_account_form);
+                if(valid){
+                    var formserial = getFormData(bank_account_form);
+                    formserial['branch_code'] = $('#bank_type_id option:selected').data('branchCode');
+                    $.post('/payment/save_bank_account', formserial, function(data){
+                        var result = JSON.parse(data);
+                        if(result.success === true){
+                            $('#notifdiv').load('/home/get_notifications_html');
+                            $('#sidebar').load('/home/get_sidebar_html', function(data){return false;});
+                            $(document).trigger('modalClose');
+                            $('.nav-link[href="#docs"]').trigger('click');
+                        };
+                        return false;
+                    });
+                }
+            };
+        </script>
+        """
+        return html + javascript
+
+    @expose()
+    def get_industry_sub_type(self, *args, **kwargs):
+        return COMMON.get_industry_sub_type(**kwargs)
+
+    @expose()
+    def get_docs_form(self, *args, **kwargs):
+        doc_inputs = self.get_document_form_inputs()
+        html = f"""
+        <form id="docsForm">
+            {doc_inputs}
+        </form>
+        """
+        javascript = """
+        <script>
+            var kycForm = $('#docsForm');
+            setFormValidation(kycForm);
+            var submitDocs = function(){
+                var valid = FormIsValid(kycForm);
+                if(valid){
+                    var form = $('#docsForm')[0];
+                    var data = new FormData(form);
+                    $.ajax({
+                        type: "POST",
+                        enctype: 'multipart/form-data',
+                        url: "/register/submit_documents",
+                        data: data,
+                        processData: false,
+                        contentType: false,
+                        cache: false,
+                        timeout: 600000,
+                        success: function (data) {
+                            var result = JSON.parse(data);
+                            console.log(result);
+
+                            if(result.success === true){
+                                $('#notifdiv').load('/home/get_notifications_html', function(){
+                                    $.redirect('/');
+                                });
+                            } else {
+                                $('#sidebar').load('/home/get_sidebar_html', function(data){
+                                    $('#progressModal').modal('hide');
+                                    showNotification(result.status, result.message);
+                                    return false;
+                                });
+                            }
+                            return false;
+                        },
+                        xhr: function() {
+                            $('#dialogdiv').load('/register/progress_dialog', function(data){
+                                return false;
+                            });
+                            var xhr = $.ajaxSettings.xhr();
+                            xhr.upload.onprogress = function(e) {
+                                var progressBar = $('.progress-bar');
+                                var valNow = Math.floor(e.loaded / e.total * 100);
+                                progressBar.css('width', valNow + '%')
+                                    .attr('aria-valuenow', valNow)
+                                    .text('Uploading ' + valNow + '%');
+                            }
+                            xhr.upload.onloadend = function(e) {
+                                $('#progressDiv').load('/register/get_modal_spinner');
+                            }
+                            return xhr;
+                        }
+                    });
+                }
+            }
+        </script>
+        """
+        return html + javascript
+
+    @expose()
+    def get_modal_spinner(self, *args, **kwargs):
+        return COMMON.get_modal_spinner()
+
+    @expose()
+    def get_document_form_inputs(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+        doc_dict = COMMON.get_merchant_documents()
+
+        photo = doc_dict.get('photo', {})
+        photo_file_dict = {
+            'input_wrapper_class': '',
+            'label_attrs': 'required',
+            'label_val': 'Clear photo of yourself (selfie)',
+            'input_type': 'custom',
+            'input_field': create_fileinput_html(**{
+                'input_id': 'photo',
+                'include_js': False,
+                'existing_filename': photo.get('filename', ''),
+                'status_label': photo.get('status_label', 'pending'),
+                })
+        }
+
+        address = doc_dict.get('address', {})
+        address_file_dict = {
+            'input_wrapper_class': '',
+            'label_attrs': 'required',
+            'label_val': 'Proof of address (Not older than 6 months)',
+            'input_type': 'custom',
+            'input_field': create_fileinput_html(**{
+                'input_id': 'address',
+                'include_js': False,
+                'existing_filename': address.get('filename', ''),
+                'status_label': address.get('status_label', 'pending'),
+                })
+            }
+        sole_prop_id = COMMON.get_type_id(MerchantType, 'Sole Proprietor (Private Individual)')
+        name_status = 'your own name' if usernow.merchant_type_id == sole_prop_id else 'the name of the business'
+        account = doc_dict.get('account', {})
+        account_file_dict = {
+            'input_wrapper_class': '',
+            'label_attrs': 'required',
+            'label_val': f'Proof of Bank Account (Not older than 6 months & Bank account must be in {name_status})',
+            'input_attrs': 'required',
+            'input_type': 'custom',
+            'input_field': create_fileinput_html(**{
+                'input_id': 'account',
+                'include_js': False,
+                'existing_filename': account.get('filename', ''),
+                'status_label': account.get('status_label', 'pending'),
+                })
+            }
+        document = doc_dict.get('document', {})
+        document_file_dict = {
+            'input_wrapper_class': '',
+            'label_attrs': 'required',
+            'label_val': 'Certified copy of Id',
+            'input_attrs': 'required',
+            'input_type': 'custom',
+            'input_field': create_fileinput_html(**{
+                'input_id': 'document',
+                'include_js': False,
+                'existing_filename': document.get('filename', ''),
+                'status_label': document.get('status_label', 'pending'),
+                })
+            }
+        params_list = [
+            photo_file_dict,
+            address_file_dict,
+            document_file_dict,
+            account_file_dict
+        ]
+        return build_html_form_inputs(params_list)
+
+    def get_or_create_industry_id(self, *args, **kwargs):
+        industry_other_id = COMMON.get_type_id(MerchantIndustry, 'Other (Please Supply)')
+        if not industry_other_id: return None
+
+        industry_id = kwargs.get('industry_id', None)
+        if not industry_id: return None
+
+        industry_id = int(industry_id)
+
+        if industry_id == industry_other_id:
+            industry = kwargs.get('industry', None)
+            exists = DBSession.query(MerchantIndustry). \
+                filter(func.lower(MerchantIndustry.name) == industry.strip().lower()). \
+                filter(MerchantIndustry.active == True). \
+                first()
+            if exists:
+                return exists.id
+            else:
+                new = MerchantIndustry()
+                new.name = industry
+                new.bln_custom = True
+                DBSession.add(new)
+                DBSession.flush()
+                return new.id
+        return industry_id
+
+    def get_or_create_sub_industry_id(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+        industry_id = kwargs.get('industry_id', None)
+        if not industry_id: return None
+
+        sub_industry_id = kwargs.get('sub_industry_id', None)
+        if not sub_industry_id: return None
+
+        sub_industry = MerchantSubIndustry.by_id(sub_industry_id)
+        if not sub_industry.name == 'Other (Please Supply)':
+            return sub_industry_id
+
+        other = kwargs.get('other', None)
+        if not other: return None
+
+        other_exists = DBSession.query(MerchantSubIndustry).\
+            filter(MerchantSubIndustry.industry_id == industry_id).\
+            filter(MerchantSubIndustry.name == other).\
+            first()
+
+        if other_exists:
+            return other_exists.id
+        else:
+            industry = MerchantIndustry.by_id(industry_id)
+            this = MerchantSubIndustry()
+            this.industry_id = industry_id
+            this.name = other
+            this.icon = industry.icon
+            this.bln_custom = True
+            this.added_by = usernow.user_id
+            this.added = datetime.now()
+            this.active = True
+            DBSession.add(this)
+            DBSession.flush()
+            return this.id
+
+    @expose()
+    def submit_documents(self, *args, **kwargs):
+        return COMMON.submit_documents(**kwargs)
+
+    def update_user(self, *args, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            return {'success': False, 'message': 'Username not present'}
+
+        user = User.by_myimali_username(username)
+        if not user:
+            return {'success': False, 'message': "Couldn't find the find the user by the myimali username"}
+
+        user.email = kwargs.get('email', None)
+        user.merchant_type_id = kwargs.get('merchant_type_id', None)
+        user.industry_id = kwargs.get('industry_id', None)
+        user.company_name = kwargs.get('company_name', '')
+        user.trading_name = kwargs.get('trading_name', '')
+        user.store_name = kwargs.get('store_name', '')
+        user.registration_number = kwargs.get('registration_number', '')
+        user.address_line1 = kwargs.get('address_line1', '')
+        user.address_suburb = kwargs.get('address_suburb', '')
+        user.address_city = kwargs.get('address_city', '')
+        user.address_province = kwargs.get('address_province', '')
+        user.address_postal_code = kwargs.get('address_postal_code', '')
+        DBSession.flush()
+        return {'success': True, 'data': user.user_id}
+
+    @expose()
+    def progress_dialog(self, *args, **kwargs):
+        html = f"""
+        <div id="progressModal" class="modal" tabindex="-1" role="dialog">
+            <div class="modal-dialog modal-dialog-centered" role="document">
+                <div class="modal-content">
+                    <div class="modal-header border-bottom-0">
+                        <h5 class="modal-title">Progress</h5>
+                    </div>
+                    <div class="modal-body">
+                        <div id="progressDiv">
+                            <div class="progress" style="height: 20px;">
+                                <div class="progress-bar bg-success" role="progressbar" style="width: 0%;" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer border-top-0">
+                        <button id="modalCancelBtn" type="button" data-dismiss="modal" class="btn btn-primary">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        javascript = """
+        <script>
+            $('#progressModal').modal({'backdrop': 'static'});
+        </script>
+     	"""
+        return html + javascript

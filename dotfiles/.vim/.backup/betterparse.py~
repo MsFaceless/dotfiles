@@ -1,0 +1,182 @@
+import os
+from datetime import datetime
+from operator import itemgetter
+
+def parse_filename(filename=None):
+    if not filename: 
+        return False
+
+    file_data = {}
+    is_alert = False
+    
+    file_data_str, extension = filename.split(".")
+    file_data_list = file_data_str.split("_")
+    file_data['is_alert'] = False
+
+    if filename.startswith('ALERT'): is_alert = True
+    if is_alert:
+        device_id = file_data_list[1]
+        datestamp = file_data_list[7]
+        timestamp = file_data_list[8]
+        channel = file_data_list[2]
+        lat = file_data_list[4]
+        lon = file_data_list[5]
+        speed = file_data_list[6]
+        channel = int(channel)
+        alert_message = file_data_list[3]
+        file_data['alert_reason'] = alert_message
+        file_data['is_alert'] = True
+        file_data['filename'] = filename
+        file_data['speed'] = speed
+        file_data['latitude'] = float(lat)/1000000
+        file_data['longitude'] = float(lon)/1000000
+    else:
+        device_id = file_data_list[0]
+        datestamp = file_data_list[1]
+        timestamp = file_data_list[2]
+        channel = file_data_list[3]
+        channel = int(channel[1])
+        file_data['filename'] = filename
+
+    file_data['device_number'] = device_id
+
+    file_data['datetime_string'] = f"{datestamp}_{timestamp}"
+    file_data['datetime'] = datetime.strptime(f"{datestamp}_{timestamp}", "%Y%m%d_%H%M%S")
+
+    file_data['channel'] = channel
+    file_data['extension'] = extension
+    return file_data
+
+class Sequence(dict):
+    def __init__(self, day=None, device_id=None, sequence_number=0):
+        if not day or not device_id: raise Exception
+        self['sequence_number'] = sequence_number
+        if self['sequence_number'] == 0: self['sequence_number'] = 1
+        else: self['sequence_number'] += 1
+
+        self['is_closed'] = False
+        self['channels'] = []
+        self['day'] = day
+        self['device_id'] = device_id
+        self['start_timestamp'] = None
+        self['records'] = {}
+
+    def add_channel(self, channel=None):
+        if not channel: return False
+        channels = self.get('channels', [])
+        if not channel in channels: channels.append(channel)
+        return True
+
+    def add_record(self, record=None):
+        if self['is_closed']: return False
+        if not record: return False 
+        timestamp = record.get('timestamp')
+        datestamp = record.get('datestamp')
+        is_alert = record.get('is_alert')
+        alert_reason = record.get('alert_reason')
+        channel = int(record.get('channel'))
+        self.add_channel(channel=channel)
+        if not self.get('start_timestamp', None):
+            self['start_timestamp'] = timestamp
+            self['start'] = record
+            self['start_channel'] = channel
+        elif channel == self['start_channel'] and alert_reason == 'MOVING': 
+            self.set_previous_record_sequence_close()
+        else: self.append_normal_record(record=record)
+
+    def set_previous_record_sequence_close(self):
+        records_dict = self.get('records', {})
+        if len(records_dict.keys()) == 0:
+            self.append_normal_record(record=self.get('start'))
+        previous_record_key = [key for key in self.get('records').keys()][-1]
+        previous_record = self.get('records').get(previous_record_key)
+        self.close_sequence(record=previous_record)
+        return True
+
+    def close_sequence(self, record=None):
+        if not record: return False
+        self['is_closed'] = True
+        timestamp = record.get('timestamp')
+        self['end'] = record
+        self['end_timestamp'] = timestamp
+        channel = int(record.get('channel'))
+        self['end_channel'] = channel
+        return True
+
+    def append_normal_record(self, record=None):
+        if self['is_closed']: return False
+        if not record: return False
+
+        timestamp = record.get('timestamp')
+        datestamp = record.get('datestamp')
+        channel = int(record.get('channel'))
+
+        frame_id = (channel, timestamp)
+        self['records'][frame_id] = record
+        return True
+
+def parse_directory_filenames_to_daysdict(target_dir=None):
+    if not target_dir or not os.path.exists(target_dir): return False
+    daysdict = {}
+    for filename in os.listdir(target_dir):
+        record = parse_filename(filename)
+        datestamp_string = record.get('datetime').strftime("%Y%m%d")
+        if not daysdict.get(datestamp_string): daysdict[datestamp_string] = []
+        daysdict[datestamp_string].append(record)
+    return daysdict
+
+def parse_daysdict_to_day_device_dict(daysdict=None):
+    if not daysdict: return False
+    day_device_dict = {day:{} for day, _ in daysdict.items()}
+    for day, recordlist in daysdict.items():
+        for record in recordlist:
+            device_number = record.get("device_number")
+            if not day_device_dict.get(day).get(device_number): 
+                day_device_dict[day][device_number] = []
+            day_device_dict[day][device_number].append(record)
+    return day_device_dict
+
+def parse_day_device_dict_to_day_device_sequence_dict(day=None, device_id=None, record_list=None):
+    if not day or not device_id or not record_list: return False
+    day_device_sequence_dict = {}
+    sorted_record_list = sorted(record_list, key=itemgetter("timestamp_string"))
+    sequence = Sequence(day=day, device_id=device_id)
+    for record in sorted_record_list:
+        is_closed = sequence.get('is_closed')
+        if is_closed:
+            day_device_sequence_dict[sequence['sequence_number']] = sequence
+            sequence = Sequence(day=day, device_id=device_id, sequence_number=sequence['sequence_number'])
+        sequence.add_record(record=record)
+    return day_device_sequence_dict
+
+def parse_directory_to_device_channel_dict(target_dir=None):
+    if not target_dir or not os.path.exists(target_dir): return False
+    devices_dict = {}
+
+    for filename in os.listdir(target_dir):
+        record = parse_filename(filename)
+        device_number = record.get('device_number', None)
+        device_dict = devices_dict.get(device_number, None)
+        if not device_dict: device_dict = {}
+        devices_dict[device_number] = device_dict
+
+        channel = record.get('channel', None)
+        channel_frame_list = device_dict.get(channel, [])
+        if not channel_frame_list: 
+            device_dict[channel] = channel_frame_list
+        channel_frame_list.append(record)
+        device_dict[channel] = channel_frame_list
+    return devices_dict
+
+def parse_directory_to_device_frames_dict(target_dir=None):
+    if not target_dir or not os.path.exists(target_dir): return False
+    device_frames_dict = {}
+    parsed_files = [parse_filename(filename) for filename in os.listdir(target_dir)] 
+    sorted_parsed_files = sorted(parsed_files, key=itemgetter('datetime'))
+
+    for frame_record in sorted_parsed_files:
+        device_number = frame_record.get('device_number', None)
+        frame_list = device_frames_dict.get(device_number, [])
+        frame_list.append(frame_record)
+        device_frames_dict[device_number] = frame_list
+    return device_frames_dict

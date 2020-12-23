@@ -1,0 +1,1180 @@
+# -*- coding: utf-8 -*-
+"""
+File: dmscont.py
+Author: Jayson Geldenhuys
+Company: JIST ISS
+Email: jayson at jist dot co dot za
+Github: Not yet
+Description: Document Management System Controller
+"""
+
+import os
+from datetime import datetime
+from tg import expose, redirect, validate, flash, url, request, response
+from pkg_resources import resource_filename
+
+from hardware_catalogue.lib.base import BaseController
+from hardware_catalogue.lib.jist_utils import get_divs_package_random, get_selectbox_id_text, build_generic_html_table
+from hardware_catalogue.lib.jist_generic_reportlab import JistPDFCreator, Paragraph
+from hardware_catalogue.controllers.dbquerycont import DatabaseQueryController
+
+FILENAME = os.path.abspath(resource_filename('hardware_catalogue', 'public'))
+PUBLIC_DIRNAME = os.path.join(FILENAME)
+PDF_DIRNAME = os.path.join(PUBLIC_DIRNAME, 'pdf')
+IMAGES_DIRNAME = os.path.join(PUBLIC_DIRNAME, 'images')
+STAFFPIC_DIRNAME = os.path.join(IMAGES_DIRNAME, 'staff_pictures')
+
+__all__ = ['DMSController']
+
+
+class DMSController(BaseController):
+    # Uncomment this line if your controller requires an authenticated user
+    # allow_only = predicates.not_anonymous()
+
+    def __init__(self, *args, **kwargs):
+        self.dbquerycont = DatabaseQueryController()
+
+####################
+# TABS INIT
+####################
+
+    @expose('hardware_catalogue.templates.dms_index')
+    def dms_console(self):
+        html = """
+        <h2 class='modal-content'>DMS Console</h2>
+        <div id="dialogdiv" style="display: none"></div>
+        <div id="dms_tabs">
+            <ul>
+                <li style='display: none'><a href="#ui-tabs_index"><span></span>DMS Index</a></li>
+                <li><a href="#ui-tabs_ViewUploads"><span></span>Document Store</a></li>
+            </ul>
+            <div id="ui-tabs_index"> </div>
+            <div id="ui-tabs_ViewUploads">
+                <div id="div_dms_view_uploads"></div>
+                <div id="div_dms_search_cabinet"></div>
+                <div id="div_dms_uploads1"> </div>
+                <div id="div_dms_uploads2"></div>
+            </div>
+        </div>
+        """
+        javascript = """
+        $('#dms_tabs').tabs({
+            beforeLoad: function( event, ui ) {
+                ui.jqXHR.error(function() {
+                    ui.newPanel.html("Couldn't load this tab." + "Its you or the program.... Try Again.");
+                });
+            },
+            spinner: "<img src ='/images/ui-anim_basic_16x16.gif'></img>",
+            activate: function(event, ui){
+                var current_tab_id = ui.newPanel.attr('id');
+                if (current_tab_id == 'ui-tabs_ViewUploads'){
+                    $("#div_dms_view_uploads").load("/dmscont/get_dmscabinets_by_user_html", function(data){ return false; });
+                }
+            },
+        });
+        $('#dms_tabs').tabs({active: 0});
+        $('#dms_tabs').tabs({active: 1});
+        """
+        return dict(page='Console Admin', html=html, javascript=javascript)
+
+####################
+# TABS CONTENT
+####################
+
+    @expose('hardware_catalogue.templates.dmsconsole_admin')
+    def dms_console_admin(self, **named):
+        html = """
+        <h2 class='modal-content'>DMS Console Admin</h2>
+        <div id="dialogdiv" style="display: none"></div>
+        <div id="dms_admin_tabs">
+                <ul>
+                <li style='display: none'><a href="#tabs-1"><span></span>DMS Index</a></li>
+                <li><a href="#ui-tabs-Cabinets"><span></span>Cabinets</a></li>
+                <li><a href="#ui-tabs-Drawers"><span></span>Drawers</a></li>
+                <li><a href="#ui-tabs-Cabinets_Permission"><span></span>Cabinet Permissions</a></li>
+                <li><a href="#ui-tabs-Drawers_Permission"><span></span>Drawer Permissions</a></li>
+                </ul>
+            <div id="tabs-1"> </div>
+                <div id="ui-tabs-Cabinets">
+                <div id='div_dms_cabinets_main'></div>
+            </div>
+            <div id="ui-tabs-Drawers">
+                <div id='div_dms_drawers_main'></div>
+            </div>
+            <div id="ui-tabs-Cabinets_Permission">
+                <div id='div_dms_cabinet_permission'></div>
+            </div>
+            <div id="ui-tabs-Drawers_Permission">
+                <div id='div_dms_drawers_permission'></div>
+            </div>
+        </div>
+        """
+        javascript = """
+        $('#dms_admin_tabs').tabs({
+            beforeLoad: function( event, ui ) {
+                ui.jqXHR.error(function() {
+                    ui.newPanel.html("Couldn't load this tab." + "Its you or the program.... Try Again.");
+                });
+            },
+            spinner: "<img src ='/images/ui-anim_basic_16x16.gif'></img>",
+            activate: function(event, ui){
+                var current_tab_id = ui.newPanel.attr('id');
+                if (current_tab_id == 'ui-tabs-Cabinets'){
+                    $("#div_dms_cabinets_main").load("/dmscont/get_all_cabinets", function(data){ return false; });
+                }
+                if (current_tab_id == 'ui-tabs-Cabinets_Permission'){
+                    $("#div_dms_cabinet_permission").load("/dmscont/get_cabinet_userlink_html", function(data){ return false; });
+                }
+            },
+        });
+        $('#dms_admin_tabs').tabs({active: 0});
+        $('#dms_admin_tabs').tabs({active: 1});
+        """
+        return dict(page='DMS Admin', html=html, javascript=javascript)
+
+    @expose()
+    def get_all_cabinets(self, *args, **kwargs):
+        cabinets = self.dbquerycont.get_tbldms_cabinets_active_all()
+        outputlist=[]
+        for cat in cabinets:
+            outputlist.append({'id':cat.id,
+                               'cabinet_name':cat.cabinet_name,
+                               'active':cat.active,
+                               'edit':"<img class='edit_cabinet' cabinet_id='{0}' src='/images/editor-48.png'></img>".format(cat.id),
+                               'open':"<img class='open_cabinet' cabinet_id='{0}' id='{0}' src='/images/opensign_48.png'></img>".format(cat.id),
+                               })
+        headers =["ID", "Cabinet Name", "Active", "Edit", "Open"]
+        dictlist = ['id', 'cabinet_name', 'active', 'edit', 'open']
+        headerwidths=[40, '', 50, 50, 50, 80, 80, 80, 50, 50, 50, 30, 30]
+        tdclassnames=['tdcenteralign', '', '', 'tdspacercenter', 'tdspacercenter', '', '', '', '', '', '', '', 'tdspacer', '', '', 'tdrightalign']
+        tblname = 'tbl_dms_all_cabinets'
+        htmltbl = build_generic_html_table(dictlist, headers, headerwidths, outputlist, tdclassnames, tblname=tblname)
+        header = """<h4 class="modal-content"> Company Wide Cabinets <span class='spanright'> {0} cabinets</span></h4>""".format(len(outputlist))
+        button_new = """<fieldset id='searchbar'><button id='new_cabinet'>New Cabinet</button><button id='user_cabinet'>Set Users Cabinet</button></fieldset>"""
+        javascript = """
+        <script>
+          $("#new_cabinet").button();
+          $("#new_cabinet").click(function(){
+                var drawer_id = $(this).attr('drawer_id');
+                $("#dialogdiv").load("/dmscont/get_dialog_add_cabinet_new", function(data){
+                    return false;
+                });
+          });
+          $("#user_cabinet").button();
+          $("#user_cabinet").click(function(){
+                $.post("/dbquerycont/set_user_drawer", function(data) { return false; });
+          });
+          $(".open_cabinet").click(function(){
+                var cabinet_id = $(this).attr('cabinet_id');
+                $("#div_dms_drawers_main").load("/dmscont/get_all_drawers?cabinet_id="+cabinet_id, function(data){
+                    $("#dms_admin_tabs").tabs({active: 2})
+                    return false;
+                });
+          });
+          $(".edit_cabinet").click(function(){
+                var cabinet_id = $(this).attr('cabinet_id');
+                $("#dialogdiv").load("/dmscont/get_dialog_edit_cabinet?cabinet_id="+cabinet_id, function(data){
+                    return false;
+                });
+          });
+        </script> """
+        return button_new + header + htmltbl + javascript
+
+    @expose()
+    def get_dialog_add_cabinet_new(self, *args, **kwargs):
+        html = """
+        <div id="dialog_new_cabinet" title="Add New Cabinet">
+            <form id="dialog_new_cabinet_frm">
+                <fieldset>
+                <label for="">Cabinet Name</label>
+                <input type="text" name="new_cabinet_name" id="new_cabinet_name" required/><br/>
+            </fieldset>
+            </form>
+        </div> """
+        javascript = """
+        <script>
+         var name = '#dialog_new_cabinet_frm';
+         JistFormValidation(name)
+        $("#dialog_new_cabinet").dialog({
+            width: 550,
+            //height: 280,
+            modal: true,
+            buttons: {
+                "Save": function() {
+                     var valid = JistFormIsValid(name);
+                     if(valid){
+                        var formserial = $("#dialog_new_cabinet_frm").serialize();
+                        $.post("/dbquerycont/save_new_cabinet?"+formserial, function(data) {
+                            $("#div_dms_cabinets_main").load("/dmscont/get_all_cabinets?"+formserial, function(data){ return false; });
+                        });
+                        $( this ).dialog("close");
+                     }
+                },
+                Close: function() { $( this ).dialog("close"); }
+            },
+            close: function() { $(this).remove(); }
+        });
+        $("#dialog_search_file").dialog("open");
+        </script> """
+        return html + javascript
+
+    @expose()
+    def get_dialog_edit_cabinet(self, *args, **kwargs):
+        cabinet = self.dbquerycont.get_tbldms_cabinet_by_cabinet_id(**kwargs)
+        html = """
+        <div id="dialog_edit_cabinet" title="Edit Cabinet">
+            <form id="dialog_edit_cabinet_frm">
+                <fieldset>
+                <label for="">Cabinet ID</label>
+                <input type="text" value="{0}" name="edit_cabinet_id" id="edit_cabinet_id"/><br/>
+                <label for="">Cabinet Name</label>
+                <input type="text" value="{1}" name="edit_cabinet_name" id="edit_cabinet_name" required/><br/>
+            </fieldset>
+            </form>
+        </div> """.format(cabinet.id, cabinet.cabinet_name)
+        javascript = """
+        <script>
+         var name = '#dialog_edit_cabinet_frm';
+         JistFormValidation(name)
+        $("#edit_cabinet_id").prop('disabled', true);
+        $("#dialog_edit_cabinet").dialog({
+            width: 550,
+            //height: 280,
+            modal: true,
+            buttons: {
+                "Save": function() {
+                     var valid = JistFormIsValid(name);
+                     if(valid){
+                        $("#edit_cabinet_id").prop('disabled', false);
+                        var formserial = $("#dialog_edit_cabinet_frm").serialize();
+                        $.post("/dbquerycont/save_edit_cabinet?"+formserial, function(data) {
+                            $("#div_dms_cabinets_main").load("/dmscont/get_all_cabinets?"+formserial, function(data){ return false; });
+                        });
+                        $( this ).dialog("close");
+                     }
+                },
+                Close: function() { $( this ).dialog("close"); }
+            },
+            close: function() { $(this).remove(); }
+        });
+        $("#dialog_edit_cabinet").dialog("open");
+        </script> """
+        return html + javascript
+
+    @expose()
+    def get_all_drawers(self, *args, **kwargs):
+        drawers = self.dbquerycont.get_tbldms_drawers_by_cabinet_id(**kwargs)
+        cabinet = self.dbquerycont.get_tbldms_cabinet_by_cabinet_id(**kwargs)
+        outputlist=[]
+        for cat in drawers:
+            outputlist.append({'id':cat.id,
+                               'drawer_name':cat.drawer_name,
+                               'active':cat.active,
+                               'open':"<img class='open_drawer' drawer_id='{0}' src='/images/opensign_48.png'></img>".format(cat.id),
+                               'edit':"<img class='edit_drawer' drawer_id='{0}' src='/images/editor-48.png'></img>".format(cat.id),
+                               })
+        headers =["ID", "Drawer Name", 'Active', 'Edit']
+        dictlist = ['id', 'drawer_name', 'active', 'edit']
+        headerwidths=[40, '', 50, 50, 80, 80, 80, 50, 50, 50, 30, 30]
+        tdclassnames=['tdcenteralign', '', 'tdspacercenter', 'tdspacer', '', '', '', '', '', '', 'tdspacer', '', '', 'tdrightalign']
+        tblname = 'tbl_dms_drawers'
+        htmltbl = build_generic_html_table(dictlist, headers, headerwidths, outputlist, tdclassnames, tblname=tblname)
+        header = """<h4 class="modal-content"> Drawers in Cabinet: {1} <span class='spanright'> {0} drawers</span></h4>""".format(len(outputlist), cabinet.cabinet_name)
+        button_new = """<fieldset id='searchbar'><button id='new_drawer' cabinet_id='{0}'>New Drawer</button></fieldset>""".format(cabinet.id)
+        javascript = """
+        <script>
+          $("#new_drawer").button();
+          $("#new_drawer").click(function(){
+                var cabinet_id = $(this).attr('cabinet_id');
+                $("#dialogdiv").load("/dmscont/get_dialog_add_drawer_new?cabinet_id="+cabinet_id, function(data){ return false; });
+          });
+          $(".edit_drawer").click(function(){
+                var drawer_id = $(this).attr('drawer_id');
+                $("#dialogdiv").load("/dmscont/get_dialog_edit_drawer?drawer_id="+drawer_id, function(data){ return false; });
+          });
+        </script>"""
+        return button_new + header + htmltbl + javascript
+
+    @expose()
+    def get_dialog_add_drawer_new(self, *args, **kwargs):
+        html = """
+        <div id="dialog_new_drawer" title="Add New Drawer">
+            <form id="dialog_new_drawer_frm">
+                <fieldset>
+                <label for="">Cabinet ID</label>
+                <input type="text" name="cabinet_id" id="cabinet_id" value='{0}'/><br/>
+                <label for="">Drawer Name</label>
+                <input type="text" name="new_drawer_name" id="new_drawer_name" required/><br/>
+            </fieldset>
+            </form>
+        </div> """.format(kwargs.get('cabinet_id', None))
+        javascript = """
+        <script>
+             var name = '#dialog_new_drawer_frm';
+             JistFormValidation(name)
+            $("#cabinet_id").prop('disabled', true);
+            $("#dialog_new_drawer").dialog({
+                width: 550,
+                //height: 280,
+                modal: true,
+                buttons: {
+                    "Save": function() {
+                     var valid = JistFormIsValid(name);
+                     if(valid){
+                        $("#cabinet_id").prop('disabled', false);
+                        var formserial = $("#dialog_new_drawer_frm").serialize();
+                        var cabinet_id = $("#cabinet_id").val();
+                        $.post("/dbquerycont/save_new_drawer?"+formserial, function(data) {
+                            $("#div_dms_drawers_main").load("/dmscont/get_all_drawers?cabinet_id="+cabinet_id, function(data){});
+                            return false;
+                        });
+                        $( this ).dialog("close");
+                     }
+                    },
+                    Close: function() { $( this ).dialog("close"); }
+                },
+                close: function() { $(this).remove(); }
+            });
+            $("#dialog_new_drawer").dialog("open");
+        </script> """
+        return html + javascript
+
+    @expose()
+    def get_dialog_edit_drawer(self, *args, **kwargs):
+        drawer = self.dbquerycont.get_tbldms_drawer_by_drawer_id(**kwargs)
+        html = """
+        <div id="dialog_edit_drawer" title="Edit Drawer">
+            <form id="dialog_edit_drawer_frm">
+                <fieldset>
+                <label for="">Cabinet ID</label>
+                <input type="text" name="cabinet_id" id="cabinet_id" value='{0}'/><br/>
+                <label for="">Drawer ID</label>
+                <input type="text" name="drawer_id" id="drawer_id" value='{2}'/><br/>
+                <label for="">Drawer Name</label>
+                <input type="text" value='{1}' name="edit_drawer_name" id="edit_drawer_name"/><br/>
+            </fieldset>
+            </form>
+        </div> """.format(drawer.cabinet_id, drawer.drawer_name, drawer.id)
+        javascript = """
+        <script>
+         var name = '#dialog_edit_drawer_frm';
+         JistFormValidation(name)
+            $("#cabinet_id").prop('disabled', true);
+            $("#drawer_id").prop('disabled', true);
+            $("#dialog_edit_drawer").dialog({
+                width: 550,
+                //height: 380,
+                modal: true,
+                buttons: {
+                    "Save": function() {
+                         var valid = JistFormIsValid(name);
+                         if(valid){
+                            $("#cabinet_id").prop('disabled', false);
+                            $("#drawer_id").prop('disabled', false);
+                            var formserial = $("#dialog_edit_drawer_frm").serialize();
+                            var cabinet_id = $("#cabinet_id").val();
+                            $.post("/dbquerycont/save_edit_drawer?"+formserial, function(data) {
+                                $("#div_dms_drawers_main").load("/dmscont/get_all_drawers?cabinet_id="+cabinet_id, function(data){});
+                            });
+                            $( this ).dialog("close");
+                         }
+                    },
+                    Close: function() { $( this ).dialog("close"); }
+                },
+                close: function() { $(this).remove(); }
+            });
+            $("#dialog_edit_drawer").dialog("open");
+        </script> """
+        return html + javascript
+
+    @expose()
+    def get_cabinet_userlink_html(self, *args, **kwargs):
+        cabinets = self.dbquerycont.get_tbldms_cabinets_active_all()
+        thiscabinet_txt = get_selectbox_id_text('cabinet_all',
+                [x.id for x in cabinets],
+                [x.cabinet_name for x in cabinets],
+                '-1')
+        html = """
+        <div id="new_cabinet_link" title="Choose Filing Cabinet">
+            <fieldset>
+                <label for="">Filing Cabinet</label> {0}
+                <button id='btn_choose_person_viewing'>Show Users With Access</button>
+            </fieldset>
+        </div>
+        <div id='div_permissions'></div>
+        """.format(thiscabinet_txt)
+        javascript = """
+        <style> #cabinet_all{ width: 50%; } </style>
+        <script>
+            $("#btn_choose_person_viewing").button();
+            $("#btn_choose_person_viewing").click(function(){
+                var kwargs = 'cabinet_id='+$("#cabinet_all").val();
+                $("#div_permissions").load("/dmscont/get_available_used_cabinet_permissions?"+kwargs, function(data){ });
+                $("#div_dms_drawers_permission").load("/dmscont/get_drawers_userlink_html?"+kwargs, function(data){ return false; });
+                return false;
+            });
+        </script> """
+        return html + javascript
+
+    @expose()
+    def get_available_used_cabinet_permissions(self, *args, **kwargs):
+        cabinet = self.dbquerycont.get_tbldms_cabinet_by_cabinet_id(**kwargs)
+        available, used = self.get_available_used_permissions_by_cabinet_id(*args, **kwargs)
+        html = """
+        <h4 class='modal-content'>Active Cabinet: {0} </h4>
+        <div class='split' id='available'>
+            <h4 class='modal-content'>Available Users (Click to Add)</h4>
+            {1}</div>
+        <div class='split' id='used'>
+            <h4 class='modal-content'>Linked Users (Click to Remove)</h4>
+            {2}</div> """.format(cabinet.cabinet_name, available, used)
+        javascript = """
+        <script>
+        $("#available .btn_cabinet_user_link").click(function(){
+            var user_id = $(this).attr('user_id');
+            var cabinet_id = $(this).attr('cabinet_id');
+            var kwargs = 'user_id='+user_id+'&cabinet_id='+cabinet_id
+            $.post("/dbquerycont/link_cabinet_to_jistuser?"+kwargs, function(data) {
+                $("#div_permissions").load("/dmscont/get_available_used_cabinet_permissions?"+kwargs, function(data){ });
+                $("#div_dms_drawers_permission").load("/dmscont/get_drawers_userlink_html?"+kwargs, function(data){ return false; });
+                return false;
+            });
+        })
+        $("#used .btn_cabinet_user_link").click(function(){
+            var user_id = $(this).attr('user_id');
+            var cabinet_id = $(this).attr('cabinet_id');
+            var kwargs = 'user_id='+user_id+'&cabinet_id='+cabinet_id
+            $.post("/dbquerycont/unlink_cabinet_to_jistuser?"+kwargs, function(data) {
+                $("#div_permissions").load("/dmscont/get_available_used_cabinet_permissions?"+kwargs, function(data){ });
+                $("#div_dms_drawers_permission").load("/dmscont/get_drawers_userlink_html?"+kwargs, function(data){ return false; });
+                return false;
+            });
+        })
+        </script> """
+        return html + javascript
+
+    @expose()
+    def get_available_used_permissions_by_cabinet_id(self, *args, **kwargs):
+        cabinet_id = kwargs.get('cabinet_id', None)
+        all_active_users_list = self.dbquerycont.get_active_user_list()
+        cabinet_user_list = self.dbquerycont.get_tbldms_cabinet_user_links(**kwargs)
+        cabinet_user_idlist = [int(x.user_id) for x in cabinet_user_list]
+        available_output, used_output = '', ''
+        for user in all_active_users_list:
+            button = """
+            <div class='btn_group btn_cabinet_user_link' user_id='{0}' cabinet_id='{1}'> {0}: {2} </div>
+            """.format(user.user_id, cabinet_id, user.display_name)
+            if int(user.user_id) in cabinet_user_idlist:
+                used_output += button
+            else:
+                available_output += button
+        return available_output, used_output
+
+    @expose()
+    def get_cabinet_drawers_html(self, *args, **kwargs):
+        cabinet_id = kwargs.get('cabinet_id', None)
+        drawers_list = self.dbquerycont.get_tbldms_drawers_by_cabinet_id(**kwargs)
+        html = ''
+        for drawer in drawers_list:
+            button = """
+            <button class='btn_cabinet_drawers' drawer_id='{0}' cabinet_id='{1}' >{2}</button>
+            """.format(drawer.id, cabinet_id, drawer.drawer_name)
+            html += button
+        return html
+
+    @expose()
+    def get_drawers_userlink_html(self, *args, **kwargs):
+        drawer_name = None
+        drawer = self.dbquerycont.get_tbldms_drawer_by_drawer_id(**kwargs)
+        if drawer: drawer_name = drawer.drawer_name
+        cabinet = self.dbquerycont.get_tbldms_cabinet_by_cabinet_id(**kwargs)
+        cabinet_drawers_html = self.get_cabinet_drawers_html(**kwargs)
+        available, used = self.get_available_used_draweruserlinks_by_cabinet_id(*args, **kwargs)
+        html = """
+        <fieldset id='searchbar'>{3}</fieldset>
+        <h4 class='modal-content'>Active Cabinet: {0} </h4>
+        <div class='split' id='available'>
+            <h4 class='modal-content'>Available Users (Click to Add)</h4>
+            {1}</div>
+        <div class='split' id='used'>
+            <h4 class='modal-content'>Active Drawer: {4} | Linked Users (Click to Remove)</h4>
+            {2}</div> """.format(cabinet.cabinet_name, available, used, cabinet_drawers_html, drawer_name)
+        javascript = """
+        <script>
+        $(".btn_cabinet_drawers").button();
+        $(".btn_cabinet_drawers").click(function(){
+            var drawer_id = $(this).attr('drawer_id');
+            var cabinet_id = $(this).attr('cabinet_id');
+            var kwargs = 'drawer_id='+drawer_id+'&cabinet_id='+cabinet_id
+            $("#div_dms_drawers_permission").load("/dmscont/get_drawers_userlink_html?"+kwargs, function(data){ return false; });
+        });
+        $("#available .btn_drawer_user_link").click(function(){
+            var user_id = $(this).attr('user_id');
+            var drawer_id = $(this).attr('drawer_id');
+            var cabinet_id = $(this).attr('cabinet_id');
+            var kwargs = 'user_id='+user_id+'&drawer_id='+drawer_id+'&cabinet_id='+cabinet_id
+            $.post("/dbquerycont/link_drawer_to_jistuser?"+kwargs, function(data) {
+                $("#div_dms_drawers_permission").load("/dmscont/get_drawers_userlink_html?"+kwargs, function(data){ return false; });
+                return false;
+            });
+        })
+        $("#used .btn_drawer_user_link").click(function(){
+            var user_id = $(this).attr('user_id');
+            var drawer_id = $(this).attr('drawer_id');
+            var cabinet_id = $(this).attr('cabinet_id');
+            var kwargs = 'user_id='+user_id+'&drawer_id='+drawer_id+'&cabinet_id='+cabinet_id
+            $.post("/dbquerycont/unlink_drawer_to_jistuser?"+kwargs, function(data) {
+                $("#div_dms_drawers_permission").load("/dmscont/get_drawers_userlink_html?"+kwargs, function(data){ return false; });
+                return false;
+            });
+        })
+        </script> """
+        return html + javascript
+
+    @expose()
+    def get_available_used_draweruserlinks_by_cabinet_id(self, *args, **kwargs):
+        cabinet_id = kwargs.get('cabinet_id', None)
+        drawer_id = kwargs.get('drawer_id', None)
+        cabinet_user_list = self.dbquerycont.get_tbldms_cabinet_user_links(**kwargs)
+        cabinet_user_idlist = set([x.user_id for x in cabinet_user_list])
+        drawer_user_list = self.dbquerycont.get_tbldms_drawer_user_links(**kwargs)
+        drawer_user_idlist = set([int(x.user_id) for x in drawer_user_list])
+        available_output, used_output = '', ''
+        for cabuser in cabinet_user_idlist:
+            user = self.dbquerycont.get_user_by_id(**{'user_id':cabuser})
+            button = """
+            <div class='btn_group btn_drawer_user_link' user_id='{0}' cabinet_id='{1}' drawer_id='{3}'> {0}: {2} </div>
+            """.format(user.user_id, cabinet_id, user.display_name, drawer_id)
+            if int(user.user_id) in drawer_user_idlist:
+                used_output += button
+            else:
+                available_output += button
+        return available_output, used_output
+
+    @expose()
+    def get_dmscabinets_by_user_html(self, *args, **kwargs):
+        usernow = request.identity['user']
+        thiscabinet_txt = ''
+        html1 ="""<select id="cabinet_dialog_this" name="cabinet_dialog_this" >"""
+        thiscabinet_txt = thiscabinet_txt + html1
+        these_incl = self.dbquerycont.get_tbldms_user_cabinet_links(**{'user_id':usernow.user_id})
+        incl_cats = [this.cabinet_id for this in these_incl]
+        cabinets = self.dbquerycont.get_tbldms_cabinets_active_all()
+        for div in cabinets:
+            if div.id in incl_cats:
+                html2 = """<option value="%s">%s </option>"""%(div.id, div.cabinet_name)
+                thiscabinet_txt = thiscabinet_txt  + html2
+        html8 ="""</select>"""
+        thiscabinet_txt = thiscabinet_txt  + html8
+        html = """
+        <div id="dialog_choose_filing" title="Choose Filing Cabinet">
+            <form id="dialog_traffic_fine_cabinet_frm">
+                <img src="/images/file_cabinet.png"></img>
+                <label for="">Filing Cabinet</label>
+                {0}
+            <button id='btn_choose_drawer'>Open Drawers</button>
+            </form>
+        </div> """.format(thiscabinet_txt)
+        javascript = """
+         <style>
+            #cabinet_dialog_this{
+                width: 50%;
+            }
+         </style>
+         <script>
+            $("#btn_choose_drawer").button({icons: { primary: "ui-icon-folder-open"}});
+            $("#btn_choose_drawer").click(function(){
+                $("#div_dms_uploads1").empty();
+                $("#div_dms_uploads2").empty();
+                $("#div_dms_drawer_users").empty();
+                var cabinet_id = $("#cabinet_dialog_this").val();
+                $("#div_dms_uploads1").load("/dmscont/get_drawers_by_user_access?cabinet_id="+cabinet_id, function(data){
+                    return false;
+                });
+                return false;
+            });
+         </script> """
+        return html + javascript
+
+    @expose()
+    def get_drawers_by_user_access(self, *args, **kwargs):
+        usernow = request.identity['user']
+        users_for_cabinets = self.dbquerycont.get_tbldms_cabinet_user_links(**kwargs)
+        cabinet_incl_people = [this.user_id for this in users_for_cabinets]
+        if usernow.user_id not in cabinet_incl_people: return "No Access Rights to Cabinet"
+        cabinet_one = self.dbquerycont.get_tbldms_cabinet_by_cabinet_id(**kwargs)
+        activeusers = self.dbquerycont.get_active_user_list()
+        header = """<h4 class="modal-content">Drawers for {0} </h4>""".format(cabinet_one.cabinet_name)
+        html = header + """<div id="dms_sub_cabinet_accordion">"""
+        drawers = self.dbquerycont.get_tbldms_drawers_by_cabinet_id(**kwargs)
+        for sub in drawers:
+            these_incl = self.dbquerycont.get_tbldms_drawer_user_links(**{'drawer_id':sub.id})
+            incl_people = [this.user_id for this in these_incl]
+            if usernow.user_id in incl_people:
+                metadatacount = self.dbquerycont.get_tbldms_metadata_by_drawer_id_count(**{'drawer_id':sub.id})
+                htmltemp = """
+                <div class='accord_header'>
+                    <h3>{0}<span class='spanright'>{1} files</span></h3>
+                <div> """.format( sub.drawer_name, metadatacount)
+                htmlfaces = """
+                <div id="toolbar">
+                  <button id="add_dms_file_id" class="add_dms_file" drawer_id="{0}">Add File</label>
+                  <button id="search_dms_file_id" class="search_dms_file" drawer_id="{0}">Search Drawer</label>
+                  <button id="btn_drawer_people_id" class="btn_drawer_people" drawer_id="{0}">People with Access</label>
+                </div> """.format(sub.id)
+                htmllast = """ </div> </div> """
+                html += htmltemp + htmlfaces + htmllast
+        html3 = "</div>"
+        javascript_tabs = """
+         <style>
+            #div_dms_uploads1{
+                width: 24%;
+                float: left;
+                overflow-y: auto;
+                margin: 1px;
+                padding: 2px;
+                border-right: 1px solid grey;
+            }
+            #div_dms_uploads2{
+                width: 75%;
+                float: left;
+                overflow-y: auto;
+                padding: 2px;
+                margin: 1px;
+            }
+            #toolbar {
+                padding: 4px;
+                display: inline-block;
+            }
+            #toolbar button {
+                margin: 2px;
+            }
+         </style>
+         <script>
+            var icons = {
+                  header: "ui-icon-circle-arrow-e",
+                  activeHeader: "ui-icon-circle-arrow-s"
+            };
+            $("#dms_sub_cabinet_accordion") .accordion({
+                header: "h3",
+                heightStyle: 'content',
+                icons: icons,
+                active: 'false',
+                collapsible:'true',
+                event: 'click',
+            }) """
+        javascript_drawer = """
+            $(".btn_drawer_people").button({ icons: { primary: "ui-icon-person" } });
+            $(".btn_drawer_people").click(function(){
+                var drawer_id = $(this).attr('drawer_id');
+                $("#div_dms_uploads2").load("/dmscont/get_drawer_users_no_frills?drawer_id="+drawer_id, function(data){
+                    return false;
+                });
+            });
+            $(".add_dms_file").button({ icons: { primary: "ui-icon-cart" } });
+            $(".add_dms_file").click(function(){
+                var drawer_id = $(this).attr('drawer_id');
+                $("#dialogdiv").load("/dmscont/get_dialog_add_file_to_drawer?drawer_id="+drawer_id, function(data){
+                    return false;
+                });
+            });
+            $(".search_dms_file").button({ icons: { primary: "ui-icon-search" } });
+            $(".search_dms_file").click(function(){
+                var drawer_id = $(this).attr('drawer_id');
+                $("#dialogdiv").load("/dmscont/get_dialog_search_drawer?drawer_id="+drawer_id, function(data){
+                    return false;
+                });
+            });
+            </script>
+            """
+        javascript =  javascript_tabs + javascript_drawer
+        return  html + javascript
+
+    @expose()
+    def get_drawer_users_no_frills(self, *args, **kwargs):
+        this_drawer = self.dbquerycont.get_tbldms_drawer_by_drawer_id(**kwargs)
+        header = """<h4 class="modal-content">Users with Access To Drawer: {0}</h4>""".format(this_drawer.drawer_name)
+        activeusers = self.dbquerycont.get_active_user_list()
+        these_incl = self.dbquerycont.get_tbldms_drawer_user_links(**kwargs)
+        incl_people = [this.user_id for this in these_incl]
+        productionlist = []
+        for point in activeusers:
+            if point.user_id in incl_people:
+                productionlist.append({'user_id':point.user_id,
+                                       'user_name':point.user_name,
+                                       'user_hash':point.user_hash,
+                                       'display_name':point.display_name })
+        faces = self.get_people_with_access_faces(productionlist, **{'img_id':'thispicidaddview', 'img_class':'drawer_jistuserid_view'})
+        html = header + faces
+        javascript = """
+         <script>
+            ImageNotFoundHandler('.drawer_jistuserid_view');
+         </script> """
+        return html + javascript
+
+    @expose()
+    def get_dialog_add_file_to_drawer(self, *args, **kwargs):
+        usernow = request.identity['user']
+        drawer_id = kwargs.get('drawer_id',None)
+        html = """
+        <div id="dialog_upload_file" title="Upload Files">
+        <form id="upload_data_form">
+            <fieldset>
+                <label for="drawer_id">Drawer ID</label>
+                <input type="text" value='{0}' name="drawer_id" id="drawer_id"/> <br/>
+
+                <label for="file_subject">Subject: [Add a meaningful subject  !!!!!]</label> <br/>
+                <input type="text" name="file_subject" id="file_subject"/> <br/>
+
+                <label for="file_date_taken">Document Date:</label> <br/>
+                <input type="text" name="file_date" id="file_date"/> <br/>
+
+                <label for="file_description">Description / Note</label> <br/>
+                <textarea rows="5" name="file_description" id="file_description"/><br/><br/>
+
+                <div id="jquery-fine-uploader" style="display: none"> </div> <br/>
+                <button id="triggerUpload" style="display: none"> Upload now </button>
+                <button id="triggerReset" style="display: none"> Reset </button>
+            </fieldset>
+            </form>
+        </div> """.format(drawer_id)
+        javascript = """
+         <script>
+             $("#file_date").datepicker().datepicker("option", "dateFormat", "yy-mm-dd");
+             $('#file_date').val(new Date().toISOString().substring(0, 10));
+            $("#dialog_upload_file").dialog({
+                width: 550,
+                //height: 780,
+                modal: true,
+                buttons: {
+                    Close: function() {
+                        $('#drawer_id').prop('disabled', false);
+                        var cabinet_id = $("#cabinet_dialog_this").val();
+                        var drawer_id = $("#drawer_id").val();
+                        var formserial = "drawer_id="+drawer_id+"&jist_user=None&file_subject=&file_description=&doc_start_date=&file_filename=&doc_end_date=&upload_start_date=&upload_end_date=&"
+                        $("#div_dms_uploads2").load("/dmscont/get_uploaded_files?"+formserial, function(data){
+                            return false;
+                        });
+                        $("#div_dms_uploads1").load("/dmscont/get_drawers_by_user_access?cabinet_id="+cabinet_id, function(data){
+                            return false;
+                        });
+                        $( this ).dialog("close");
+                    }
+                },
+                close: function() { $(this).remove(); }
+            });
+            var jqueryuploader = $('#jquery-fine-uploader').fineUploader({
+                request: {
+                             endpoint: '/dbquerycont/uploadfile_dmsmetadata'
+                         },
+                autoUpload: false,
+                validation: {
+                    allowedExtensions: ['md', 'txt', 'pdf', 'ods', 'odp', 'odg', 'odt', 'xls', 'xlsx', 'doc', 'docx', 'jpeg', 'jpg', 'png'],
+                    sizeLimit: 5242880, // 5M = 5 * 1024 * 1024 bytes
+                    itemLimit: 5,
+                },
+                text: { uploadButton: 'Add Files To Upload List - Max 5' },
+                editFilename:  true,
+            }).on('submit', function(event, id, name){
+                $(this).fineUploader('setParams', {
+                   filedate : $("#file_date").val(),
+                   filedescription : $("#file_description").val(),
+                   filesubject : $("#file_subject").val(),
+                   drawer_id : $("#drawer_id").val()
+                });
+            }).on('complete', function(event, id, name, response){
+                if(response['success']){
+                    var formserial = $("#upload_data_form").serialize();
+                    formserial += '&jist_user=None'
+                    $("#div_dms_uploads2").load("/dmscont/get_uploaded_files?"+formserial, function(data){
+                        $("#dialog_upload_file").dialog("close");
+                        return false;
+                    });
+                }
+            });
+            $('#triggerUpload').click(function() {
+                $('#drawer_id').prop('disabled', false);
+                jqueryuploader.fineUploader('uploadStoredFiles');
+                var formserial = $("#upload_data_form").serialize();
+                return false;
+            });
+            $('#triggerClose').click(function() {
+                close();
+                return false;
+            });
+            $('#triggerReset').click(function() {
+                jqueryuploader.fineUploader('reset');
+                //$("#fileupload_tabs").tabs("refresh");
+                clear_form_elements($("#upload_data_form"));
+                return false;
+            });
+            $('#file_description').change(function(){
+                $('#jquery-fine-uploader').show();
+                $('#triggerUpload').show();
+                $('#triggerReset').show();
+                return false;
+            });
+            $('#file_subject').change(function(){
+                $('#jquery-fine-uploader').show();
+                $('#triggerUpload').show();
+                $('#triggerReset').show();
+                return false;
+            });
+            $("#file_date").datepicker().datepicker("option", "dateFormat", "yy-mm-dd");
+            $('#drawer_id').prop('disabled', true);
+            $('#triggerUpload').button();
+            $('#triggerReset').button();
+            $('#file_subject').focus();
+            var subject = $("#file_subject").val();
+            if(subject != ''){
+                $('#jquery-fine-uploader').show();
+                $('#triggerUpload').show();
+                $('#triggerReset').show();
+            };
+
+            $("#dialog_upload_file").dialog("open");
+        </script> """
+        return html + javascript
+
+    @expose()
+    def get_dialog_search_drawer(self, *args, **kwargs):
+        usernow = request.identity['user']
+        drawer_id = kwargs['drawer_id']
+        users_all = self.dbquerycont.get_active_user_list()
+        htmusers = get_selectbox_id_text('jist_user',
+                [x.user_id for x in users_all],
+                [x.user_name for x in users_all], 0)
+        html = """
+        <div id="dialog_search_file" title="Search Files">
+        <form id="search_data_form">
+            <fieldset>
+                <label for="drawer_id">Drawer ID</label>
+                <input type="text" value='{1}' name="drawer_id" id="drawer_id"/><br/>
+            </fieldset>
+            <fieldset>
+                <label for="jist_user">By User</label> {0}<br/>
+
+                <label for="file_subject">Subject</label>
+                <input type="text"  name="file_subject" id="file_subject"/><br/>
+
+                <label for="file_description">Description</label>
+                <input type="text"  name="file_description" id="file_description"/><br/>
+            </fieldset>
+            <fieldset>
+                <label for="doc_start_date">Document Date Start</label>
+                <input type="text"  name="doc_start_date" id="doc_start_date"/><br/>
+
+                <label for="doc_end_date">Document Date End </label>
+                <input type="text"  name="doc_end_date" id="doc_end_date"/><br/>
+            </fieldset>
+            <fieldset>
+                <label for="upload_start_date">Upload Date Start</label>
+                <input type="text"  name="upload_start_date" id="upload_start_date"/><br/>
+
+                <label for="upload_end_date">Upload Date End </label>
+                <input type="text"  name="upload_end_date" id="upload_end_date"/><br/>
+            </fieldset>
+            <fieldset>
+                <label for="file_filename">Original File Name</label>
+                <input type="text"  name="file_filename" id="file_filename"/><br/>
+            </fieldset>
+            </form>
+        </div> """.format(htmusers, drawer_id)
+        javascript = """
+         <script>
+            $("#drawer_id").prop('disabled', true);
+            $("#dialog_search_file").dialog({
+                width: 550,
+                //height: 750,
+                modal: true,
+                buttons: {
+                    "Search": function() {
+                        $("#drawer_id").prop('disabled', false);
+                        var formserial = $("#search_data_form").serialize();
+                        $("#div_dms_uploads2").load("/dmscont/get_uploaded_files?"+formserial, function(data){
+                            return false;
+                        });
+                        $( this ).dialog("close");
+                    },
+                    Close: function() { $( this ).dialog("close"); }
+                },
+                close: function() { $(this).remove(); }
+            });
+            $("#dialog_search_file").dialog("open");
+            $("#doc_start_date").datepicker().datepicker("option", "dateFormat", "yy-mm-dd");
+            $("#doc_end_date").datepicker().datepicker("option", "dateFormat", "yy-mm-dd");
+            $("#upload_start_date").datepicker().datepicker("option", "dateFormat", "yy-mm-dd");
+            $("#upload_end_date").datepicker().datepicker("option", "dateFormat", "yy-mm-dd");
+         </script> """
+        return html + javascript
+
+    @expose()
+    def get_uploaded_files(self, *arg, **kwargs):
+        usernow = request.identity['user']
+        if not usernow: return json.dumps({"success": False})
+        userpermissions_temp = usernow.permissions
+        userpermissions = [perm.permission_name for perm in userpermissions_temp]
+        metadata = self.dbquerycont.get_tbldms_metadata_by_drawer_id(**kwargs)
+        drawer = self.dbquerycont.get_tbldms_drawer_by_drawer_id(**kwargs)
+        outputlist=[]
+        for cat in metadata:
+            owner = self.dbquerycont.get_user_by_id(**{'user_id':cat.useridnew})
+            if usernow.user_id == cat.useridnew or 'dms_manager' in userpermissions:
+                edit = "<img id='edit_file' class='edit_file' dms_id='{0}' src='/images/editor-48.png'></img>".format(cat.id)
+                move = "<img id='move_file' class='move_file' dms_id='{0}' src='/images/transform-move48.png'></img>".format(cat.id)
+                trash = "<img id='delete_dms_item' class='delete_dms_item'  dms_id='{0}' src='/images/user-trash-48.png'></img>".format(cat.id)
+            else:
+                edit = move = trash = ''
+            download = "<img class='download_file' dms_id='{0}' src='/images/download.png'></img></a>".format(cat.id)
+            copy = "<img class ='copy_file' dms_id='{0}' src='/images/edit-copy.png'></img>".format(cat.id)
+
+            outputlist.append({'id':cat.id,
+                               'file_subject':cat.filesubject,
+                               'file_date':cat.docdate,
+                               'file_description':cat.description,
+                               'file_original_name':cat.original_file_name,
+                               'upload_date':cat.datecreated,
+                               'download': download,
+                               'copy':copy,
+                               'edit': edit,
+                               'move': move,
+                               'trash':trash,
+                               'owner':"<img class='file_owner' title='{1}' src='/images/staffpics/{0}.png'></img>".format(owner.user_hash, owner.display_name),
+                               })
+        headers =["ID", "Doc Date", "Subject", "Description", 'Original File', 'Upload Date', "Download", "Edit", "Copy", "Move", "Owner", "Delete"]
+        dictlist = ['id', 'file_date', 'file_subject', 'file_description', 'file_original_name', 'upload_date', 'download', 'edit', 'copy', 'move', 'owner', 'trash']
+        headerwidths=[40, 80, '', '', '', 80, 60, 50, 50, 50, 50, 50]
+        tdclassnames = ['tdcenteralign', '', '', '', '', '', 'tdspacercenter', 'tdspacercenter', 'tdspacercenter', 'tdspacercenter', 'tdspacercenter', 'tdspacercenter']
+        htmltbl = build_generic_html_table(dictlist, headers, headerwidths, outputlist, tdclassnames, 'DMSMetaDatahtmltbl')
+        header = """<h4 class="modal-content"> Records In Drawer: {1} <span class='spanright'> {0} records</span></h4>""".format(len(outputlist), drawer.drawer_name)
+        javascript = """
+         <script>
+          $(".copy_file").click(function(){
+            var dms_id = $(this).attr('dms_id');
+            $("#dialogdiv").load("/dmscont/copy_file?dms_id="+dms_id, function(data){ });
+          });
+          $(".edit_file").click(function(){
+            var dms_id = $(this).attr('dms_id');
+            $("#dialogdiv").load("/dmscont/edit_dms_item?dms_id="+dms_id, function(data){ });
+          });
+          $(".move_file").click(function(){
+            var dms_id = $(this).attr('dms_id');
+            $("#dialogdiv").load("/dmscont/move_file?dms_id="+dms_id, function(data){ });
+          });
+          $(".delete_dms_item").click(function(){
+            var dms_id = $(this).attr('dms_id');
+            $.post("/dbquerycont/delete_dms_file?dms_id="+dms_id, function(data){
+                $("#btn_choose_drawer").trigger('click');
+            });
+          });
+          $(".download_file").click(function(){
+            var dms_id = $(this).attr('dms_id');
+            var href = "/dbquerycont/download_dmsmetadata_file/"+dms_id
+            $.get(href, function(data){ window.location = href; });
+          });
+          ImageNotFoundHandler('.file_owner');
+         </script> """
+        return header + htmltbl + javascript
+
+    @expose()
+    def edit_dms_item(self, *arg, **kwargs):
+        dms_id = kwargs.get('dms_id',None)
+        metadata = self.dbquerycont.get_tbldms_metadata_by_dms_id(**kwargs)
+        html = """
+        <div id="dialog_edit_dms_items" title="Edit Item">
+            <form id="dialog_edit_dms_items_frm">
+                <fieldset>
+                <label for="">DMS Index</label><br/>
+                <input id='dms_id' name='dms_id' type='text' value='{0}'></input><br/>
+                <label for="">Doc Date</label><br/>
+                <input id='doc_date' name='doc_date' type='text' value='{1}'></input><br/>
+                <label for="">Subject</label><br/>
+                <input id='subject' name='subject' type='text' value='{2}'></input><br/>
+                <label for="">Desciption</label><br/>
+                <textarea rows='5' id='description' name='description'>{3}</textarea><br/>
+            </fieldset>
+            </form>
+        </div> """.format(dms_id, metadata.docdate, metadata.filesubject, metadata.description)
+        javascript = """
+        <script>
+        $("#dms_id").prop('disabled', true);
+        $("#dialog_edit_dms_items").dialog({
+            width: 550,
+            //height: 450,
+            modal: true,
+            buttons: {
+                "Save": function() {
+                    $("#dms_id").prop('disabled', false);
+                    var formserial = $("#dialog_edit_dms_items_frm").serialize();
+                    $.post("/dbquerycont/save_edit_dmsitem?"+formserial, function(data) {
+                        $("#btn_choose_drawer").trigger('click');
+                    });
+                    $( this ).dialog("close");
+                },
+                Close: function() { $( this ).dialog("close"); }
+            },
+            close: function() { $(this).remove(); }
+        });
+        $("#dialog_edit_dms_items").dialog("open");
+        var this_date = $("#doc_date").val();
+        $("#doc_date").datepicker().datepicker("option", "dateFormat", "yy-mm-dd");
+        $('#doc_date').val(this_date);
+        </script> """
+        return html + javascript
+
+    @expose()
+    def copy_file(self, *arg, **kwargs):
+        usernow = request.identity['user']
+        dms_id = kwargs['dms_id']
+        thiscabinet_txt = ''
+        html1 ="""<select id="cabinet_selected_copy" name="cabinet_selected_copy" >"""
+        thiscabinet_txt = thiscabinet_txt + html1
+        these_incl = self.dbquerycont.get_tbldms_user_cabinet_links(**{'user_id':usernow.user_id})
+        incl_cats = [this.cabinet_id for this in these_incl]
+        cabinets = self.dbquerycont.get_tbldms_cabinets_active_all()
+        for div in cabinets:
+            if div.id in incl_cats:
+                thiscabinet_txt += """<option value="%s">%s </option>"""%(div.id, div.cabinet_name)
+        thiscabinet_txt += """</select>"""
+        html = """
+        <div id="dialog_choose_filing_copy" title="Copy To Different Drawer">
+            <form id="dialog_choose_filing_copy_frm">
+                <fieldset>
+                <label for="">DMS Index</label><br/>
+                <input id='dms_id' name='dms_id' type='text' value='{1}'></input><br/>
+                <label for="">To Cabinet</label><br/>
+                {0}<br/>
+                <label for="">To Drawer</label><br/>
+                <div id="div_choose_drawers" style="display: none"></div>
+            </fieldset>
+            </form>
+        </div> """.format(thiscabinet_txt, dms_id)
+        javascript = """
+        <script>
+        $("#dms_id").prop('disabled', true);
+        $("#dialog_choose_filing_copy").dialog({
+            width: 550,
+            //height: 350,
+            modal: true,
+            buttons: {
+                "Save": function() {
+                    $("#dms_id").prop('disabled', false);
+                    var formserial = $("#dialog_choose_filing_copy_frm").serialize();
+                    $.post("/dbquerycont/save_copy_dmsitem?"+formserial, function(data) {
+                        $("#btn_choose_drawer").trigger('click');
+                    });
+                    $( this ).dialog("close");
+                },
+                Close: function() { $( this ).dialog("close"); }
+            },
+            close: function() { $(this).remove(); }
+        });
+        $("#dialog_choose_filing_copy").dialog("open");
+        $("#cabinet_selected_copy").change(function(){
+            var cabinet_id = $(this).val();
+            $("#div_choose_drawers").load("/dmscont/get_drawers_by_user_access_list?cabinet_id="+cabinet_id, function(data){
+                $("#div_choose_drawers").show('slow');
+                return false;
+            });
+        });
+        </script> """
+        return html + javascript
+
+    @expose()
+    def move_file(self, *arg, **kwargs):
+        usernow = request.identity['user']
+        dms_id = kwargs['dms_id']
+        thiscabinet_txt = ''
+        html1 ="""<select id="cabinet_selected_move" name="cabinet_selected_move" >"""
+        thiscabinet_txt = thiscabinet_txt + html1
+        these_incl = self.dbquerycont.get_tbldms_user_cabinet_links(**{'user_id':usernow.user_id})
+        incl_cats = [this.cabinet_id for this in these_incl]
+        cabinets = self.dbquerycont.get_tbldms_cabinets_active_all()
+        for div in cabinets:
+            if div.id in incl_cats:
+                thiscabinet_txt += """<option value="%s">%s </option>"""%(div.id, div.cabinet_name)
+        thiscabinet_txt += """</select>"""
+        html = """
+        <div id="dialog_choose_filing_move" title="Move To Different Drawer">
+            <form id="dialog_choose_filing_move_frm">
+                <fieldset>
+                <label for="">DMS Index</label><br/>
+                <input id='dms_id' name='dms_id' type='text' value='{1}'></input><br/>
+                <label for="">To Cabinet</label><br/>
+                {0}<br/>
+                <label for="">To Drawer</label><br/>
+                <div id="div_choose_drawers" style="display: none"></div>
+            </fieldset>
+            </form>
+        </div> """.format(thiscabinet_txt, dms_id)
+        javascript = """
+        <script>
+        $("#dms_id").prop('disabled', true);
+        $("#dialog_choose_filing_move").dialog({
+            width: 550,
+            //height: 350,
+            modal: true,
+            buttons: {
+                "Save": function() {
+                    $("#dms_id").prop('disabled', false);
+                    var formserial = $("#dialog_choose_filing_move_frm").serialize();
+                    $.post("/dbquerycont/save_move_dmsitem?"+formserial, function(data) {
+                        $("#btn_choose_drawer").trigger('click');
+                    });
+                    $( this ).dialog("close");
+                },
+                Close: function() { $( this ).dialog("close"); }
+            },
+            close: function() { $(this).remove(); }
+        });
+        $("#dialog_choose_filing_move").dialog("open");
+        $("#cabinet_selected_move").change(function(){
+            var cabinet_id = $(this).val();
+            $("#div_choose_drawers").load("/dmscont/get_drawers_by_user_access_list?cabinet_id="+cabinet_id, function(data){
+                $("#div_choose_drawers").show('slow');
+                return false;
+            });
+        });
+        </script> """
+        return html + javascript
+
+    @expose()
+    def get_drawers_by_user_access_list(self, *args, **kwargs):
+        usernow = request.identity['user']
+        html = """<select id="drawer_selected_copy" name="drawer_selected_copy" >"""
+        drawers = self.dbquerycont.get_tbldms_drawers_by_cabinet_id(**kwargs)
+        these_incl = self.dbquerycont.get_tbldms_user_drawer_links(**{'user_id':usernow.user_id})
+        incl_cats = [this.drawer_id for this in these_incl]
+        for div in drawers:
+            if div.id in incl_cats:
+                html += """<option value="%s">%s </option>"""%(div.id, div.drawer_name)
+        html += """</select>"""
+        return html
+
+    def get_people_with_access_faces(self, productionlist, **kwargs):
+        img_class = kwargs['img_class']
+        img_id = kwargs['img_id']
+        htmlfaces=''
+        for lab in productionlist:
+            htmlfaces += """
+            <ul id="gallery_staff" class="gallery ui-helper-reset ui-helper-clearfix">
+                <li> <h5>{0}</h5>
+                    <img class="{3}" userid="{1}" id="{4}" title="{0}" src="/images/staffpics/{1}.png"></img>
+                <h5>{2}</h5> </li>
+            </ul> """.format(lab['user_name'], lab['user_hash'], 'Staff Member', img_class, img_id)
+        javascript = """
+        <style>
+            #gallery_staff{
+                min-width: 100px;
+                float: left;
+                margin-right: 5px;
+                text-align: center;
+                border: 1px solid gray;
+            }
+            #gallery_staff h5{
+                margin: 2px;
+                border: 1px solid gray;
+                background: #e5e4e2;
+            }
+        </style> """
+        return htmlfaces + javascript

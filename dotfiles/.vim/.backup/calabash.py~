@@ -1,0 +1,832 @@
+from typing import List
+from fastapi import FastAPI, Depends, HTTPException
+from fastapi.security import OAuth2PasswordBearer
+from starlette.routing import RedirectResponse
+from sqlalchemy.orm import Session
+from websetup.startup import startup
+from pydantic import BaseModel, BaseConfig, create_model, Field
+from pydantic.class_validators import Validator
+from decimal import Decimal
+from datetime import date, time, datetime
+from model.dbinit import get_db, SessionLocal
+from cruds.cruds import active_cruds
+from cruds.type_cruds import active_type_cruds
+from cruds.link_cruds import active_link_cruds
+from routes.routes import active_routes
+from routes.type_routes import active_type_routes
+from routes.link_routes import active_link_routes
+from model.type_tables import active_type_tables
+from cruds.manual import *
+
+app = FastAPI(title="CalabashVaultModule", openapi_prefix="/calabash", version='0.0.1')
+ADDED_BY = 660066
+
+def get_person_entity_args(db, args):
+    try: entity_type_query = active_type_cruds['entitytype']['get_by_name'](db=db, name='Person')
+    except: entity_type_query = {}
+    entity_type_id = entity_type_query.get('id', None)
+    entity_args = {
+            'entity_type_id': entity_type_id,
+            'added_by': ADDED_BY,
+            }
+    return entity_args
+
+def get_person_args(db, args):
+    try:
+        gender_type_query = active_type_cruds['gendertype']['get_by_name'](db=db, name='Unset')
+    except:
+        gender_type_query = {}
+    gender_type_id = gender_type_query.get('id', None)
+
+    try:
+        title_type_query = active_type_cruds['titletype']['get_by_name'](db=db, name='Unset')
+    except:
+        title_type_query = {}
+    title_type_id = title_type_query.get('id', None)
+
+    english_id = 117
+    fudged = {
+        'added_by': ADDED_BY,
+        'date_of_birth': datetime.now(),
+        'language_id': english_id,
+        'gender_type_id': gender_type_id,
+        'title_type_id': title_type_id
+    }
+
+    person_args = {}
+    person_args.update(fudged)
+    dargs = args.dict()
+
+    surname = dargs.get("surname", None)
+    preferred_name = dargs.get("preferred_name", None)
+
+    first_name = dargs.get("firstName", None)
+    if not first_name:
+        first_name = dargs.get("first_name", None)
+    if not first_name:
+        first_name = dargs.get("name", None)
+
+    if not first_name and preferred_name:
+        first_name = preferred_name
+    if not first_name and surname:
+        first_name = surname
+
+    if not preferred_name:
+        preferred_name = f'{first_name} {surname}'
+
+    person_args['name'] = first_name
+    person_args['surname'] = surname
+    person_args['preferred_name'] = preferred_name
+    return person_args
+
+def get_contact_args(db=None, args=dict):
+    contact_args = {}
+    email_args = {}
+    mobile_args = {}
+
+    args = args.dict()
+    try: contact_type_query = active_type_cruds['contacttype']['get_by_name'](db=db, name='Email')
+    except: contact_type_query = {}
+    contact_type_id = contact_type_query.get('id', None)
+
+    email_args['contact_type_id'] = contact_type_id
+    email_args['added_by'] = ADDED_BY
+    email_args['bln_preferred'] = True
+    email_args['name'] = "Primary Email"
+    email_value = args.get("email", None)
+    if not email_value: return False
+    email_args['value'] = email_value
+
+    try: contact_type_query = active_type_cruds['contacttype']['get_by_name'](db=db, name='Mobile')
+    except: contact_type_query = {}
+    contact_type_id = contact_type_query.get('id', None)
+
+    mobile_args['contact_type_id'] = contact_type_id
+    mobile_args['added_by'] = ADDED_BY
+    mobile_args['bln_preferred'] = True
+    mobile_args['name'] = "Primary Mobile"
+    mobile_value = args.get("mobile", '')
+    #if not mobile_value: return False
+    mobile_args['value'] = mobile_value
+
+    contact_args['email'] = email_args
+    contact_args['mobile'] = mobile_args
+    return contact_args
+
+def get_identity_args(db=None, args=dict):
+    identity_args = {}
+    identity_number_args = {}
+    passport_number_args = {}
+    password_args = {}
+    username_args = {}
+    reference_args = {}
+    student_number_args = {}
+    employee_number_args = {}
+
+    args = args.dict()
+
+    try: identity_number_type_query = active_type_cruds['identitytype']['get_by_name'](db=db, name='Identity Number')
+    except: identity_number_type_query = {}
+    identity_number_type_id = identity_number_type_query.get('id', None)
+    identity_number_args['added_by'] = ADDED_BY
+    identity_number_args['bln_primary'] = True
+    identity_number_args['identity_type_id'] = identity_number_type_id
+    identity_number_value = args.get("identity_number", None)
+    identity_number_args['value'] = identity_number_value
+
+    try: passport_number_type_query = active_type_cruds['identitytype']['get_by_name'](db=db, name='Passport Number')
+    except: passport_number_type_query = {}
+    passport_number_type_id = passport_number_type_query.get('id', None)
+    passport_number_args['added_by'] = ADDED_BY
+    passport_number_args['bln_primary'] = True
+    passport_number_args['identity_type_id'] = passport_number_type_id
+    passport_number_value = args.get("passport_number", None)
+    passport_number_args['value'] = passport_number_value
+
+    try: password_type_query = active_type_cruds['identitytype']['get_by_name'](db=db, name='Password')
+    except: password_type_query = {}
+    password_type_id = password_type_query.get('id', None)
+    password_args['added_by'] = ADDED_BY
+    password_args['bln_primary'] = True
+    password_args['identity_type_id'] = password_type_id
+    password_value = args.get("password", None)
+    password_args['value'] = password_value
+
+    try: username_type_query = active_type_cruds['identitytype']['get_by_name'](db=db, name='Username')
+    except: username_type_query = {}
+    username_type_id = username_type_query.get('id', None)
+    username_args['added_by'] = ADDED_BY
+    username_args['bln_primary'] = True
+    username_args['identity_type_id'] = username_type_id
+    username_value = args.get("username", None)
+    username_args['value'] = username_value
+
+    try: reference_type_query = active_type_cruds['identitytype']['get_by_name'](db=db, name='Reference')
+    except: reference_type_query = {}
+    reference_type_id = reference_type_query.get('id', None)
+    reference_args['added_by'] = ADDED_BY
+    reference_args['bln_primary'] = True
+    reference_args['identity_type_id'] = reference_type_id
+    reference_value = args.get("reference", None)
+    reference_args['value'] = reference_value
+
+    try: student_number_type_query = active_type_cruds['identitytype']['get_by_name'](db=db, name='Student Number')
+    except: student_number_type_query = {}
+    student_number_type_id = student_number_type_query.get('id', None)
+    student_number_args['added_by'] = ADDED_BY
+    student_number_args['bln_primary'] = True
+    student_number_args['identity_type_id'] = student_number_type_id
+    student_number_value = args.get("student_number", None)
+    student_number_args['value'] = student_number_value
+
+    try: employee_number_type_query = active_type_cruds['identitytype']['get_by_name'](db=db, name='Employee Number')
+    except: employee_number_type_query = {}
+    employee_number_type_id = employee_number_type_query.get('id', None)
+    employee_number_args['added_by'] = ADDED_BY
+    employee_number_args['bln_primary'] = True
+    employee_number_args['identity_type_id'] = employee_number_type_id
+    employee_number_value = args.get("employee_number", None)
+    employee_number_args['value'] = employee_number_value
+
+    identity_args['identity_number'] = identity_number_args
+    identity_args['passport_number'] = passport_number_args
+    identity_args['password'] = password_args
+    identity_args['username'] = username_args
+    identity_args['reference'] = reference_args
+    identity_args['student_number'] = student_number_args
+    identity_args['employee_number'] = employee_number_args
+    return identity_args
+
+def create_entity(incoming_args: dict, entity_type: str, db: Session = Depends(get_db)):
+    try: entity_type_query = active_type_cruds['entitytype']['get_by_name'](db=db, name=entity_type)
+    except: entity_type_query = {}
+    entity_type_id = entity_type_query.get('id', None)
+    added_by = incoming_args.dict().get("added_by", ADDED_BY)
+
+    entity_args = {
+            'added_by': added_by,
+            'entity_type_id': entity_type_id,
+            }
+
+    entity_record = active_cruds['entity']['create'](db=db, **entity_args)
+    return entity_record
+
+def create_person(entity: active_tables['Entity'], incoming_args: dict, db=Depends(get_db)):
+    entity_id = entity.get('id', None)
+
+    person_dict = {'entity_id': entity_id}
+
+    args = get_person_args(db, incoming_args)
+    person_dict.update(args)
+    return active_cruds['person']['create'](db=db, **person_dict)
+
+def create_entity_contacts(entity_id: int, incoming_args: dict, db=Depends(get_db)):
+    return_dict = {}
+
+    contacts_dict = get_contact_args(db=db, args=incoming_args)
+    email_dict = contacts_dict.get('email', None)
+    email_value = email_dict.get('value', None)
+    if email_value:
+        email_record = active_cruds['contact']['create'](db=db, **email_dict)
+        if email_record:
+            email_contact_id = email_record.get("id", None)
+            return_dict['email_contact_id'] = email_contact_id
+
+            email_link_dict = {'entity_id': entity_id, 'contact_id': email_contact_id, 'added_by': ADDED_BY}
+            email_link_record = active_link_cruds['entitycontactlink']['create'](db=db, **email_link_dict)
+            if email_link_record:
+                email_link_id = email_link_record.get('id', None)
+                return_dict['email_contact_link_id'] = email_link_id
+
+    mobile_dict = contacts_dict.get('mobile', None)
+    mobile_value = mobile_dict.get('value', None)
+    if mobile_value:
+        mobile_record = active_cruds['contact']['create'](db=db, **mobile_dict)
+        if mobile_record:
+            mobile_contact_id = mobile_record.get("id", None)
+            return_dict['mobile_contact_id'] = mobile_contact_id
+
+            mobile_link_dict = {'entity_id': entity_id, 'contact_id': mobile_contact_id, 'added_by': ADDED_BY}
+            mobile_link_record = active_link_cruds['entitycontactlink']['create'](db=db, **mobile_link_dict)
+            if mobile_link_record:
+                mobile_link_id = mobile_link_record.get('id', None)
+                return_dict['mobile_contact_link_id'] = mobile_link_id
+
+    return return_dict
+
+def create_entity_identities(entity_id: int, incoming_args: dict, db=Depends(get_db)):
+    return_dict = {}
+    identities_dict = get_identity_args(db=db, args=incoming_args)
+
+    # PASSWORD + LINK
+    password_dict = identities_dict.get('password', None)
+    password_value = password_dict.get('value', None)
+    if password_value:
+        password_record = active_cruds['identity']['create'](db=db, **password_dict)
+        if password_record:
+            password_identity_id = password_record.get("id", None)
+            password_link_dict = {'entity_id': entity_id, 'identity_id': password_identity_id, 'added_by': ADDED_BY}
+            password_link_record = active_link_cruds['entityidentitylink']['create'](db=db, **password_link_dict)
+            password_link_id = password_link_record.get('id', None)
+            return_dict['password_identity_id'] = password_identity_id
+            return_dict['password_identity_link_id'] = password_link_id
+
+    # USERNAME + LINK
+    username_dict = identities_dict.get('username', None)
+    username_value = username_dict.get('value', None)
+    if username_value:
+        username_record = active_cruds['identity']['create'](db=db, **username_dict)
+        if username_record:
+            username_identity_id = username_record.get("id", None)
+            username_link_dict = {'entity_id': entity_id, 'identity_id': username_identity_id, 'added_by': ADDED_BY}
+            username_link_record = active_link_cruds['entityidentitylink']['create'](db=db, **username_link_dict)
+            username_link_id = username_link_record.get('id', None)
+            return_dict['username_identity_id'] = username_identity_id
+            return_dict['username_identity_link_id'] = username_link_id
+
+    # REFERENCE + LINK
+    reference_dict = identities_dict.get('reference', None)
+    reference_value = reference_dict.get('value', None)
+    if reference_value:
+        reference_record = active_cruds['identity']['create'](db=db, **reference_dict)
+        if reference_record:
+            reference_identity_id = reference_record.get("id", None)
+            reference_link_dict = {'entity_id': entity_id, 'identity_id': reference_identity_id, 'added_by': ADDED_BY}
+            reference_link_record = active_link_cruds['entityidentitylink']['create'](db=db, **reference_link_dict)
+            reference_link_id = reference_link_record.get('id', None)
+            return_dict['reference_identity_id'] = reference_identity_id
+            return_dict['reference_identity_link_id'] = reference_link_id
+
+    # STUDENT NUMBER + LINK
+    student_number_dict = identities_dict.get('student_number', None)
+    student_number_value = student_number_dict.get('value', None)
+    if student_number_value:
+        student_number_record = active_cruds['identity']['create'](db=db, **student_number_dict)
+        if student_number_record:
+            student_number_identity_id = student_number_record.get("id", None)
+            student_number_link_dict = {'entity_id': entity_id, 'identity_id': student_number_identity_id, 'added_by': ADDED_BY}
+            student_number_link_record = active_link_cruds['entityidentitylink']['create'](db=db, **student_number_link_dict)
+            student_number_link_id = student_number_link_record.get('id', None)
+            return_dict['student_number_identity_id'] = student_number_identity_id
+            return_dict['student_number_identity_link_id'] = student_number_link_id
+
+    # EMPLOYEE NUMBER + LINK
+    employee_number_dict = identities_dict.get('employee_number', None)
+    employee_number_value = employee_number_dict.get('value', None)
+    if employee_number_value:
+        employee_number_record = active_cruds['identity']['create'](db=db, **employee_number_dict)
+        if employee_number_record:
+            employee_number_identity_id = employee_number_record.get("id", None)
+            employee_number_link_dict = {'entity_id': entity_id, 'identity_id': employee_number_identity_id, 'added_by': ADDED_BY}
+            employee_number_link_record = active_link_cruds['entityidentitylink']['create'](db=db, **employee_number_link_dict)
+            employee_number_link_id = employee_number_link_record.get('id', None)
+            return_dict['employee_number_identity_id'] = employee_number_identity_id
+            return_dict['employee_number_identity_link_id'] = employee_number_link_id
+
+    # IDENTITY NUMBER + LINK
+    identity_number_dict = identities_dict.get('identity_number', None)
+    identity_number_value = identity_number_dict.get('value', None)
+    if identity_number_value:
+        identity_number_record = active_cruds['identity']['create'](db=db, **identity_number_dict)
+        if identity_number_record:
+            identity_number_identity_id = identity_number_record.get("id", None)
+            identity_number_link_dict = {'entity_id': entity_id, 'identity_id': identity_number_identity_id, 'added_by': ADDED_BY}
+            identity_number_link_record = active_link_cruds['entityidentitylink']['create'](db=db, **identity_number_link_dict)
+            identity_number_link_id = identity_number_link_record.get('id', None)
+            return_dict['identity_number_identity_id'] = identity_number_identity_id
+            return_dict['identity_number_identity_link_id'] = identity_number_link_id
+
+    # PASSPORT NUMBER + LINK
+    passport_number_dict = identities_dict.get('passport_number', None)
+    passport_number_value = passport_number_dict.get('value', None)
+    if passport_number_value:
+        passport_number_record = active_cruds['identity']['create'](db=db, **passport_number_dict)
+        if passport_number_record:
+            passport_number_passport_id = passport_number_record.get("id", None)
+            passport_number_link_dict = {'entity_id': entity_id, 'identity_id': passport_number_passport_id, 'added_by': ADDED_BY}
+            passport_number_link_record = active_link_cruds['entityidentitylink']['create'](db=db, **passport_number_link_dict)
+            passport_number_link_id = passport_number_link_record.get('id', None)
+            return_dict['passport_number_passport_id'] = passport_number_passport_id
+            return_dict['passport_number_passport_link_id'] = passport_number_link_id
+    return return_dict
+
+def create_entity_api_key(entity_id: int, db=Depends(get_db)):
+    api_key_record = None
+    return api_key_record
+
+class CalabashResponseCreate(BaseModel):
+    entity_id: int
+
+class CalabashArgsCreate(BaseModel):
+    username: str = ''
+    firstName: str
+    surname: str
+    email: str
+    added_by: int = ADDED_BY
+    identity_number: str = ''
+    passport_number: str = ''
+    student_number: str = ''
+    reference: str = ''
+    password: str = ''
+    mobile: str = ''
+
+@app.post("/create_calabash_person", response_model=CalabashResponseCreate)
+async def create_calabash_person(incoming_args: CalabashArgsCreate, db=Depends(get_db)):
+    return_dict = {}
+    bln_nuke = False
+
+    entity = create_entity(incoming_args=incoming_args, entity_type="Person", db=db)
+
+    entity_id = None
+    if entity: entity_id = entity.get('id', None)
+    if not entity: raise HTTPException(status_code=418, detail="Failed to create Entity")
+
+    person = None
+    if entity_id: person = create_person(entity=entity, incoming_args=incoming_args, db=db)
+    if not person: raise HTTPException(status_code=418, detail="Failed to Create Person")
+
+    person_id = None
+    if person: person_id = person.get('id', None)
+
+    identities = None
+    if person_id: identities = create_entity_identities(entity_id=entity_id, incoming_args=incoming_args, db=db)
+    if not identities: raise HTTPException(status_code=418, detail="Failed to Create Identities")
+
+    contacts = None
+    if identities: contacts = create_entity_contacts(entity_id=entity_id, incoming_args=incoming_args, db=db)
+    if not contacts: raise HTTPException(status_code=418, detail="Failed to Create Contacts")
+
+    return { "entity_id": entity_id }
+
+def get_organisation_entity_args(db, args):
+    try: entity_type_query = active_type_cruds['entitytype']['get_by_name'](db=db, name='Organisation')
+    except: entity_type_query = {}
+    entity_type_id = entity_type_query.get('id', None)
+    entity_args = {
+            'entity_type_id': entity_type_id,
+            'added_by': ADDED_BY,
+            }
+    return entity_args
+
+def get_organisation_args(db, args):
+    try: organisation_type_query = active_type_cruds['organisationtype']['get_by_name'](db=db, name='Merchant')
+    except: organisation_type_query = {}
+    organisation_type_id = organisation_type_query.get('id', None)
+
+    needed = ['surname', 'firstName']
+    english_id = 117
+    fudged = {
+            'organisation_type_id': organisation_type_id,
+            'added_by': ADDED_BY,
+            }
+
+    organisation_args = {}
+    organisation_args.update(fudged)
+    dargs = args.dict()
+
+    surname = dargs.get("surname", None)
+    if not surname: return False
+
+    first_name = dargs.get("firstName", None)
+    if not first_name: return False
+
+    organisation_args['code'] = surname
+    organisation_args['name'] = first_name
+    return organisation_args
+
+class OrganisationResponse(BaseModel):
+    entity_id: int
+
+@app.post("/create_calabash_organisation", response_model=OrganisationResponse)
+async def create_calabash_organisation(incoming_args: CalabashArgsCreate, db=Depends(get_db)):
+    return_dict = {}
+    bln_nuke = False
+
+    entity_dict = get_organisation_entity_args(db, incoming_args)
+    if not entity_dict: bln_nuke = True
+    if not bln_nuke:
+        entity_record = active_cruds['entity']['create'](db=db, **entity_dict)
+        if not entity_record: bln_nuke = True
+
+    bln_create_organisation = False
+    if not bln_nuke:
+        entity_id = entity_record.get('id', None)
+        return_dict['entity_id'] = entity_id
+        entity_type_id = entity_record.get('entity_type_id', None)
+        return_dict['entity_type_id'] = entity_type_id
+
+        organisation_dict = {}
+        if entity_id:
+            organisation_dict = {'entity_id': entity_id}
+            organisation_dict.update(get_organisation_args(db, incoming_args))
+            bln_create_organisation = True
+
+    bln_create_contacts = False
+    if bln_create_organisation and not bln_nuke:
+        organisation_record = active_cruds['organisation']['create'](db=db, **organisation_dict)
+        if not organisation_record: bln_nuke = True
+        organisation_id = organisation_record.get("id", None)
+        if not organisation_id: bln_nuke = True
+        return_dict['organisation_id'] = organisation_id
+        bln_create_contacts = True
+
+    bln_create_identities = False
+    if bln_create_contacts:
+        contacts_dict = get_contact_args(db=db, args=incoming_args)
+        email_dict = contacts_dict.get('email', None)
+        if not email_dict: bln_nuke = True
+        email_record = active_cruds['contact']['create'](db=db, **email_dict)
+        email_contact_id = email_record.get("id", None)
+        return_dict['email_contact_id'] = email_contact_id
+
+        mobile_dict = contacts_dict.get('mobile', None)
+        if not mobile_dict: bln_nuke = True
+        mobile_record = active_cruds['contact']['create'](db=db, **mobile_dict)
+        mobile_contact_id = mobile_record.get("id", None)
+        return_dict['mobile_contact_id'] = mobile_contact_id
+
+        if not email_contact_id or not mobile_contact_id: bln_nuke = True
+
+        email_link_dict = {'entity_id': entity_id, 'contact_id': email_contact_id, 'added_by': ADDED_BY}
+        email_link_record = active_link_cruds['entitycontactlink']['create'](db=db, **email_link_dict)
+        email_link_id = email_link_record.get('id', None)
+
+        mobile_link_dict = {'entity_id': entity_id, 'contact_id': mobile_contact_id, 'added_by': ADDED_BY}
+        mobile_link_record = active_link_cruds['entitycontactlink']['create'](db=db, **mobile_link_dict)
+        mobile_link_id = mobile_link_record.get('id', None)
+
+        if not email_link_id or not mobile_link_id: bln_nuke = True
+        if email_link_id and mobile_link_id: bln_create_identities = True
+        return_dict['mobile_contact_link_id'] = mobile_link_id
+        return_dict['email_contact_link_id'] = email_link_id
+
+    if bln_create_identities:
+        identities_dict = get_identity_args(db=db, args=incoming_args)
+
+        password_dict = identities_dict.get('password', None)
+        if not password_dict: bln_nuke = True
+        password_record = active_cruds['identity']['create'](db=db, **password_dict)
+        password_identity_id = password_record.get("id", None)
+        return_dict['password_identity_id'] = password_identity_id
+
+        username_dict = identities_dict.get('username', None)
+        if not username_dict: bln_nuke = True
+        username_record = active_cruds['identity']['create'](db=db, **username_dict)
+        username_identity_id = username_record.get("id", None)
+        return_dict['username_identity_id'] = username_identity_id
+
+        reference_dict = identities_dict.get('reference', None)
+        if not reference_dict: bln_nuke = True
+        reference_record = active_cruds['identity']['create'](db=db, **reference_dict)
+        reference_identity_id = reference_record.get("id", None)
+        return_dict['reference_identity_id'] = reference_identity_id
+
+        if not password_identity_id or not username_identity_id or not reference_identity_id: bln_nuke = True
+
+        password_link_dict = {'entity_id': entity_id, 'identity_id': password_identity_id, 'added_by': ADDED_BY}
+        password_link_record = active_link_cruds['entityidentitylink']['create'](db=db, **password_link_dict)
+        password_link_id = password_link_record.get('id', None)
+
+        username_link_dict = {'entity_id': entity_id, 'identity_id': username_identity_id, 'added_by': ADDED_BY}
+        username_link_record = active_link_cruds['entityidentitylink']['create'](db=db, **username_link_dict)
+        username_link_id = username_link_record.get('id', None)
+
+        reference_link_dict = {'entity_id': entity_id, 'identity_id': reference_identity_id, 'added_by': ADDED_BY}
+        reference_link_record = active_link_cruds['entityidentitylink']['create'](db=db, **reference_link_dict)
+        reference_link_id = reference_link_record.get('id', None)
+
+        if not password_link_id or not username_link_id or not reference_link_id: bln_nuke = True
+        if password_link_id and username_link_id and reference_link_id: bln_create_identities = True
+        return_dict['password_identity_link_id'] = password_link_id
+        return_dict['username_identity_link_id'] = username_link_id
+        return_dict['reference_identity_link_id'] = reference_link_id
+    return {'entity_id' : entity_id}
+
+class EntityObjectResponse(BaseModel):
+    entity: dict = {}
+    identity_list: list = []
+    contact_list: list = []
+    address_list: list = []
+    bankaccount_list: list = []
+
+@app.get("/get_entity_object_by_id", response_model=EntityObjectResponse)
+def get_entity_object_by_id(target_id: int, db: Session = Depends(get_db)):
+    full_entity = get_entity_object_by_id_crud(target_id=target_id, db=db)
+    returnable = EntityObjectResponse(**full_entity)
+    return returnable
+
+@app.get("/get_entity_by_mobile")
+def get_entity_by_mobile(mobile_number: str, db: Session = Depends(get_db)):
+    contact = get_entity_contact_for_mobile(mobile=mobile_number, db=db)
+    if not contact:
+        raise HTTPException(status_code=418, detail="No Contact Found")
+    contact_id = contact.get('id', None)
+    entity = get_contact_links(db=db, contact_id=contact_id)
+    return entity
+
+@app.get("/get_entity_by_identity_number", response_model=EntityObjectResponse)
+def get_entity_by_identity_number(identity_number: str, db: Session = Depends(get_db)):
+    identity_number = get_identity_number_by_value(value=identity_number, db=db)
+    if not identity_number:
+        returnable = EntityObjectResponse()
+        return returnable
+
+    entity_identity_link = get_entity_identity_link_by_identity_id(id=identity_number.id, db=db)
+    if not entity_identity_link:
+        returnable = EntityObjectResponse()
+        return returnable
+
+    full_entity = get_entity_object_by_id_crud(target_id=entity_identity_link.entity_id, db=db)
+    returnable = EntityObjectResponse(**full_entity)
+    return returnable
+
+@app.get("/get_entity_by_passport_number", response_model=EntityObjectResponse)
+def get_entity_by_passport_number(passport_number: str, db: Session = Depends(get_db)):
+    passport_number = get_passport_number_by_value(value=passport_number, db=db)
+    if not passport_number:
+        returnable = EntityObjectResponse()
+        return returnable
+
+    entity_identity_link = get_entity_identity_link_by_identity_id(id=passport_number.id, db=db)
+    if not entity_identity_link:
+        returnable = EntityObjectResponse()
+        return returnable
+
+    full_entity = get_entity_object_by_id_crud(target_id=entity_identity_link.entity_id, db=db)
+    returnable = EntityObjectResponse(**full_entity)
+    return returnable
+
+@app.get("/get_person_identity_types", response_model=list)
+def get_person_identity_types(db=Depends(get_db)):
+    returnable = []
+    person_identity_types = get_all_person_identity_types(db=db)
+    if person_identity_types: returnable = person_identity_types
+    return returnable
+
+class CalabashArgsActivate(BaseModel):
+    username_id: int
+    username: str
+    password_id: int
+    password: str
+    reference_id: int
+    reference: str
+    identity_number_id: int = ''
+    identity_number: str = ''
+    passport_number_id: int = ''
+    passport_number: str = ''
+
+class CalabashResponseBoolean(BaseModel):
+    success: bool
+
+@app.post("/activate_campus_student", response_model=CalabashResponseBoolean)
+async def activate_campus_student(incoming_args: CalabashArgsActivate, db=Depends(get_db)):
+    username_success = update_identity_by_id(db=db, identity_id=incoming_args.username_id, value=incoming_args.username)
+    if not username_success:
+        return {'success' : False}
+    password_success = update_identity_by_id(db=db, identity_id=incoming_args.password_id, value=incoming_args.password)
+    if not password_success:
+        return {'success' : False}
+    reference_success = update_identity_by_id(db=db, identity_id=incoming_args.reference_id, value=incoming_args.reference)
+    if not reference_success:
+        return {'success' : False}
+    identity_number_success = update_identity_by_id(db=db, identity_id=incoming_args.identity_number_id, value=incoming_args.identity_number)
+    if not identity_number_success:
+        return {'success' : False}
+    passport_number_success = update_identity_by_id(db=db, identity_id=incoming_args.passport_number_id, value=incoming_args.passport_number)
+    if not passport_number_success:
+        return {'success' : False}
+    return {'success' : True}
+
+class IdentityArgsActivate(BaseModel):
+    identity_id: int
+    value: str
+
+@app.post("/update_identity_by_identity_id", response_model=CalabashResponseBoolean)
+async def update_identity_by_identity_id(incoming_args: IdentityArgsActivate, db=Depends(get_db)):
+    success = update_identity_by_id(db=db, identity_id=incoming_args.identity_id, value=incoming_args.value)
+    if not success:
+        return {'success' : False}
+    return {'success' : True}
+
+class CalabashArgsUpdate(BaseModel):
+    entity_id: int
+    email: str
+    mobile: str
+    preferred_name: str
+
+@app.post("/update_eiffel_student", response_model=EntityObjectResponse)
+async def update_eiffel_student(incoming_args: CalabashArgsUpdate, db=Depends(get_db)):
+    success = update_preferred_name_by_entity_id(incoming_args.entity_id, incoming_args.preferred_name, db=db)
+    success = update_mobile_by_entity_id(incoming_args.entity_id, incoming_args.mobile, db=db)
+    success = update_alternate_email_by_entity_id(incoming_args.entity_id, incoming_args.email, db=db)
+    return get_entity_object_by_id(target_id = incoming_args.entity_id, db=db)
+
+class CalabashArgsSync(BaseModel):
+    name: str
+    email: str
+    mobile: str
+    surname: str
+    entity_id: int
+
+@app.post("/sync_myimali_data", response_model=EntityObjectResponse)
+async def sync_myimali_data(incoming_args: CalabashArgsSync, db=Depends(get_db)):
+    name_success = update_name_by_entity_id(incoming_args.entity_id, incoming_args.name, db=db)
+    email_success = update_email_by_entity_id(incoming_args.entity_id, incoming_args.email, db=db)
+    mobile_success = update_mobile_by_entity_id(incoming_args.entity_id, incoming_args.mobile, db=db)
+    surname_success = update_surname_by_entity_id(incoming_args.entity_id, incoming_args.surname, db=db)
+    preferred_name_success = update_preferred_name_by_entity_id(incoming_args.entity_id, incoming_args.name, db=db)
+    return get_entity_object_by_id(target_id = incoming_args.entity_id, db=db)
+
+class CheckStudentNumberExists(BaseModel):
+    student_number: str
+
+@app.post("/check_student_number_exists", response_model=CalabashResponseBoolean)
+async def check_student_number_exists(incoming_args: CheckStudentNumberExists, db=Depends(get_db)):
+    success = get_student_number_by_value(incoming_args.student_number, db=db)
+    if success:
+        return {'success' : True}
+    return {'success' : False}
+
+class CheckMobileNumberExists(BaseModel):
+    mobile_number: str
+
+@app.post("/check_mobile_number_exists", response_model=CalabashResponseBoolean)
+async def check_mobile_number_exists(incoming_args: CheckMobileNumberExists, db=Depends(get_db)):
+    success = get_mobile_number_by_value(incoming_args.mobile_number, db=db)
+    if success:
+        return {'success' : True}
+    return {'success' : False}
+
+class CheckIdentityStudentNumberMatch(BaseModel):
+    student_number: str
+    identity_number: str
+
+@app.post("/check_identity_student_number_match", response_model=CalabashResponseBoolean)
+async def check_identity_student_number_match(incoming_args: CheckIdentityStudentNumberMatch, db=Depends(get_db)):
+    student_number = get_student_number_by_value(incoming_args.student_number, db=db)
+    if not student_number:
+        student_number = get_employee_number_by_value(incoming_args.student_number, db=db)
+    if not student_number:
+        return {'success' : False}
+
+    identity_number = get_identity_number_by_value(incoming_args.identity_number, db=db)
+    if not identity_number:
+        return {'success' : False}
+
+    match = check_identity_student_number_entity_match(student_number.id, identity_number.id, db=db)
+    if not match:
+        return {'success' : False}
+    return {'success' : True}
+
+class CheckPassportStudentNumberMatch(BaseModel):
+    student_number: str
+    passport_number: str
+
+@app.post("/check_passport_student_number_match", response_model=CalabashResponseBoolean)
+async def check_passport_student_number_match(incoming_args: CheckPassportStudentNumberMatch, db=Depends(get_db)):
+    student_number = get_student_number_by_value(incoming_args.student_number, db=db)
+    if not student_number:
+        return {'success' : False}
+
+    passport_number = get_passport_number_by_value(incoming_args.passport_number, db=db)
+    if not passport_number:
+        return {'success' : False}
+
+    match = check_identity_student_number_entity_match(student_number.id, passport_number.id, db=db)
+    if not match:
+        return {'success' : False}
+    return {'success' : True}
+
+def update_entity_identities(entity_id: int, incoming_args: dict, db=Depends(get_db)):
+    username = incoming_args.username
+    if username:
+        result = create_or_update_identity_by_value(entity_id, username, 'Username', db=db)
+
+    password = incoming_args.password
+    if password:
+        result = create_or_update_identity_by_value(entity_id, password, 'Password', db=db)
+
+    reference = incoming_args.reference
+    if reference:
+        result = create_or_update_identity_by_value(entity_id, reference, 'Reference', db=db)
+    return True
+
+def update_entity_contacts(entity_id: int, incoming_args: dict, db=Depends(get_db)):
+    mobile = incoming_args.mobile_number
+    if mobile:
+        result = create_or_update_contact_by_value(entity_id, mobile, 'Mobile', db)
+
+    email = incoming_args.email
+    if email:
+        result = create_or_update_contact_by_value(entity_id, email, 'Email', db)
+
+    return True
+
+class CalabashResponseEntityId(BaseModel):
+    success: bool = False
+    entity_id: int
+
+class ConfirmEntityPerson(BaseModel):
+    name: str = ''
+    email: str = ''
+    title: str = ''
+    surname: str = ''
+    username: str = ''
+    password: str = ''
+    reference: str = ''
+    mobile_number: str = ''
+    preferred_name: str = ''
+    student_number: str = ''
+    employee_number: str = ''
+    identity_number: str = ''
+    passport_number: str = ''
+
+@app.post("/confirm_entity_person", response_model=CalabashResponseEntityId)
+async def confirm_entity_person(incoming_args: ConfirmEntityPerson, db=Depends(get_db)):
+
+    entity_id = None
+
+    if not entity_id and incoming_args.identity_number:
+        identity_exists = get_identity_number_by_value(value=incoming_args.identity_number, db=db)
+        if identity_exists:
+            link = get_entity_identity_link_by_identity_id(id=identity_exists.id, db=db)
+            if link:
+                entity_id = link.entity_id
+
+    if not entity_id and incoming_args.passport_number:
+        passport_exists = get_passport_number_by_value(value=incoming_args.passport_number, db=db)
+        if passport_exists:
+            link = get_entity_identity_link_by_identity_id(id=passport_exists.id, db=db)
+            if link:
+                entity_id = link.entity_id
+
+    if not entity_id and incoming_args.student_number:
+        student_exists = get_student_number_by_value(value=incoming_args.student_number, db=db)
+        if student_exists:
+            link = get_entity_identity_link_by_identity_id(id=student_exists.id, db=db)
+            if link:
+                entity_id = link.entity_id
+
+    if not entity_id and incoming_args.employee_number:
+        employee_exists = get_employee_number_by_value(value=incoming_args.employee_number, db=db)
+        if employee_exists:
+            link = get_entity_identity_link_by_identity_id(id=employee_exists.id, db=db)
+            if link:
+                entity_id = link.entity_id
+
+    if not entity_id:
+        entity = create_entity(incoming_args=incoming_args, entity_type="Person", db=db)
+        entity_id = entity.get('id', None)
+
+        result = create_person(entity=entity, incoming_args=incoming_args, db=db)
+        if not result:
+            return {'success' : False, 'entity_id' : entity_id}
+
+        result = create_entity_contacts(entity_id=entity_id, incoming_args=incoming_args, db=db)
+        result = create_entity_identities(entity_id=entity_id, incoming_args=incoming_args, db=db)
+
+    else:
+        result = update_entity_contacts(entity_id=entity_id, incoming_args=incoming_args, db=db)
+        result = update_entity_identities(entity_id=entity_id, incoming_args=incoming_args, db=db)
+
+    return {'success' : True, 'entity_id' : entity_id}

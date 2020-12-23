@@ -1,0 +1,331 @@
+# -*- coding: utf-8 -*-
+
+import os
+from datetime import datetime
+from hashlib import sha256
+
+from sqlalchemy import Table, ForeignKey, Column
+from sqlalchemy.types import Unicode, Integer, DateTime, Boolean
+from sqlalchemy.orm import relation, synonym
+
+from rocket.model import DeclarativeBase, metadata, DBSession
+from rocket.lib.model_utils import PhatBase, common_columns, get_type_table, get_phat_table
+
+###############################################################################
+# Policy
+###############################################################################
+
+tbl_policy = {
+    '__tablename__': 'tbl_policy',
+    'policy_number': common_columns.get('title_not_nullable')(),
+    'product_id': common_columns.get('integer_not_nullable')(),
+    'policy_owner_entity_id': common_columns.get('integer')(),
+    'policy_payer_entity_id': common_columns.get('integer')(),
+    'entity_intermediary_id': common_columns.get('integer')(),
+}
+Policy = get_phat_table(model_name='Policy', columndict=tbl_policy)
+
+PolicyStatusType = get_type_table(model_name='PolicyStatus', table_name='policy_status')
+
+tbl_policy_status = {
+    '__tablename__': 'tbl_policy_status',
+    'policy_id': common_columns.get('integer_not_nullable')(),
+    'policy_status_type_id': common_columns.get('integer_not_nullable')(),
+    'date_set': common_columns.get('datetime_default_now')(),
+    'current_status': common_columns.get('boolean')(),
+    'reason': common_columns.get('description')(),
+}
+PolicyStatus = get_phat_table(model_name='PolicyStatus', columndict=tbl_policy_status)
+
+tbl_policy_date = {
+    '__tablename__': 'tbl_policy_setup_dates',
+    'policy_id': common_columns.get('integer_not_nullable')(),
+    'policy_date_type_id': common_columns.get('integer_not_nullable')(),
+    'date': common_columns.get('date')(),
+}
+PolicyDate = get_phat_table(model_name='PolicyDate', columndict=tbl_policy_date)
+
+PolicyDateType = get_type_table(model_name='PolicyDate', table_name='policy_date')
+
+tbl_policy_history = {
+    '__tablename__': 'tbl_policy_history',
+    'current_policy_id': common_columns.get('integer_not_nullable')(),
+    'previous_policy_id': common_columns.get('integer_not_nullable')()
+}
+PolicyHistory = get_phat_table(model_name='PolicyHistory', columndict=tbl_policy_history)
+
+tbl_policy_premium_schedule = {
+    '__tablename__': 'tbl_policy_premium_schedule',
+    'policy_id': common_columns.get('integer_not_nullable')(),
+    'date_of_first_payment_due': common_columns.get('date')(),
+    'policy_premium_due_on_type_id': common_columns.get('integer_not_nullable')(),
+    'premium_payment_frequency_id': common_columns.get('integer_not_nullable')(),
+    'adjustment_factor': common_columns.get('integer_not_nullable')(),
+    'payment_provider_id': common_columns.get('integer')(),
+}
+PolicyPremiumSchedule = get_phat_table(model_name='PolicyPremiumSchedule', columndict=tbl_policy_premium_schedule)
+
+PolicyPremiumDueOnType = get_type_table(model_name='PolicyPremiumDueOn', table_name='policy_premium_due_on')
+
+###############################################################################
+# Benefits
+###############################################################################
+
+tbl_policy_benefit = {
+    '__tablename__': 'tbl_policy_benefit',
+    'policy_id': common_columns.get('integer_not_nullable')(),
+    'product_benefit_id': common_columns.get('integer_not_nullable')(),
+    'number_of_claims_remaining': common_columns.get('integer')(),
+    'cover_and_exclusion_id': common_columns.get('integer_not_nullable')(),
+    'premium': common_columns.get('currency')(),
+    'sum_insured': common_columns.get('currency')(),
+    'is_compulsory': common_columns.get('boolean')(),
+}
+PolicyBenefit = get_phat_table(model_name='PolicyBenefit', columndict=tbl_policy_benefit)
+
+tbl_policy_benefit_quote = {
+    '__tablename__': 'tbl_policy_benefit_quote',
+    'policy_benefit_id': common_columns.get('integer_not_nullable')(),
+    'quote_date_time': common_columns.get('datetime_default_now')(),
+    'monthly_sum_insured_amount': common_columns.get('currency')(),
+    'monthly_premium_amount': common_columns.get('currency')(),
+    'is_compulsory': common_columns.get('boolean')()
+}
+PolicyBenefitQuote = get_phat_table(model_name='PolicyBenefitQuote', columndict=tbl_policy_benefit_quote)
+
+PolicyBenefitStatusType = get_type_table(model_name='PolicyBenefitStatus', table_name='policy_benefit_status')
+
+tbl_policy_benefit_status = {
+    '__tablename__': 'tbl_policy_benefit_status',
+    'policy_benefit_id': common_columns.get('integer_not_nullable')(),
+    'policy_benefit_status_type_id': common_columns.get('integer_not_nullable')(),
+    'date_set': common_columns.get('datetime_default_now')(),
+    'current_status': common_columns.get('boolean')(),
+}
+PolicyBenefitStatus = get_phat_table(model_name='PolicyBenefitStatus', columndict=tbl_policy_benefit_status)
+
+# ------------------------------------- Claim --------------------------------------------
+
+tbl_policy_benefit_claim = {
+    '__tablename__': 'tbl_policy_benefit_claim',
+    'policy_benefit_id': common_columns.get('integer_not_nullable')(),
+    'claim_id': common_columns.get('integer_not_nullable')(),  # TODO this will expand once we start working on claims
+}
+PolicyBenefitClaim = get_phat_table(model_name='PolicyBenefitClaim', columndict=tbl_policy_benefit_claim)
+
+# ------------------------------------- Claim Rules --------------------------------------------
+
+# TODO this will probably move to claims
+ClaimRulesType = get_type_table(model_name='ClaimRules', table_name='claim_rules')
+
+tbl_policy_benefit_claim_rules = {
+    '__tablename__': 'tbl_policy_benefit_claim_rules',
+    'policy_benefit_id': common_columns.get('integer_not_nullable')(),
+    'claim_rules_type_id': common_columns.get('integer_not_nullable')(),
+    'frequency_type_id': common_columns.get('integer_not_nullable')(),
+}
+PolicyBenefitClaimRules = get_phat_table(model_name='PolicyBenefitClaimRules',
+                                         columndict=tbl_policy_benefit_claim_rules)
+
+tbl_policy_benefit_claim_rules_count = {
+    '__tablename__': 'tbl_policy_benefit_claim_rules_count',
+    'policy_benefit_claim_rules_id': common_columns.get('integer_not_nullable')(),
+    'initial_count': common_columns.get('integer_not_nullable')(),
+    'terminates_policy': common_columns.get('boolean')(),
+}
+PolicyBenefitClaimRulesCount = get_phat_table(model_name='PolicyBenefitClaimRulesCount',
+                                              columndict=tbl_policy_benefit_claim_rules_count)
+
+# ------------------------------------- Exclusions --------------------------------------------
+
+tbl_policy_benefit_exclusion = {
+    '__tablename__': 'tbl_policy_benefit_exclusion',
+    'policy_benefit_id': common_columns.get('integer_not_nullable')(),
+    'product_benefit_exclusion_id': common_columns.get('integer_not_nullable')(),  # TODO might want to expand
+    'benefit_exclusion_expiry_type': common_columns.get('integer_not_nullable')()
+}
+PolicyBenefitExclusion = get_phat_table(model_name='PolicyBenefitExclusion',
+                                        columndict=tbl_policy_benefit_exclusion)
+
+tbl_policy_benefit_exclusion_expiration_date = {
+    '__tablename__': 'tbl_policy_benefit_exclusion_expiration_date',
+    'policy_benefit_exclusion_id': common_columns.get('integer_not_nullable')(),
+    'expiry_date': common_columns.get('date')()
+}
+PolicyBenefitExclusionExpirationDate = get_phat_table(model_name='PolicyBenefitExclusionExpirationDate',
+                                                      columndict=tbl_policy_benefit_exclusion_expiration_date)
+
+tbl_policy_benefit_exclusion_expiration_count = {
+    '__tablename__': 'tbl_policy_benefit_exclusion_expiration_count',
+    'policy_benefit_exclusion_id': common_columns.get('integer_not_nullable')(),
+    'initial_number_of_premiums': common_columns.get('integer_not_nullable')()  # TODO need to number premiums paid
+}
+PolicyBenefitExclusionExpirationCount = get_phat_table(model_name='PolicyBenefitExclusionExpirationCount',
+                                                       columndict=tbl_policy_benefit_exclusion_expiration_count)
+
+# ------------------------------------- Premiums and Sum Insured --------------------------------------------
+
+tbl_policy_benefit_premium = {
+    '__tablename__': 'tbl_policy_benefit_premium',
+    'policy_benefit_id': common_columns.get('integer_not_nullable')(),
+    'premium_amount': common_columns.get('currency')(),
+    'initial_annual_premium_amount': common_columns.get('currency')(),
+    'premium_annual_increase_percentage': common_columns.get('percentage')(),
+}
+PolicyBenefitPremium = get_phat_table(model_name='PolicyBenefitPremium', columndict=tbl_policy_benefit_premium)
+
+# TODO improved version of premiums
+# tbl_policy_benefit_premium = {
+#     '__tablename__': 'tbl_policy_benefit_premium',
+#     'policy_benefit_id': common_columns.get('integer_not_nullable')(),
+#     'initial_annual_premium_amount': common_columns.get('currency')(),
+#     'premium_annual_increase_percentage': common_columns.get('percentage')(),
+#     'anniversary_date': common_columns.get('date')(),  # TODO needs to be a day of the month
+#     'effective_date': common_columns.get('date')()
+# }
+# PolicyBenefitPremium = get_phat_table(model_name='PolicyBenefitPremium', columndict=tbl_policy_benefit_premium)
+
+tbl_policy_benefit_sum_insured = {
+    '__tablename__': 'tbl_policy_benefit_sum_insured',
+    'policy_benefit_id': common_columns.get('integer_not_nullable')(),
+    'initial_sum_insured_amount': common_columns.get('currency')(),
+    'sum_insured_annual_increase_percentage': common_columns.get('percentage')(),
+}
+PolicyBenefitSumInsured = get_phat_table(model_name='PolicyBenefitSumInsured', columndict=tbl_policy_benefit_sum_insured)
+
+# TODO improved version of sum insured
+# tbl_policy_benefit_sum_insured = {
+#     '__tablename__': 'tbl_policy_benefit_sum_insured',
+#     'policy_benefit_id': common_columns.get('integer_not_nullable')(),
+#     'initial_sum_insured_amount': common_columns.get('currency')(),
+#     'sum_insured_annual_increase_percentage': common_columns.get('percentage')(),
+#     'anniversary_date': common_columns.get('date')(),  # TODO needs to be a day of the month
+#     'effective_date': common_columns.get('date')()
+# }
+# PolicyBenefitSumInsured = get_phat_table(model_name='PolicyBenefitSumInsured',
+#                                          columndict=tbl_policy_benefit_sum_insured)
+
+# ------------------------------------- Insured --------------------------------------------
+
+# >>>>>>>>>>>>>>> Life
+
+tbl_policy_benefit_insured_life = {
+    '__tablename__': 'tbl_policy_benefit_insured_life',
+    'policy_benefit_id': common_columns.get('integer_not_nullable')(),
+    'entity_person_id': common_columns.get('integer')(),
+    'relationship_type_id': common_columns.get('integer_not_nullable')(),
+    'date_of_birth': common_columns.get('date')(),
+    'rate_table_line_item_life_id': common_columns.get('integer')(),  # TODO this needs to be moved to another table
+}
+PolicyBenefitInsuredLife = get_phat_table(model_name='PolicyBenefitInsuredLife',
+                                          columndict=tbl_policy_benefit_insured_life)
+
+# >>>>>>>>>>>>>>> Asset
+
+tbl_policy_benefit_insured_asset = {
+    '__tablename__': 'tbl_policy_benefit_insured_asset',
+    'policy_benefit_id': common_columns.get('integer_not_nullable')(),
+    'asset_type_id': common_columns.get('integer_not_nullable')(),
+    'asset_owner_or_employer_entity_id': common_columns.get('integer')(),
+    'policy_benefit_insured_asset_ownership_type_id': common_columns.get('integer')(),
+}
+PolicyBenefitInsuredAsset = get_phat_table(model_name='PolicyBenefitInsuredAsset',
+                                           columndict=tbl_policy_benefit_insured_asset)
+
+PolicyBenefitInsuredAssetOwnershipType = get_type_table(model_name='PolicyBenefitInsuredAssetOwnership',
+                                                        table_name='policy_benefit_insured_asset_ownership')
+
+tbl_policy_benefit_insured_asset_ownership_shared = {
+    '__tablename__': 'tbl_policy_benefit_insured_asset_ownership_shared',
+    'policy_benefit_insured_asset_id': common_columns.get('integer_not_nullable')(),
+    'number_of_shares_in_issue': common_columns.get('integer_not_nullable')(),
+    'number_of_shares_held_by_policy_owner': common_columns.get('integer_not_nullable')(),
+}
+PolicyBenefitInsuredAssetOwnershipShared = get_phat_table(model_name='PolicyBenefitInsuredAssetOwnershipShared',
+                                                          columndict=
+                                                          tbl_policy_benefit_insured_asset_ownership_shared)
+
+# Vehicle
+tbl_policy_benefit_insured_asset_vehicle = {
+    '__tablename__': 'tbl_policy_benefit_insured_asset_vehicle',
+    'policy_benefit_insured_asset_id': common_columns.get('integer_not_nullable')(),
+    'asset_vehicle_category_id': common_columns.get('integer')(),  # get from utilities
+    'rate_table_line_item_vehicle_id': common_columns.get('integer')(),
+
+    # To Identify
+    'vin_number': common_columns.get('title')(),
+    'registration_number': common_columns.get('title')(),
+    'policy_benefit_insured_asset_vehicle_insured_type_id': common_columns.get('integer')(),
+}
+PolicyBenefitInsuredAssetVehicle = get_phat_table(model_name='PolicyBenefitInsuredAssetVehicle', columndict=tbl_policy_benefit_insured_asset_vehicle)
+
+PolicyBenefitInsuredAssetVehicleInsuredType = get_type_table('PolicyBenefitInsuredAssetVehicleInsured', table_name='policy_benefit_insured_asset_vehicle_insured')
+
+# Employee
+tbl_policy_benefit_insured_asset_employee = {
+    '__tablename__': 'tbl_policy_benefit_insured_asset_employee',
+    'policy_benefit_insured_asset_id': common_columns.get('integer_not_nullable')(),
+    'rate_table_line_item_employee_id': common_columns.get('integer')(),
+
+    # To Identify
+    'date_of_birth': common_columns.get('date')(),
+    'entity_person_id': common_columns.get('integer')(),
+}
+PolicyBenefitInsuredAssetEmployee = get_phat_table(model_name='PolicyBenefitInsuredAssetEmployee', columndict=tbl_policy_benefit_insured_asset_employee)
+
+# Property
+tbl_policy_benefit_insured_asset_property = {
+    '__tablename__': 'tbl_policy_benefit_insured_asset_property',
+    'policy_benefit_insured_asset_id': common_columns.get('integer_not_nullable')(),
+    'turnover': common_columns.get('currency')(),
+    'rate_table_line_item_property_id': common_columns.get('integer')(),
+
+    # To identify
+    'property_address': common_columns.get('description')(),
+    'description': common_columns.get('description')(),
+}
+PolicyBenefitInsuredAssetProperty = get_phat_table(model_name='PolicyBenefitInsuredAssetProperty', columndict=tbl_policy_benefit_insured_asset_property)
+
+# Business
+tbl_policy_benefit_insured_asset_business = {
+    '__tablename__': 'tbl_policy_benefit_insured_asset_business',
+    'policy_benefit_insured_asset_id': common_columns.get('integer_not_nullable')(),
+    'turnover': common_columns.get('currency')(),
+    'activity': common_columns.get('title')(),  # TODO might want to make this a type
+    'rate_table_line_item_business_id': common_columns.get('integer')(),
+
+    # To identify
+    'business_organisation_id': common_columns.get('integer')(),
+}
+PolicyBenefitInsuredAssetBusiness = get_phat_table(model_name='PolicyBenefitInsuredAssetBusiness', columndict=tbl_policy_benefit_insured_asset_business)
+
+# Landlord
+tbl_policy_benefit_insured_asset_landlord = {
+    '__tablename__': 'tbl_policy_benefit_insured_asset_landlord',
+    'policy_benefit_insured_asset_id': common_columns.get('integer_not_nullable')(),
+    'rental_amount': common_columns.get('currency')(),
+    'property_address': common_columns.get('description')(),
+}
+PolicyBenefitInsuredAssetLandlord = get_phat_table(model_name='PolicyBenefitInsuredAssetLandlord', columndict=tbl_policy_benefit_insured_asset_landlord)
+
+# ------------------------------------- Beneficiary --------------------------------------------
+
+tbl_policy_benefit_beneficiary = {
+    '__tablename__': 'tbl_policy_benefit_beneficiary',
+    'policy_benefit_id': common_columns.get('integer_not_nullable')(),
+    'entity_id': common_columns.get('integer_not_nullable')(),
+    'share_of_sum_insured_percentage': common_columns.get('percentage')(),
+    'notify': common_columns.get('boolean')(),
+    'relationship_type_id': common_columns.get('integer_not_nullable')(),
+}
+PolicyBenefitBeneficiary = get_phat_table(model_name='PolicyBenefitBeneficiary', columndict=tbl_policy_benefit_beneficiary)
+
+# ------------------------------------- loader --------------------------------------------
+
+tbl_policy_benefit_loader = {
+    '__tablename__': 'tbl_policy_benefit_loader',
+    'policy_benefit_id': common_columns.get('integer_not_nullable')(),
+    'loader_question_answer_id': common_columns.get('integer_not_nullable')(),
+    'premium_effect_amount': common_columns.get('currency')()
+}
+PolicyBenefitLoader = get_phat_table(model_name='PolicyBenefitLoader', columndict=tbl_policy_benefit_loader)

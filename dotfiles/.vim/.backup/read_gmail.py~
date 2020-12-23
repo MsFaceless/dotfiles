@@ -1,0 +1,31 @@
+#!/bin/python
+
+import time
+import email
+import smtplib
+import imaplib
+
+ORG_EMAIL = '@gmail.com'
+FROM_EMAIL = f'camilla.buys{ORG_EMAIL}'
+
+FROM_PWD = 'xbffpljnwcpkxtgk'
+
+SMTP_SERVER = 'imap.gmail.com'
+SMTP_PORT = 993
+
+def read_email_from_gmail():
+    mail = imaplib.IMAP4_SSL(SMTP_SERVER)
+    mail.login(FROM_EMAIL, FROM_PWD)
+    mail.select('inbox')
+    print(mail)
+
+    _, data = mail.search(None, 'ALL')
+    idlist = data[0].split()
+    first_email_id, last_email_id = int(idlist[0]), int(idlist[-1])
+    print(first_email_id)
+
+    return True
+
+
+if __name__ == "__main__":
+    read_email_from_gmail()

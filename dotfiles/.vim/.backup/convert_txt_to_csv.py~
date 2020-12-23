@@ -1,0 +1,43 @@
+#!/bin/python
+
+import os
+import pandas as pd
+
+def get_the_csv(filepath=None, delimiter=','):
+    return pd.read_csv(filepath, delimiter, index_col=[0], low_memory=False)
+
+filepath = os.path.join(os.getcwd() + '/NAExtract')
+newfilepath = os.path.join(os.getcwd() + '/output')
+
+for root, dirs, files in os.walk(filepath):
+    for each in files:
+
+        if each.startswith('.'):
+            continue
+
+        fullpath = os.path.join(root, each)
+
+        openfile = get_the_csv(fullpath, f'\x03')
+        if len(openfile.columns) == 0:
+            openfile = get_the_csv(fullpath, ',')
+
+            if len(openfile.columns) == 0:
+                print('THIS IS STILL WRONG ', each)
+
+
+        print()
+        #print(openfile)
+        print(each, len(openfile.columns))
+
+        continue
+        name, ext = os.path.splitext(each)
+        newname = f'{name}.csv'
+        newfullpath = os.path.join(newfilepath, newname)
+
+
+
+        print('Filename: \n', newname)
+        if not os.path.exists(newfullpath):
+            openfile.to_csv(newfullpath)
+
+        #break

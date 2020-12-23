@@ -1,0 +1,549 @@
+from fastapi import FastAPI, Depends, HTTPException
+from pydantic import BaseModel, BaseConfig, create_model, Field
+from sqlalchemy.orm import Session
+from sqlalchemy import asc, desc
+from model.dbinit import get_db, SessionLocal
+from model.models import active_tables
+from model.link_tables import active_link_tables
+from cruds.link_cruds import active_link_cruds
+from cruds.cruds import active_cruds
+from cruds.crud_utils import get_returnable_dict
+from cruds.type_cruds import active_type_cruds
+
+ADDED_BY = 660066
+
+def check_identity_student_number_entity_match(student_number_identity_id: int, identity_number_identity_id: int, db: Session = Depends(get_db)):
+    EntityIdentityLink = active_link_tables.get("EntityIdentityLink", None)
+    student_link = db.query(EntityIdentityLink). \
+            filter(EntityIdentityLink.identity_id == student_number_identity_id). \
+            filter(EntityIdentityLink.bln_active == True). \
+            first()
+    if not student_link:
+        return False
+
+    identity_link = db.query(EntityIdentityLink). \
+            filter(EntityIdentityLink.identity_id == identity_number_identity_id). \
+            filter(EntityIdentityLink.bln_active == True). \
+            first()
+    if not identity_link:
+        return False
+
+    if not int(student_link.entity_id) == int(identity_link.entity_id):
+        return False
+    return True
+
+def get_student_number_by_value(value: str, db: Session = Depends(get_db)):
+    try: student_number_type_query = active_type_cruds['identitytype']['get_by_name'](db=db, name='Student Number')
+    except: student_number_type_query = {}
+    if not student_number_type_query:
+        return False
+    student_number_type_id = student_number_type_query.get('id', None)
+    if not student_number_type_id:
+        return False
+
+    Identity = active_tables.get('Identity', None)
+    exists = db.query(Identity). \
+            filter(Identity.identity_type_id == student_number_type_id). \
+            filter(Identity.value == value). \
+            first()
+    if not exists:
+        return False
+    return exists
+
+def get_employee_number_by_value(value: str, db: Session = Depends(get_db)):
+    try: employee_number_type_query = active_type_cruds['identitytype']['get_by_name'](db=db, name='Employee Number')
+    except: employee_number_type_query = {}
+    if not employee_number_type_query:
+        return False
+    employee_number_type_id = employee_number_type_query.get('id', None)
+    if not employee_number_type_id:
+        return False
+
+    Identity = active_tables.get('Identity', None)
+    exists = db.query(Identity). \
+            filter(Identity.identity_type_id == employee_number_type_id). \
+            filter(Identity.value == value). \
+            first()
+    if not exists:
+        return False
+    return exists
+
+def get_mobile_number_by_value(value: str, db: Session = Depends(get_db)):
+    try: mobile_number_type_query = active_type_cruds['contacttype']['get_by_name'](db=db, name='Mobile')
+    except: mobile_number_type_query = {}
+    if not mobile_number_type_query:
+        return False
+    mobile_number_type_id = mobile_number_type_query.get('id', None)
+    if not mobile_number_type_id:
+        return False
+    Contact = active_tables.get('Contact', None)
+    exists = db.query(Contact). \
+            filter(Contact.contact_type_id == mobile_number_type_id). \
+            filter(Contact.value == value). \
+            first()
+    if not exists:
+        return False
+    return exists
+
+def get_identity_number_by_value(value: str, db: Session = Depends(get_db)):
+    try: identity_number_type_query = active_type_cruds['identitytype']['get_by_name'](db=db, name='Identity Number')
+    except: identity_number_type_query = {}
+    if not identity_number_type_query:
+        return False
+    identity_number_type_id = identity_number_type_query.get('id', None)
+    if not identity_number_type_id:
+        return False
+
+    Identity = active_tables.get('Identity', None)
+    exists = db.query(Identity). \
+            filter(Identity.identity_type_id == identity_number_type_id). \
+            filter(Identity.value == value). \
+            first()
+    if not exists:
+        return False
+    return exists
+
+def get_entity_identity_link_by_identity_id(id: int, db: Session = Depends(get_db)):
+    EntityIdentityLink = active_link_tables.get("EntityIdentityLink", None)
+    return db.query(EntityIdentityLink). \
+            filter(EntityIdentityLink.identity_id == id). \
+            first()
+
+def get_passport_number_by_value(value: str, db: Session = Depends(get_db)):
+    try: passport_number_type_query = active_type_cruds['identitytype']['get_by_name'](db=db, name='Passport Number')
+    except: passport_number_type_query = {}
+    if not passport_number_type_query:
+        return False
+    passport_number_type_id = passport_number_type_query.get('id', None)
+    if not passport_number_type_id:
+        return False
+
+    Identity = active_tables.get('Identity', None)
+    exists = db.query(Identity). \
+            filter(Identity.identity_type_id == passport_number_type_id). \
+            filter(Identity.value == value). \
+            first()
+    if not exists:
+        return False
+    return exists
+
+def update_alternate_email_by_entity_id(entity_id: int, value: str, db: Session = Depends(get_db)):
+    EntityContactLink = active_link_tables.get("EntityContactLink", None)
+    dbquery = db.query(EntityContactLink). \
+            filter(EntityContactLink.bln_active==True). \
+            filter(EntityContactLink.entity_id==entity_id). \
+            order_by(desc(EntityContactLink.added)). \
+            all()
+    if not dbquery:
+        return False
+
+    Contact = active_tables.get('Contact', None)
+    contact_type_email = active_type_cruds['contacttype']['get_by_name'](db=db, name='Email')
+    contact_type_email_id = contact_type_email.get('id', None)
+
+    target_id = False
+    for link in dbquery:
+        if target_id == True:
+            break
+
+        contact = db.query(Contact). \
+                filter(Contact.id==link.contact_id). \
+                first()
+        if not contact:
+            continue
+        if contact.bln_preferred == True:
+            continue
+
+        if contact.contact_type_id == contact_type_email_id:
+            target_id = contact.id
+
+    if target_id:
+        kwargs = {
+            'target_id' : target_id,
+            'value' : value,
+        }
+        try:
+            contact_record = active_cruds['contact']['update'](db=db, **kwargs)
+        except Exception as e:
+            return False
+        return True
+
+    if not target_id:
+        email_dict = {}
+        email_dict['contact_type_id'] = contact_type_email_id
+        email_dict['added_by'] = ADDED_BY
+        email_dict['bln_preferred'] = False
+        email_dict['name'] = "Alternate Email"
+        email_dict['value'] = value
+        email_record = active_cruds['contact']['create'](db=db, **email_dict)
+        email_contact_id = email_record.get("id", None)
+        email_link_dict = {'entity_id': entity_id, 'contact_id': email_contact_id, 'added_by': ADDED_BY}
+        email_link_record = active_link_cruds['entitycontactlink']['create'](db=db, **email_link_dict)
+        return True
+    return False
+
+def update_mobile_by_entity_id(entity_id: int, value: str, db: Session = Depends(get_db)):
+    EntityContactLink = active_link_tables.get("EntityContactLink", None)
+    dbquery = db.query(EntityContactLink). \
+            filter(EntityContactLink.bln_active==True). \
+            filter(EntityContactLink.entity_id==entity_id). \
+            order_by(desc(EntityContactLink.added)). \
+            all()
+    if not dbquery:
+        return False
+
+    Contact = active_tables.get('Contact', None)
+    contact_type_mobile = active_type_cruds['contacttype']['get_by_name'](db=db, name='Mobile')
+    mobile_id = contact_type_mobile.get('id', None)
+
+    for link in dbquery:
+        contact = db.query(Contact).filter(Contact.id==link.contact_id).first()
+        if contact.contact_type_id == mobile_id:
+            target_id = contact.id
+
+    kwargs = {
+        'target_id' : target_id,
+        'value' : value,
+    }
+    try:
+        contact_record = active_cruds['contact']['update'](db=db, **kwargs)
+    except Exception as e:
+        return False
+    return True
+
+def update_preferred_name_by_entity_id(entity_id: int, value: str, db: Session = Depends(get_db)):
+    Person = active_tables.get('Person', None)
+    dbquery = db.query(Person).filter(Person.entity_id==entity_id).first()
+    if not dbquery:
+        return False
+    kwargs = {
+        'target_id' : dbquery.id,
+        'preferred_name' : value,
+    }
+    try:
+        person_record = active_cruds['person']['update'](db=db, **kwargs)
+    except Exception as e:
+        return False
+    return True
+
+def update_name_by_entity_id(entity_id: int, value: str, db: Session = Depends(get_db)):
+    Person = active_tables.get('Person', None)
+    dbquery = db.query(Person).filter(Person.entity_id==entity_id).first()
+    if not dbquery:
+        return False
+    kwargs = {
+        'target_id' : dbquery.id,
+        'name' : value,
+    }
+    try:
+        person_record = active_cruds['person']['update'](db=db, **kwargs)
+    except Exception as e:
+        return False
+    return True
+
+def update_surname_by_entity_id(entity_id: int, value: str, db: Session = Depends(get_db)):
+    Person = active_tables.get('Person', None)
+    dbquery = db.query(Person).filter(Person.entity_id==entity_id).first()
+    if not dbquery:
+        return False
+    kwargs = {
+        'target_id' : dbquery.id,
+        'surname' : value,
+    }
+    try:
+        person_record = active_cruds['person']['update'](db=db, **kwargs)
+    except Exception as e:
+        return False
+    return True
+
+def update_email_by_entity_id(entity_id: int, value: str, db: Session = Depends(get_db)):
+    EntityContactLink = active_link_tables.get("EntityContactLink", None)
+    dbquery = db.query(EntityContactLink). \
+            filter(EntityContactLink.bln_active==True). \
+            filter(EntityContactLink.entity_id==entity_id). \
+            order_by(desc(EntityContactLink.added)). \
+            all()
+    if not dbquery:
+        return False
+
+    Contact = active_tables.get('Contact', None)
+    contact_type_email = active_type_cruds['contacttype']['get_by_name'](db=db, name='Email')
+    email_id = contact_type_email.get('id', None)
+
+    for link in dbquery:
+        contact = db.query(Contact).filter(Contact.id==link.contact_id).first()
+        if contact.contact_type_id == email_id:
+            target_id = contact.id
+
+    kwargs = {
+        'target_id' : target_id,
+        'value' : value,
+    }
+    try:
+        contact_record = active_cruds['contact']['update'](db=db, **kwargs)
+    except Exception as e:
+        return False
+    return True
+
+def update_identity_by_id(identity_id: int, value: str, db: Session = Depends(get_db)):
+    kwargs = {
+        'target_id' : identity_id,
+        'value' : value,
+    }
+    try:
+        identity_record = active_cruds['identity']['update'](db=db, **kwargs)
+    except Exception as e:
+        return False
+    return True
+
+def get_contact_links(contact_id: int, db: Session = Depends(get_db)):
+    contact_links = []
+    EntityContactLink = active_link_tables.get("EntityContactLink", None)
+    contact_link = db.query(EntityContactLink). \
+            filter(EntityContactLink.bln_active==True). \
+            filter(EntityContactLink.contact_id==contact_id). \
+            order_by(asc(EntityContactLink.added)). \
+            first()
+    entity_id = contact_link.entity_id
+    returnable = get_entity_object_by_id_crud(target_id=entity_id, db=db)
+    return returnable
+
+def get_entity_contact_for_mobile(mobile: str, db: Session = Depends(get_db)):
+    return_dict = {}
+    try: contact_type_query = active_type_cruds['contacttype']['get_by_name'](db=db, name='Mobile')
+    except: contact_type_query = {}
+    contact_type_id = contact_type_query.get('id', None)
+
+    Contact = active_tables.get('Contact', None)
+    try: contact_record = db.query(Contact). \
+                order_by(asc(Contact.added)). \
+                filter(Contact.contact_type_id==contact_type_id). \
+                filter(Contact.bln_active==True). \
+                filter(Contact.value==mobile). \
+                first()
+    except: contact_record = False
+
+    if not contact_record:
+        COUNTRY_CODE = '+27'
+
+        if mobile.startswith('0'):
+            mobile = mobile[1:]
+        if mobile.startswith(COUNTRY_CODE):
+            mobile = mobile[3:]
+
+        print('searching a second time', mobile)
+
+        try: contact_record = db.query(Contact). \
+                    order_by(asc(Contact.added)). \
+                    filter(Contact.contact_type_id==contact_type_id). \
+                    filter(Contact.bln_active==True). \
+                    filter(Contact.value.contains(mobile)). \
+                    first()
+        except: contact_record = False
+        print(contact_record)
+
+    return_dict = get_returnable_dict(contact_record)
+    return return_dict
+
+def get_all_entities_with_mobile(mobile: str, db: Session = Depends(get_db)):
+    returnable = {}
+    try: contact_type_query = active_type_cruds['contacttype']['get_by_name'](db=db, name='Mobile')
+    except: contact_type_query = {}
+    contact_type_id = contact_type_query.get('id', None)
+
+    Contact = active_tables.get('Contact', None)
+    contact_query = db.query(Contact). \
+            filter(Contact.contact_type_id==contact_type_id). \
+            filter(Contact.bln_active==True). \
+            filter(Contact.value==mobile). \
+            first()
+    get_all_by_parent_id = active_link_cruds['entitycontactlink']['get_all_by_parent_id']
+    contact_entities = {}
+    for contact in contact_query:
+        contact_links = get_all_by_parent_id(db=db, parent_id=contact.id, parent_table='contact')
+        contact_entities[contact.id] = [contact.entity_id for contact in contact_links]
+    return contact_entities
+
+def get_all_entity_identities(entity_id: int, db: Session = Depends(get_db)):
+    returnable = {}
+    try: identity_type_query = active_type_cruds['identitytype']['get_by_name'](db=db, name='Username')
+    except: identity_type_query = {}
+    identity_type_id = identity_type_query.get('id', None)
+
+    Identity = active_tables.get('Identity', None)
+    identity_query = db.query(Identity). \
+            filter(Identity.identity_type_id==identity_type_id). \
+            filter(Identity.bln_active==True). \
+            all()
+    return returnable
+
+def get_entity_dict(target_id=None, db: Session = Depends(get_db)):
+    entity_id = target_id
+    entity_record = active_cruds['entity']['get_by_id'](db=db, target_id=entity_id)
+    db.close()
+    if not entity_record: raise HTTPException(status_code=418, detail="Entity Record Lookup Failed")
+    entity_type_id = entity_record.get('entity_type_id', None)
+
+    try: entity_type_query = active_type_cruds['entitytype']['get_by_id'](db=db, type_id=entity_type_id)
+    except: entity_type_query = {}
+    entity_type_name = entity_type_query.get('name', None)
+
+    entity_type_cruds = active_cruds.get(entity_type_name.lower(), None)
+    entity_dict = entity_type_cruds['get_by_id'](db=db, target_id=entity_id, target_column='entity_id')
+    if not entity_dict: raise HTTPException(status_code=418, detail="Entity Record Lookup Failed")
+
+    for column in entity_dict.keys():
+        if column.endswith('type_id'):
+            parent_table = column.split("_")[0]
+            type_record = active_type_cruds.get(f"{parent_table}type").get('get_by_id')(db=db, type_id=entity_dict.get(column))
+            entity_dict[column] = type_record
+
+    if not isinstance(entity_dict, dict): raise HTTPException(status_code=418, detail="Entity Record Lookup Failed")
+    return dict(entity= entity_dict)
+
+def get_all_record_types(db=None, record_type=None, record=None):
+    if not db or not record_type or not record: return False
+    new_record = {}
+    new_record.update(record)
+    for column in record.keys():
+        if column.endswith("_id"):
+            target_table = column[:-3].replace("_", "")
+            table_cruds = active_type_cruds.get(target_table, None)
+            get_by_id_func = table_cruds.get('get_by_id', None)
+            if not get_by_id_func: return False
+            target_id = record.get(column, None)
+            type_record = get_by_id_func(db=db, type_id=target_id)
+            new_record[target_table] = type_record
+            del new_record[column]
+    return new_record
+
+def get_entity_object_by_id_crud(target_id: int, db: Session = Depends(get_db)):
+    entity_id = target_id
+    return_dict = {}
+    entity_dict = get_entity_dict(target_id=target_id, db=db)
+    return_dict.update(entity_dict)
+    links = {}
+    for link_name, link_cruds in active_link_cruds.items():
+        linked_objects = []
+        if link_name.startswith("entity"):
+            linked_records = link_cruds['get_all_by_parent_id'](db=db, parent_id=entity_id, parent_table='entity')
+            if not linked_records: continue
+            noentity_name = link_name[6:]
+            if link_name.endswith('link'): nolink_name = noentity_name[:-4]
+            nonlocal_id_name = f"{nolink_name}_id"
+            for record in linked_records:
+                if hasattr(record, nonlocal_id_name): nonlocal_target_id = getattr(record, nonlocal_id_name)
+                if not nonlocal_target_id: continue
+                nonlocal_cruds = active_cruds.get(nolink_name, None)
+                if not nonlocal_cruds: continue
+                get_by_id_func = nonlocal_cruds.get("get_by_id", None)
+                if not get_by_id_func: continue
+                nonlocal_record = get_by_id_func(db=db, target_id=nonlocal_target_id)
+                nonlocal_record = get_all_record_types(db=db, record_type=link_name, record=nonlocal_record)
+                linked_objects.append(nonlocal_record)
+        out_name = f"{nolink_name}_list"
+        links[out_name] = linked_objects
+    return_dict.update(links)
+    return return_dict
+
+def get_all_person_identity_types(db: Session = Depends(get_db)):
+    return_list = []
+    type_cruds = active_type_cruds.get('entitytype')
+    if not type_cruds: return return_list
+    entity_types_list = type_cruds.get('get_all')(db=db)
+    person_entity_type_id = None
+    for entity in entity_types_list:
+        if entity.name == "Person":
+            person_entity_type_id = entity.id
+
+    entitytype_identitytype_link_cruds = active_link_cruds.get("entitytypeidentitytypelink")
+    get_all_func = entitytype_identitytype_link_cruds.get('get_all_by_parent_id', None)
+    return_list = get_all_func(db=db, parent_table="entitytype", parent_id=person_entity_type_id)
+    person_identity_type_list = []
+    for record in return_list:
+        identity_type_query = active_type_cruds.get("identitytype").get("get_by_id")(db=db, type_id=record.identitytype_id)
+        person_identity_type_list.append(identity_type_query)
+    return person_identity_type_list
+
+def create_or_update_contact_by_value(entity_id: int, value: str, contact_type: str, db: Session = Depends(get_db)):
+    if not entity_id or not value or not contact_type:
+        return False
+    Contact = active_tables.get('Contact', None)
+    EntityContactLink = active_link_tables.get("EntityContactLink", None)
+
+    TheType = active_type_cruds['contacttype']['get_by_name'](db=db, name=contact_type)
+    TheTypeId = TheType.get('id', None)
+
+    dbase_query = db.query(EntityContactLink). \
+            filter(EntityContactLink.bln_active==True). \
+            filter(EntityContactLink.entity_id==entity_id). \
+            all()
+
+    updated = False
+    for link in dbase_query:
+        contact = db.query(Contact).filter(Contact.id==link.contact_id).first()
+        if contact.contact_type_id == TheTypeId:
+            contact.value = value
+            db.flush()
+            updated = True
+            break
+
+    if not updated:
+        kwargs = {
+            'added_by' : ADDED_BY,
+            'contact_type_id' : TheTypeId,
+            'bln_preferred' : True,
+            'value' : value,
+        }
+        result = active_cruds['contact']['create'](db=db, **kwargs)
+
+        contact_id = result.get('id', None)
+
+        link_kwargs = {
+            'added_by' : ADDED_BY,
+            'entity_id' : entity_id,
+            'contact_id' : contact_id,
+        }
+        result = active_link_cruds['entitycontactlink']['create'](db=db, **link_kwargs)
+    return True
+
+def create_or_update_identity_by_value(entity_id: int, value: str, identity_type: str, db: Session = Depends(get_db)):
+    if not entity_id or not value or not identity_type:
+        return False
+    Identity = active_tables.get('Identity', None)
+    EntityIdentityLink = active_link_tables.get("EntityIdentityLink", None)
+
+    TheType = active_type_cruds['identitytype']['get_by_name'](db=db, name=identity_type)
+    TheTypeId = TheType.get('id', None)
+
+    dbase_query = db.query(EntityIdentityLink). \
+            filter(EntityIdentityLink.bln_active==True). \
+            filter(EntityIdentityLink.entity_id==entity_id). \
+            all()
+
+    updated = False
+    for link in dbase_query:
+        identity = db.query(Identity).filter(Identity.id==link.identity_id).first()
+        if identity.identity_type_id == TheTypeId:
+            identity.value = value
+            db.flush()
+            updated = True
+            break
+
+    if not updated:
+        kwargs = {
+            'added_by' : ADDED_BY,
+            'identity_type_id' : TheTypeId,
+            'bln_primary' : True,
+            'value' : value,
+        }
+        result = active_cruds['identity']['create'](db=db, **kwargs)
+        identity_id = result.get('id', None)
+
+        link_kwargs = {
+            'added_by' : ADDED_BY,
+            'entity_id' : entity_id,
+            'identity_id' : identity_id,
+        }
+        result = active_link_cruds['entityidentitylink']['create'](db=db, **link_kwargs)
+    return True

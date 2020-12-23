@@ -1,0 +1,69 @@
+#!/usr/bin/python
+
+import cv2
+import subprocess
+import time
+import os
+import threading
+from ascify import image_to_ascii
+import numpy as np
+import io 
+from PIL import Image
+import pyperclip
+
+curdir = os.path.abspath(os.path.curdir)
+
+PIPE_PATH = "/tmp/my_pipe"
+if os.path.exists(PIPE_PATH):
+    os.remove(PIPE_PATH)
+    os.mkfifo(PIPE_PATH)
+
+
+class WebcamVideoStream():
+    def __init__(self, src=0):
+        self.stream = cv2.VideoCapture(src)
+        #self.stream.set(3, 420)
+        #self.stream.set(4, 320)
+        (self.grabbed, self.frame) = self.stream.read()
+        self.stopped = False
+
+    def start(self):
+        # start the thread to read frames from the video stream
+        threading.Thread(target=self.update, args=()).start()
+        return self
+
+    def update(self):
+        while True:
+            if self.stopped: return
+            (self.grabbed, self.frame) = self.stream.read()
+
+    def read(self):
+        return self.frame
+
+    def stop(self):
+        self.stopped = True
+
+def main_loop(src=0):
+    #frames_list = ['one', 'two']
+    #list_copy = frames_list.copy()
+
+    #stream = WebcamVideoStream(src)
+    #stream.start()
+    #a = subprocess.Popen(['xfce4-terminal', '-e', 'tail --follow {0}'.format(PIPE_PATH)])
+    while True:
+        try:
+            im = Image.open('framedir/frame.jpg')
+            if not im: continue
+            #message = image_to_ascii(im)
+            im.show()
+            #print(message)
+            #with open(PIPE_PATH, "w") as p: p.write(message)   
+        except:
+            continue
+            #a.kill()
+
+        time.sleep(0.1)
+
+
+if __name__ == "__main__":
+    main_loop(src=2)

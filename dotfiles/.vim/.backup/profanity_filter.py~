@@ -1,0 +1,112 @@
+# -*- coding: utf-8 -*-
+""" ProfanitiesFilter """
+
+import re
+import random
+from rocket.model import *
+
+class ProfanitiesFilter(object):
+
+    def __init__(self, ignore_case=True, replacements="*", complete=True, inside_words=False, wordlist_to_remove=[]):
+        """
+        ignore_case -- ignore capitalization
+        replacements -- string with characters to replace the forbidden word
+        complete -- completely remove the word or keep the first and last char?
+        inside_words -- search inside other words?
+        wordlist_to_remove -- list of strings to remove if found
+        """
+        self.ignore_case = ignore_case
+        self.replacements = replacements
+        self.complete = complete
+        self.inside_words = inside_words
+        self.wordlist_to_remove = wordlist_to_remove
+
+    def make_clean_word(self, length):
+        """
+        Generates a random replacement string of a given length
+        using the chars in self.replacements.
+        """
+        return ''.join([random.choice(self.replacements) for i in range(length)])
+
+    def replacer(self, match):
+        value = match.group()
+        if self.complete:
+            return self.make_clean_word(len(value))
+        else:
+            return value[0]+self.make_clean_word(len(value)-2)+value[-1]
+
+    def clean(self, text):
+        """Cleans a string from profanity."""
+        print('start', text)
+
+        regexp_insidewords = {
+            True: r'(%s)',
+            False: r'\b(%s)\b',
+            }
+
+        regexp = (regexp_insidewords[self.inside_words] % '|'.join(self.wordlist_to_remove))
+
+        r = re.compile(regexp, re.IGNORECASE if self.ignore_case else 0)
+
+        text = r.sub(self.replacer, text)
+        print('middle', text)
+
+        text = re.sub(r'http[s]?://\S+', '', text)
+        print('middle', text)
+        text = re.sub(r'\b\w{1,3}\b', '', text)
+        print('middle', text)
+        text = re.sub(r'[^0-9a-zA-Z]+', ' ', text)
+        print('middle', text)
+
+        text = text.title()
+        print('middle', text)
+
+        text = text.replace('^', '')
+        print('middle', text)
+        text = text.replace('!', '')
+        print('middle', text)
+        text = text.replace('?', '')
+        print('middle', text)
+        text = text.replace('(', '')
+        print('middle', text)
+        text = text.replace(')', '')
+        print('middle', text)
+        text = text.replace('@', '')
+        print('middle', text)
+        text = text.replace('*', '')
+        print('middle', text)
+        text = text.replace('/', '')
+        print('middle', text)
+        text = text.replace('#', '')
+        print('middle', text)
+        text = text.replace('%', '')
+        print('middle', text)
+        text = text.replace('|', '')
+        print('middle', text)
+        text = text.replace('~', '')
+        print('middle', text)
+        text = text.replace('$', '')
+        print('middle', text)
+
+        # Extras becuase the first one does not always replace
+        text = text.replace('  ', ' ')
+        print('middle', text)
+        text = text.replace('  ', ' ')
+        print('middle', text)
+        text = text.replace('  ', ' ')
+        print('middle', text)
+        text = text.replace('  ', ' ')
+        print('middle', text)
+        text = text.replace('  ', ' ')
+        print('middle', text)
+        text = text.replace('  ', ' ')
+        print('middle', text)
+        text = text.replace('  ', ' ')
+        print('middle', text)
+        return text
+
+if __name__ == "__main__":
+    
+
+    p = ProfanitiesFilter()
+    p.clean()

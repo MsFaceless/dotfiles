@@ -1,0 +1,52 @@
+# -*- coding: utf-8 -*-
+
+import os
+from datetime import datetime
+from hashlib import sha256
+
+from sqlalchemy import Table, ForeignKey, Column
+from sqlalchemy.types import Unicode, Integer, DateTime, Boolean
+from sqlalchemy.orm import relation, synonym
+
+from rocket.model import DeclarativeBase, metadata, DBSession
+from rocket.lib.model_utils import PhatBase, common_columns, get_phat_table, get_type_table
+
+# ********************* Types ***********************************#
+ClaimStatusType = get_type_table(model_name='ClaimStatus', table_name='claim_status')
+
+# ********************* Claim ***********************************#
+
+tbl_claim = {
+    '__tablename__': 'tbl_claim',
+    'policy_id': common_columns.get('integer_not_nullable')(),
+    'claimant_entity_person_id': common_columns.get('integer')(),
+    }
+Claim = get_phat_table(model_name='Claim', columndict=tbl_claim)
+
+tbl_claim_status = {
+    '__tablename__': 'tbl_claim_status',
+    'claim_id': common_columns.get('integer_not_nullable')(),
+    'claim_status_type_id': common_columns.get('integer_not_nullable')(),
+    'comment': common_columns.get('description')(),
+    'is_current_status': common_columns.get('boolean')(),
+    }
+ClaimStatus = get_phat_table(model_name='ClaimStatus', columndict=tbl_claim_status)
+
+# ********************* Claim Benefit ***************************#
+
+tbl_claim_policy_benefit = {
+    '__tablename__': 'tbl_claim_policy_benefit',
+    'claim_id': common_columns.get('integer_not_nullable')(),
+    'policy_benefit_id': common_columns.get('integer_not_nullable')(),
+    }
+ClaimPolicyBenefit = get_phat_table(model_name='ClaimPolicyBenefit', columndict=tbl_claim_policy_benefit)
+
+tbl_claim_payout = {
+    '__tablename__': 'tbl_claim_payout',
+    'claim_policy_benefit_id': common_columns.get('integer_not_nullable')(),
+    'allocation_type_id': common_columns.get('integer_not_nullable')(),
+    'policy_benefit_beneficiary_id': common_columns.get('integer_not_nullable')(),
+    'due_date': common_columns.get('date')(),
+    'amount': common_columns.get('currency_not_nullable')(),
+    }
+ClaimPayout = get_phat_table(model_name='ClaimPayout', columndict=tbl_claim_payout)

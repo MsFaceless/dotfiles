@@ -1,0 +1,28 @@
+#!/bin/python
+
+import os
+
+filepath = 'inputdata'
+stripstr = 'dbo.'
+
+for r, d, files in os.walk(filepath):
+    for f in files:
+
+        if not stripstr in f:
+            print('skipping', f)
+            continue
+
+        print()
+        print(f)
+
+        newname = f.replace(stripstr, '')
+        print(newname)
+
+        fullpath = os.path.join(os.path.abspath(filepath), f)
+        print(fullpath)
+
+        newfullpath = os.path.join(os.path.abspath(filepath), newname)
+        print(newfullpath)
+
+        os.rename(fullpath, newfullpath)
+        print('DONE')

@@ -1,0 +1,86 @@
+import os
+import importlib
+from dotenv import dotenv_values
+from sqlalchemy import Column
+from sqlalchemy.types import Integer, Unicode, Date, Time, DateTime
+from sqlalchemy import UniqueConstraint
+from sqlalchemy import Column
+from sqlalchemy import ForeignKey
+from sqlalchemy.types import Boolean, Integer, Unicode, Date, Time, DateTime, Numeric, Binary, BigInteger
+from sqlalchemy.orm import relationship
+from sqlalchemy.types import Numeric as Decimal
+from datetime import date, time, datetime
+from lib.modelutils import common_columns, get_type_table, get_table
+from pydantic_sqlalchemy import sqlalchemy_to_pydantic
+
+# Shared between Product and Benefit
+###############################################################################
+# Product
+###############################################################################
+
+env_dict = dotenv_values()
+app_name = env_dict.get("APPNAME")
+vertical_name = env_dict.get("VERTICAL")
+
+user_path = os.path.expanduser('~')
+env_path = os.path.join(user_path, 'enviros')
+live_dir = os.path.join(env_path, 'live')
+vertical_dir = os.path.join(live_dir, vertical_name)
+virtualenv_dir = os.path.join(vertical_dir, f"{app_name}_env")
+app_dir = os.path.join(virtualenv_dir, app_name)
+controllers_dir = os.path.join(app_dir, 'controllers')
+
+def generate_type_tables(controller_name=None, controller_db_dict=None):
+    if not controller_name or not controller_db_dict: return False
+    controller_import = importlib.import_module(f"controllers.{controller_name}.tables")
+    type_table_dict = {}
+    if hasattr(controller_import, 'type_table_list'): 
+        table_list = getattr(controller_import, 'type_table_list')
+    for table_name in table_list:
+        model_name = f"{table_name}Type"
+        new_table_name = ''
+        i = 0
+        for char in list(table_name):
+            if char.isupper(): new_table_name += f"_{char.lower()}"
+            else: new_table_name += f"{char.lower()}"
+            i += 1
+            if i == len(list(table_name)): new_table_name += "_"
+        table_name = f"tbl{new_table_name.lower()}type"
+        base = controller_db_dict.get("base")
+        type_table = get_type_table(model_name, table_name, base, controller_db_dict)
+        type_table_dict[model_name] = type_table
+    return type_table_dict
+
+def generate_tables(controller_name=None, controller_db_dict=None):
+    if not controller_name or not controller_db_dict: return False
+    controller_import = importlib.import_module(f"controllers.{controller_name}.tables")
+
+    return_table_dict = {}
+    if hasattr(controller_import, 'table_dict'): 
+        active_tables_dict = getattr(controller_import, 'table_dict')
+
+        for table_name, table_dict in active_tables_dict.items():
+            actual_table_name = f"tbl_{table_name.lower()}"
+            model_name = table_name.title().replace("_","")
+            base = controller_db_dict.get("base")
+            table = get_table(model_name, table_name, table_dict, base, controller_db_dict)
+            return_table_dict[model_name] = table
+    return return_table_dict
+
+def generate_controller_tables(controller_name=None, controller_db_dict=None):
+    if not any([controller_name, controller_db_dict]): return False
+    controller_dir = os.path.join(controllers_dir, controller_name)
+    controller_table_dict = {}
+    tables_path = os.path.join(controller_dir, 'tables.py')
+    print(tables_path)
+    if not os.path.exists(tables_path): return False
+    controller_import = importlib.import_module(f"controllers.{controller_name}.tables")
+    print(controller_import)
+    if hasattr(controller_import, 'type_table_list'): 
+        type_tables = generate_type_tables(controller_name, controller_db_dict)
+        controller_table_dict.update(type_tables)
+    if hasattr(controller_import, 'table_dict'): 
+        table_dict = getattr(controller_import, 'table_dict')
+        tables = generate_tables(controller_name, controller_db_dict)
+        controller_table_dict.update(tables)
+    return controller_table_dict

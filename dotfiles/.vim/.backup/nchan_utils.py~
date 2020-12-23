@@ -1,0 +1,36 @@
+#!/bin/python
+
+import requests
+
+from tg import request
+
+from dotenv import dotenv_values
+
+ENV_VARS = dotenv_values()
+GATEWAY_BASE_URL = ENV_VARS.get('GATEWAY_BASE_URL', None)
+
+def publish_to_campus(params=None, json_data=None):
+    return post_to_url('pubcampus', params, json_data)
+
+def publish_to_trading(params=None, json_data=None):
+    return post_to_url('pubtrading', params, json_data)
+
+def post_to_url(url='', params=None, json_data=None):
+    print()
+    print('NCHAN')
+    print('post_to_url', url, params, json_data)
+    print()
+    if not url:
+        return None
+    url = f"{GATEWAY_BASE_URL}/{url}"
+    print(url)
+    try:
+        r = requests.post(url, params=params, json=json_data)
+        print(r)
+    except Exception as e:
+        print()
+        print('requests post error')
+        print(e)
+        print()
+        return None
+    return r

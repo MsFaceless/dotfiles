@@ -1,0 +1,436 @@
+# -*- coding: utf-8 -*-
+
+"""Chat Controller module"""
+
+import string
+import logging
+from sqlalchemy import func, desc, asc, or_
+from datetime import datetime, date, timedelta
+from tg import expose, require, redirect, validate, flash, url, request, response, predicates
+
+from eiffel_front.model import *
+
+from eiffel_front.lib.tg_utils import *
+from eiffel_front.lib.base import BaseController
+from eiffel_front.lib.tg_decorators import time_it
+
+from eiffel_front.controllers.common import CommonController
+from eiffel_front.lib.email_creator import EiffelFrontEmailCreator
+
+FILENAME = os.path.abspath(resource_filename('eiffel_front', 'public'))
+PUBLIC_DIRNAME = os.path.join(FILENAME)
+IMAGES_DIRNAME = os.path.join(PUBLIC_DIRNAME, 'img')
+STUDENT_IMG_DIRNAME = os.path.join(IMAGES_DIRNAME, 'students')
+POSTS_IMG_DIRNAME = os.path.join(IMAGES_DIRNAME, 'posts')
+
+COMMON = CommonController()
+
+LOGGER = logging.getLogger(__name__)
+
+class ChatController(BaseController):
+
+    def get_chat(self, *args, **kwargs):
+        sidepanel = self.get_sidepanel_html()
+        selected_contact_id = kwargs.get('selected_contact_id', None)
+        html = f"""
+            <div class="chat-container">
+                <div class="chat-contacts">
+                    {sidepanel}
+                </div>
+                <div class="chat-messages">
+                    <div class="d-flex align-items-center justify-content-center flex-column h-85 p-5">
+                        <h4>Welcome back!</h4>
+                        <div class="welcome-img mt-4">
+                            <svg id="af4a84a9-df7a-48d3-8a0e-abab0432828c" data-name="Layer 1" width="150" height="224" viewBox="0 0 150 223.99999" version="1.1" sodipodi:docname="chat_img.svg" inkscape:version="1.0 (4035a4fb49, 2020-05-01)"><metadata id="metadata72"><rdf:RDF><cc:Work rdf:about=""><dc:format>image/svg+xml</dc:format></cc:Work></rdf:RDF></metadata><defs id="defs70" /><sodipodi:namedview lock-margins="false" inkscape:document-rotation="0" pagecolor="#ffffff" bordercolor="#666666" borderopacity="1" objecttolerance="10" gridtolerance="10" guidetolerance="10" inkscape:pageopacity="0" inkscape:pageshadow="2" inkscape:window-width="1920" inkscape:window-height="1015" id="namedview68" showgrid="false" inkscape:zoom="9.145436" inkscape:cx="8.2699465" inkscape:cy="107.87332" inkscape:window-x="0" inkscape:window-y="37" inkscape:window-maximized="1" inkscape:current-layer="a1a6c59b-3717-4dad-b370-97c9e621082a" /><path style="stroke-width:0.30825" d="m 122.4125,172.73094 c -3.96549,11.62612 -9.47066,23.11357 -16.98565,33.88001 -0.1664,0.2427 -0.3355,0.4801 -0.5059,0.7215 l -22.532676,-6.90409 c 0.0977,-0.233 0.20401,-0.4941 0.31766,-0.7792 6.794689,-16.81171 47.666846,-119.280352 42.818326,-140.43096 0.4586,1.735812 15.45092,59.16681 -3.11176,113.51274 z" fill="#e6e6e6" id="path2" /><path style="stroke-width:0.30825" d="m 109.77392,207.94292 c -0.2706,0.2107 -0.5491,0.419 -0.8305,0.6221 l -16.90346,-5.1793 c 0.19819,-0.1891 0.42867,-0.4121 0.69425,-0.6638 4.33691,-4.18459 17.21936,-16.7205 29.67829,-29.99098 13.38911,-14.26086 26.29229,-29.36743 27.5875,-35.86886 -0.2395,1.48246 -7.81945,46.589 -40.22608,71.08084 z" fill="#e6e6e6" id="path4" /><path style="stroke-width:0.30825" id="bcf9023f-ac5b-481c-aaa4-352627f2cc6c" data-name="Path 33" d="m 111.85984,53.310257 h -1.233 V 19.543035 A 19.543035,19.543035 0 0 0 91.083803,0 H 19.543035 A 19.543035,19.543035 0 0 0 0,19.543035 V 204.79314 a 19.543035,19.543035 0 0 0 19.543035,19.54303 h 71.54046 A 19.543035,19.543035 0 0 0 110.62653,204.79314 V 77.346344 h 1.233 z" fill="#3f3d56" /><path style="stroke-width:0.30825" id="f7950315-d447-41b3-b140-1076b53a001f" data-name="Path 34" d="M 91.87229,5.0839639 H 82.533867 A 6.9340783,6.9340783 0 0 1 76.113642,14.637857 H 35.129058 A 6.9340783,6.9340783 0 0 1 28.709139,5.0848883 H 19.98567 A 14.59501,14.59501 0 0 0 5.3906595,19.679899 v 0 V 204.6572 A 14.59501,14.59501 0 0 0 19.98567,219.25221 H 91.869521 A 14.59501,14.59501 0 0 0 106.46453,204.6572 v -2e-5 0 V 19.678974 A 14.59501,14.59501 0 0 0 91.869521,5.0839639 Z" fill="#ffffff" /><circle style="stroke-width:0.30825" id="f890d8c3-e731-49cb-a2e5-5c59e9f60352" data-name="Ellipse 7" cx="56.052433" cy="194.73555" fill="#e6e6e6" r="8.0144949" /><g id="a1a6c59b-3717-4dad-b370-97c9e621082a" data-name="Group 2" transform="matrix(0.30825,0,0,0.30825,-100.39604,9.2474934e-6)"><rect id="aadecade-068c-4f25-a9ef-29b7b9ecc005" data-name="Rectangle 21" x="363.38699" y="330.46005" width="287.492" height="56.761002" fill="#e6e6e6" /><path id="be47b05f-620a-4a83-9c0d-c2bf8bc76fef" data-name="Path 65" d="m 563.35834,464.134 h 275.235 v -44.5 h -275.235 z" transform="translate(-193.84231,-83.04103)" fill="#ffffff" /><path id="a28d2100-c4d0-4925-85de-1e7d52571659" class="svg_icon" data-name="Path 67" d="m 587.45232,424.55905 a 16.955,16.955 0 1 1 -16.955,16.955 16.955,16.955 0 0 1 16.955,-16.955 z" transform="translate(-193.84231,-83.04103)" /><rect id="bf3352be-1ca2-4e23-bbaf-f2f5ef64af93" data-name="Rectangle 22" x="434.15402" y="351.83804" width="167.33501" height="3.6860001" fill="#e6e6e6" /><rect id="bb396d43-890f-415a-a911-0c113deb0c88" data-name="Rectangle 23" x="434.15402" y="361.42096" width="167.33501" height="3.6860001" fill="#e6e6e6" /></g><g id="a76a8676-f787-4aac-bc26-4d28e625d812" data-name="Group 3" transform="matrix(0.30825,0,0,0.30825,-100.39604,9.2474934e-6)"><rect id="a3fed62c-a480-4fda-a6ab-9c7719a11d03" data-name="Rectangle 21-2" x="363.38699" y="411.46005" width="287.492" height="56.761002" fill="#e6e6e6" /><path id="b2013604-1388-480a-bf39-bc8d6d6f2c30" data-name="Path 65-2" d="m 563.35834,545.134 h 275.235 v -44.5 h -275.235 z" transform="translate(-193.84231,-83.04103)" fill="#ffffff" /><circle id="a10785fe-0480-48e0-a209-79d56eb9fb83" data-name="Ellipse 10" cx="393.61002" cy="439.47302" r="16.955" class="svg_icon" /><rect id="e4ba10f0-0456-4e2c-9d9e-10f625ff54d2" data-name="Rectangle 22-2" x="434.15402" y="432.83804" width="167.33501" height="3.6860001" fill="#e6e6e6" /><rect id="a086a789-ddcc-4a0c-b196-f7973999ed5b" data-name="Rectangle 23-2" x="434.15402" y="442.42096" width="167.33501" height="3.6860001" fill="#e6e6e6" /></g><g id="a5a5e7c6-2328-4bbd-a0bc-78368cb001e7" data-name="Group 4" transform="matrix(0.30825,0,0,0.30825,-100.39604,9.2474934e-6)"><rect id="be3c08ee-83a5-46f6-b550-c65a1a75b35b" data-name="Rectangle 21-3" x="363.38699" y="492.46005" width="287.492" height="56.761002" fill="#e6e6e6" /><path id="beee7471-5a7b-446e-b565-9b3273ba023a" data-name="Path 65-3" d="m 563.35834,626.134 h 275.235 v -44.5 h -275.235 z" transform="translate(-193.84231,-83.04103)" fill="#ffffff" /><circle id="f8684faf-2b28-4db0-a7a9-e69102a88591" data-name="Ellipse 10-2" cx="393.61002" cy="520.47302" r="16.955" class="svg_icon" /><rect id="e7cf9a62-74c8-4968-991d-f63bde6d8d74" data-name="Rectangle 22-3" x="434.15402" y="513.83801" width="167.33501" height="3.6860001" fill="#e6e6e6" /><rect id="b57b1a7e-a030-4cfd-a852-c296d4f42a3d" data-name="Rectangle 23-3" x="434.15402" y="523.42096" width="167.33501" height="3.6860001" fill="#e6e6e6" /></g><circle style="stroke-width:0.30825" cx="55.927586" cy="59.775166" class="svg_icon_alt" id="circle63" r="24.659979" /><path style="stroke-width:0.30825" d="M 65.805575,49.426826 H 46.049613 a 3.2963764,3.2963764 0 0 0 -3.292648,3.292651 v 14.111374 a 3.2963641,3.2963641 0 0 0 3.292648,3.292664 h 19.755962 a 3.2963672,3.2963672 0 0 0 3.29266,-3.292664 V 52.719477 a 3.2963795,3.2963795 0 0 0 -3.29266,-3.292651 z m 0,1.881515 a 1.4045802,1.4045802 0 0 1 0.34948,0.0456 l -10.22517,8.156682 -10.165379,-8.173282 a 1.4120922,1.4120922 0 0 1 0.2851,-0.029 z m 0,16.933661 H 46.049613 A 1.4127612,1.4127612 0 0 1 44.638474,66.830851 V 52.846202 l 10.699663,8.602902 a 0.9407783,0.9407783 0 0 0 1.176116,0.0022 l 10.702482,-8.537518 v 13.917026 a 1.4127642,1.4127642 0 0 1 -1.41116,1.411151 z" fill="#ffffff" id="path65" /></svg>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            """
+        return html
+
+    def get_sidepanel_html(self, selected_contact_id=None, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+        selected_contact_id = selected_contact_id if selected_contact_id else ""
+        student = Student.by_id(usernow.id)
+        filepath = COMMON.get_student_filepath(student.filepath)
+        contacts = self.get_contacts()
+        html = f"""
+            <div class="chat-profile p-2" data-selected-contact-id="{selected_contact_id}">
+                <div class="wrap d-flex align-items-center">
+                    <span class="contact-status"></span>
+                    <img class="rounded-circle w-45 mr-2" src="{filepath}" alt="" />
+                    <div class="meta w-100 d-flex align-items-center justify-content-between">
+                        <div class="meta-left">
+                            <div class="name">{student.display_name}</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="contact-wrapper">{contacts}</div>
+        """
+        javascript = """
+        <script>
+            var chatProfile = $('.chat-profile');
+            $(document).on('chat-counts-changed', function() {
+                var notification_count = $('#notificationCounts').data('chats');
+                var count = (notification_count === 0) ? "" : notification_count;
+                if (count){
+                    var kwargs = {
+                        'selected_contact_id': $(chatProfile).data('selectedContactId')
+                    };
+                    $('.contact-wrapper').load('/chat/get_contacts', kwargs, function(){
+                        return 'false';
+                    });
+                    $('.contact.active').trigger('click');
+                };
+                return false;
+            });
+        </script>
+        """
+        return html + javascript
+
+    @expose()
+    def get_contacts(self, *args, **kwargs):
+        selected_contact_id = str_to_int(kwargs.get('selected_contact_id', None))
+        contacts_html = f"""
+            <ul>
+                <li class="contact p-4 border-1">
+                    <div class="meta w-100 d-flex align-items-center justify-content-between">
+                        No Chat messages yet...
+                    </div>
+                </li>
+            </ul>
+        """
+        contact_list = self.get_eiffel_contacts()
+        if not contact_list:
+            return contacts_html
+        contacts_html = ""
+        for contact in contact_list:
+            selected = 'active' if contact.get('student_id', None) == selected_contact_id else ''
+            contact_id = contact.get('student_id', None)
+            star_rating = COMMON.get_star_rating_view(**{'student_id': contact_id})
+            unread_count = contact.get('unread_count', None)
+            count = ''
+            if unread_count > 0:
+                count = f"""<span class="chat-badge badge badge-pill badge-danger">{unread_count}</span>"""
+            contacts_html += f"""
+                <li class="contact p-2 border-1 {selected}" data-contact-id="{contact_id}" data-chat-id="{contact.get('chat_id', None)}">
+                    <div class="wrap d-flex align-items-center">
+                        <span class="contact-status"></span>
+                        <img class="rounded-circle w-45 mr-2" src="{contact.get('filepath', '/images/pp_no_image.png')}" alt="" />
+                        <div class="meta w-100 d-flex align-items-center justify-content-between">
+                            <div class="meta-left">
+                                <div class="name">{contact.get('student_name', None)}</div>
+                                {star_rating}
+                            </div>
+                            <div class="meta-right mr-2">
+                                {count}
+                            </div>
+
+                        </div>
+                    </div>
+                </li>
+            """
+        html = f"""
+            <div id="chat-search" class="input-group">
+                <div class="input-group-prepend">
+                    <span class="input-group-text border-0 pr-1" id="search-addon">
+                        <i class="fa fa-search" aria-hidden="true"></i>
+                    </span>
+                </div>
+                <input type="text" class="form-control border-0 pl-1" placeholder="Search..." aria-describedby="search-addon">
+            </div>
+            <ul>
+                {contacts_html}
+            </ul>
+            """
+        javascript = """
+        <script>
+            $('.contact').click(function(){
+                var $this = $(this);
+                $('.chat-profile').data('selectedContactId', $($this).data('contactId'));
+                $('.contact').removeClass('active');
+                $($this).addClass('active');
+                $('.contact span.chat-badge').addClass('invisible');
+                $('.chat-contacts').toggleClass('active');
+                $('.chat-messages').load('/chat/get_messages', {'chat_id': $($this).data('chatId')}, function(){
+                    $('.chat-messages').addClass('active');
+                    return 'false';
+                })
+                return false;
+            });
+
+        </script>
+        """
+        return html + javascript
+
+    def get_eiffel_contacts(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+        dbase_query = self.get_current_user_chats()
+        contact_list = []
+        for chat in dbase_query:
+            contact_id = chat.contact1 if not chat.contact1 == usernow.id else chat.contact2
+            student = Student.by_id(contact_id)
+            if not student: continue
+            filepath = COMMON.get_student_filepath(student.filepath)
+            contact_list.append({
+                'student_id': student.id,
+                'chat_id': chat.id,
+                'student_name': student.display_name,
+                'filepath': filepath,
+                'unread_count': self.get_unread_message_count(chat.id),
+                'latest_message': self.get_latest_message_text(chat.id),
+            })
+        return contact_list
+
+    @expose()
+    def get_messages(self, chat_id, *args, **kwargs):
+        if not chat_id:
+            LOGGER.info('DEBUG: get_messages No chat_id present')
+            return 'There are currently no messages for this chat.'
+        self.read_chat_messages(chat_id)
+        usernow = request.identity.get('user', {})
+        recipient = self.get_recipient(chat_id)
+        filepath = COMMON.get_student_filepath(recipient.filepath)
+        dbase_query = DBSession.query(Message). \
+            filter(Message.chat_id == chat_id). \
+            filter(Message.active == 1). \
+            order_by(asc(Message.added)). \
+            all()
+        messages = ''
+        for msg in dbase_query:
+            incoming = False if msg.added_by == usernow.id else True
+            if incoming and not msg.recipient_visible:
+                continue
+            elif not incoming and not msg.sender_visible:
+                continue
+            inout = 'incoming' if incoming else 'outgoing'
+            right = 'text-right' if not incoming else ''
+            messages += f"""
+            <div class="w-100 {right}">
+                <div class="chat-msg {inout} mt-2">
+                    <p class="mb-1">
+                        {msg.message}
+                    <span class="time_date text-right">2020-06-18 08:37:43</span>
+                </div>
+            </div>
+            """
+        html = f"""
+            <div class="chat-profile p-2 d-flex align-items-center">
+                <span class="back-to-contacts mr-3 ml-2"><i class="fa fa-chevron-left"></i></span>
+                <div class="wrap d-flex align-items-center">
+                    <span class="contact-status"></span>
+                    <img class="rounded-circle w-45 mr-2" src="{filepath}" alt="" />
+                    <div class="meta w-100 d-flex align-items-center justify-content-between">
+                        <div class="meta-left">
+                            <div class="name">{recipient.display_name}</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div id='messagesHeader' data-chat-id="{chat_id}" class="msg-wrapper">{messages}</div>
+            <div class="chat-msg-input">
+                <div class="input-group">
+                    <input id="inputMessage" type="text" class="form-control" placeholder="Write your message...">
+                    <div class="input-group-append">
+                        <button id="sendButton" class="btn btn-outline-secondary" type="button" data-recipient-id="{recipient.id}">
+                            <i aria-hidden="true" class="fa fa-paper-plane-o"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        """
+        javascript = """
+        <script>
+            var chat_id = $('#messagesHeader').data('chatId');
+            var sendButton = $('#sendButton');
+            var inputMessage = $('#inputMessage');
+            $(sendButton).click(function(e){
+                e.preventDefault();
+                var kwargs = {
+                    'recipient_id': $(sendButton).data('recipientId'),
+                    'message': $(inputMessage).val(),
+                }
+                $.post('/chat/send_message', kwargs, function(data){
+                    var result = JSON.parse(data);
+                    if (result.success === 'true'){
+                        $('.chat-messages').load('/chat/get_messages', {'chat_id': chat_id}, function(data){
+                            return 'false';
+                        })
+                    }
+                });
+            });
+            $('#messagesHeader').scrollTop($('#messagesHeader')[0].scrollHeight);
+
+            $(inputMessage).focus();
+
+            $(inputMessage).bind('keyup', function(e) {
+                if( e.keyCode === 13 && $(inputMessage).val() && $(inputMessage).val().replace(/\s/g, '').length ) {
+                    $(sendButton).trigger('click');
+                    return 'false';
+                };
+            });
+            $('.back-to-contacts').click(function(){
+                $('.chat-messages').removeClass('active');
+            });
+        </script>
+        """
+        return html + javascript
+
+    def get_latest_message_text(self, chat_id, *args, **kwargs):
+        if not chat_id: return ''
+        message = DBSession.query(Message). \
+            filter(Message.chat_id == chat_id). \
+            filter(Chat.active == True). \
+            order_by(desc(Chat.last_message_datetime)). \
+            first()
+        return message.message
+
+    def get_unread_message_count(self, chat_id, *args, **kwargs):
+        if not chat_id:
+            LOGGER.info('DEBUG: Unread_count No Chat_id')
+            return 0
+        usernow = request.identity.get('user', {})
+        unread_count = DBSession.query(Message). \
+            filter(Message.chat_id == chat_id). \
+            filter(Message.added_by != usernow.id). \
+            filter(Message.unread == 1). \
+            value(func.count(Message.id))
+        return unread_count
+
+    @expose()
+    def send_message(self, *args, **kwargs):
+        recipient_id = str_to_int(kwargs.get('recipient_id', None))
+        if not recipient_id: return json.dumps({'success': 'false'})
+        message = kwargs.get('message', None)
+        if not message: return json.dumps({'success': 'false'})
+        message_id = self.create_message(recipient_id, message)
+        return json.dumps({'success': 'true', 'data': message_id})
+
+    def create_message(self, recipient_id, message='', *args, **kwargs):
+        if not recipient_id: return None
+        usernow = request.identity.get('user', {})
+        chat = self.get_or_create_chat(recipient_id, usernow.id)
+        this = Message()
+        this.chat_id = chat.id
+        this.unread = True
+        this.recipient_visible = True
+        this.sender_visible = True
+        this.message = message
+        this.added_by = usernow.id
+        this.added = datetime.now()
+        this.active = True
+        DBSession.add(this)
+        DBSession.flush()
+        self.update_chat_last_message_datetime(chat.id)
+        return this.id
+
+    def update_chat_last_message_datetime(self, chat_id=None, *args, **kwargs):
+        if not chat_id: return None
+        chat = Chat.by_id(chat_id)
+        chat.last_message_datetime = datetime.now()
+        DBSession.flush()
+        return chat.id
+
+    def get_or_create_chat(self, user1, user2, *args, **kwargs):
+        contact1 = user1 if user1 < user2 else user2
+        contact2 = user1 if user1 > user2 else user2
+        chat = DBSession.query(Chat). \
+            filter(Chat.contact1 == contact1). \
+            filter(Chat.contact2 == contact2). \
+            first()
+        if not chat: return self.create_chat(contact1, contact2)
+        return chat
+
+    def create_chat(self, user1, user2, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+        if not (user1 or user2): return None
+        contact1 = user1 if user1 < user2 else user2
+        contact2 = user1 if user1 > user2 else user2
+        this = Chat()
+        this.contact1 = contact1
+        this.contact1_visible = True
+        this.contact2 = contact2
+        this.contact2_visible = True
+        this.added_by = usernow.id
+        this.added = datetime.now()
+        this.active = True
+        this.last_message_datetime = datetime.now()
+        DBSession.add(this)
+        DBSession.flush()
+        return this
+
+    def get_recipient_id(self, chat_id, *args, **kwargs):
+        if not chat_id: return None
+        chat = Chat.by_id(chat_id)
+        if not chat:
+            LOGGER.info('DEBUG: get_recipient_id No chat record found for chat_id provided')
+            return None
+        usernow = request.identity.get('user', {})
+        return chat.contact1 if chat.contact2 == usernow.id else chat.contact2
+
+    def get_recipient(self, chat_id, *args, **kwargs):
+        if not chat_id: return None
+        chat = Chat.by_id(chat_id)
+        if not chat:
+            LOGGER.info('DEBUG: get_recipient_id No chat record found for chat_id provided')
+            return None
+        usernow = request.identity.get('user', {})
+        recipient_id = chat.contact1 if chat.contact2 == usernow.id else chat.contact2
+        recipient = Student.by_id(recipient_id)
+        return recipient
+
+    def read_chat_messages(self, chat_id=None, *args, **kwargs):
+        if not chat_id: return False
+        usernow = request.identity.get('user', {})
+        dbase_query = DBSession.query(Message). \
+            filter(Message.chat_id == chat_id). \
+            filter(Message.added_by != usernow.id). \
+            filter(Message.unread == 1). \
+            all()
+        for msg in dbase_query:
+            LOGGER.info(msg.message)
+            msg.unread = False
+            DBSession.flush()
+        return True
+
+    def check_unread_messages(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+        count = 0
+        chats = self.get_current_user_chats()
+        for chat in chats:
+            count += self.get_unread_message_count(chat.id)
+        return count
+
+    def get_current_user_chats(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+        return DBSession.query(Chat). \
+            filter(or_(
+                Chat.contact1 == usernow.id,
+                Chat.contact2 == usernow.id
+            )). \
+            filter(Chat.active == True). \
+            order_by(desc(Chat.last_message_datetime)). \
+            all()
+
+    @expose()
+    def send_sale_message(self, *args, **kwargs):
+        data = kwargs.get('data', {})
+        post_item = Post.by_id(data.post_id)
+        to_student = Student.by_id(data.seller_id)
+        amount = str_to_int(data.offer_amount)
+        amount = get_currency_by_locale(amount)
+        message_text = ""
+        if data.bln_offer:
+            message_text = f"I would like to offer you {amount} for {post_item.title} (Listed price {get_currency_by_locale(post_item.price)})"
+        else:
+            message_text = f"I will take {post_item.title} for full price ({amount})"
+        message = f"""
+        Hi {to_student.name},
+        {message_text}
+        """
+        message_id = self.create_message(to_student.id, message)
+        if not message_id:
+            return json.dumps({'success': False})
+        return json.dumps({'success': 'true', 'data': message_id})

@@ -1,0 +1,22 @@
+#!/bin/python
+
+import pandas as pd
+import chardet
+
+filepath = 'inputdata/OSUSR_J0M_MEMBER.csv'
+print(filepath)
+
+result = None
+with open(filepath, 'rb') as f:
+    result = f.read(10000)
+    result = chardet.detect(result)
+print(result)
+
+encoding = result.get('encoding', 'utf-8')
+
+#data = pd.read_table(filepath, encoding=encoding, error_bad_lines=False)
+#data = pd.read_csv(filepath, encoding=encoding, error_bad_lines=False, low_memory=False)
+
+cols = pd.read_csv(filepath, encoding=encoding, nrows=1).columns
+data = pd.read_csv(filepath, encoding=encoding, usecols=cols, low_memory=False)
+print(data)

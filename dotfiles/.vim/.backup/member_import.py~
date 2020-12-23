@@ -1,0 +1,372 @@
+#!/bin/python
+# -*- coding: utf-8 -*-
+
+import os
+import pandas as pd
+from datetime import datetime
+
+from tg import request
+
+import rocket.lib.vault_utils as vault
+from rocket.lib.tg_utils import remove_hash_from_filename, str_to_date
+from rocket.lib.type_utils import TypeDictionary
+
+from rocket.model import DBSession
+from rocket.model.sql_entity import Entity, EntityPerson
+from rocket.model.sql_batch_import import MemberRequest
+from rocket.model.sql_batch_import import BatchImport, BatchImportAudit, BatchImportError
+
+TYPEUTIL = TypeDictionary()
+
+class MemberImport():
+
+    def __repr__(self):
+        return f'<MemberImport: filename={self.filename}>'
+
+    def __init__(self, *args, **kwargs):
+        self.batch_import_id = None
+        self.filename = kwargs.get('filename', None)
+        self.excel_dirname = kwargs.get('excel_dirname', None)
+        self.import_type_id = kwargs.get('import_type_id', None)
+        self.user_id = self.get_user_id_from_usernow()
+        self.sane_filename = remove_hash_from_filename(self.filename)
+
+    def start_import(self, *args, **kwargs):
+        start = datetime.now()
+        self.create_batch_import()
+        message = f'Member import starting for {self.sane_filename}'
+        self.create_batch_import_audit(message)
+
+        parse_result = self.run_parse()
+        if not parse_result:
+            return False
+
+        import_result = self.run_import()
+        if not import_result:
+            return False
+
+        complete_result = self.run_complete()
+        if not complete_result:
+            return False
+
+        end = datetime.now()
+        message = f'Member import finished for {self.sane_filename} it took {end-start} seconds.'
+        self.create_batch_import_audit(message)
+        return True
+
+    def run_complete(self, *args, **kwargs):
+        start = datetime.now()
+        message = f'Complete starting for {self.sane_filename}'
+        self.create_batch_import_audit(message)
+
+        requestlist = MemberRequest.by_attr_all('batch_import_id', self.batch_import_id)
+        if requestlist:
+            len_requestlist = len([x for x in requestlist])
+            self.create_batch_import_error(f'{len_requestlist} MemberRequests still exist for {self.sane_filename}')
+
+        this = BatchImport.by_id(self.batch_import_id)
+        this.notes = 'Start=>Parse=>Import=>Complete'
+        DBSession.flush()
+
+        end = datetime.now()
+        message = f'Complete finished for {self.sane_filename} it took {end-start} seconds.'
+        self.create_batch_import_audit(message)
+        return True
+
+    def run_import(self, *args, **kwargs):
+        start = datetime.now()
+        message = f'Import starting for {self.sane_filename}'
+        self.create_batch_import_audit(message)
+
+        this_import = BatchImport.by_id(self.batch_import_id)
+        this_import.notes = 'Start=>Parse=>Import'
+        rejected_count = this_import.rejected_count
+        DBSession.flush()
+
+        gender_unknown = TYPEUTIL.get_id_of_name('entity_person_gender_type', 'unknown')
+        if not gender_unknown:
+            return False
+
+        title_mr = DBSession.query(EntityPersonTitle). \
+                filter_by(title == 'mr'). \
+                first()
+        if not title_mr:
+            return False
+        title_mr = title_mr.id
+
+        identity_type_identity_number = TYPEUTIL.get_id_of_name('entity_person_identity_type', 'identity_number')
+        if not identity_type_identity_number:
+            return False
+
+        contact_type_mobile = TYPEUTIL.get_id_of_name('entity_contact_type', 'mobile')
+        if not contact_type_mobile:
+            return False
+
+        requestlist = MemberRequest.by_attr_all('batch_import_id', self.batch_import_id)
+        for req in requestlist:
+
+            exists = EntityPersonIdentity.by_attr_first('value', req.identity_number)
+            if exists:
+                personobj = None
+                # TODO fetch this properly
+
+            else:
+                entity_person_gender_type_id = TYPEUTIL.get_id_of_name('person_gender_type', req.gender.lower())
+                entity_person_gender_type_id = entity_person_gender_type_id if entity_person_gender_type_id else gender_unknown
+
+                date_of_birth = req.date_of_birth.isoformat()
+                dict_person = {
+                    'active' : True,
+                    'added_by' : self.user_id,
+                    'added' : datetime.now().isoformat(),
+                    'surname' : req.surname,
+                    'firstname' : req.first_name,
+                    'preferred_name' : req.first_name,
+                    'entity_person_gender_type_id' : entity_person_gender_type_id,
+                    'entity_person_title_id' : title_mr,
+                    'date_of_birth' : date_of_birth,
+                    'language_id' : 117, # English
+                    'identity_type_id' : identity_type_identity_number,
+                    'number' : req.identity_number,
+                    'entity_contact_type_id' : contact_type_mobile,
+                    'value' : req.mobile,
+                }
+                personobj = None
+                # TODO fetch this properly
+
+            if not personobj:
+                rejected_count += 1
+                self.create_batch_import_error(f'Member record creation failed for MemberRequest {req.id}')
+                continue
+
+            person_id = personobj.get('id', None)
+            if not person_id:
+                rejected_count += 1
+                self.create_batch_import_error(f'Could not retrieve person_id for MemberRequest {req.id}')
+                continue
+
+            exists = EntityPerson.by_attr_first('person_id', person_id)
+            if exists:
+                rejected_count += 1
+                self.create_batch_import_error(f'Member already exists for MemberRequest {req.id}')
+                continue
+
+            entity = Entity()
+            entity.entity_type_id = 2
+            entity.added_by = self.user_id
+            DBSession.add(entity)
+            DBSession.flush()
+
+            entity_person = EntityPerson()
+            entity_person.entity_id = entity.id
+            entity_person.added_by = self.user_id
+            DBSession.add(entity_person)
+            DBSession.flush()
+
+            if req.beneficiary_identity_number:
+
+                exists = EntityPersonIdentity.by_attr_first('value', req.beneficiary_identity_number)
+                if exists:
+                    beneficiaryobj = None
+                    # TODO fetch this properly
+
+                else:
+                    date_of_birth = req.beneficiary_date_of_birth.isoformat()
+                    dict_person = {
+                        'active' : True,
+                        'added_by' : self.user_id,
+                        'added' : datetime.now().isoformat(),
+                        'surname' : req.beneficiary_surname,
+                        'firstname' : req.beneficiary_first_name,
+                        'preferred_name' : req.beneficiary_first_name,
+                        'entity_person_gender_type_id' : gender_unknown,
+                        'entity_person_title_id' : title_mr,
+                        'date_of_birth' : date_of_birth,
+                        'language_id' : 117, # English
+                        'identity_type_id' : identity_type_identity_number,
+                        'number' : req.beneficiary_identity_number,
+                        'entity_contact_type_id' : contact_type_mobile,
+                        'value' : req.beneficiary_mobile,
+                    }
+                    beneficiaryobj = None
+                    # TODO fetch this properly
+
+                if not beneficiaryobj:
+                    rejected_count += 1
+                    self.create_batch_import_error(f'Beneficiary record creation failed for MemberRequest {req.id}')
+                    continue
+
+                person_id = beneficiaryobj.get('id', None)
+                if not person_id:
+                    rejected_count += 1
+                    self.create_batch_import_error(f'Could not retrieve beneficiary person_id for MemberRequest {req.id}')
+                    continue
+
+                exists = EntityPerson.by_attr_first('person_id', person_id)
+                if exists:
+                    rejected_count += 1
+                    self.create_batch_import_error(f'Beneficiary already exists for MemberRequest {req.id}')
+                    continue
+
+                entity = Entity()
+                entity.entity_type_id = 2
+                entity.added_by = self.user_id
+                DBSession.add(entity)
+                DBSession.flush()
+
+                entity_person = EntityPerson()
+                entity_person.entity_id = entity.id
+                entity_person.added_by = self.user_id
+                DBSession.add(entity_person)
+                DBSession.flush()
+
+            DBSession.delete(req)
+
+        this_import = BatchImport.by_id(self.batch_import_id)
+        this_import.rejected_count = rejected_count
+
+        accepted_count = this_import.total_count - rejected_count
+        this_import.accepted_count = accepted_count
+
+        DBSession.flush()
+
+        end = datetime.now()
+        message = f'Import finished for {self.sane_filename} it took {end-start} seconds.'
+        self.create_batch_import_audit(message)
+        return True
+
+    def run_parse(self, *args, **kwargs):
+        start = datetime.now()
+        message = f'Parse starting for {self.sane_filename}'
+        self.create_batch_import_audit(message)
+
+        fileobject = self.get_file_from_pandas()
+        if fileobject.empty:
+            return False
+
+        rejected_count = 0
+
+        for i, row in fileobject.iterrows():
+
+            if not self.check_mandatory_member_fields(row):
+                rejected_count += 1
+                self.create_batch_import_error(f'Missing member information for row {i+1}')
+                continue
+
+            if not self.check_optional_beneficiary_fields(row):
+                rejected_count += 1
+                self.create_batch_import_error(f'Missing beneficiary information for row {i+1}')
+                continue
+
+            identity_number = row.get('IDNumber', None)
+            exists = MemberRequest.by_attr_first('identity_number', identity_number)
+            if exists:
+                #rejected_count += 1
+                self.create_batch_import_error(f'Duplicate member request for row {i+1}')
+                continue
+
+            exists = EntityPersonIdentity.by_attr_first('value', identity_number)
+            if exists:
+                #rejected_count += 1
+                self.create_batch_import_error(f'Duplicate member identity_number for row {i+1}')
+                continue
+
+            member_request = MemberRequest()
+            member_request.batch_import_id = self.batch_import_id
+            member_request.identity_number = row.get('IDNumber', None)
+            member_request.first_name = row.get('Name', None)
+            member_request.surname = row.get('Surname', None)
+            member_request.mobile = row.get('MobileNumber', None)
+            member_request.intermediary_code = row.get('IntermediaryCode', None)
+            member_request.gender = row.get('Gender', None)
+            member_request.date_of_birth = row.get('DOB', None)
+            member_request.startdate = row.get('StartingDate', None)
+            member_request.group_reference = row.get('GroupReference', None)
+            member_request.client_code = row.get('ClientCode', None)
+            member_request.added_by = self.user_id
+
+            beneficiary_date_of_birth = str_to_date(row.get('BeneficiaryDOB', None), '%Y-%m-%d')
+            if beneficiary_date_of_birth:
+                member_request.beneficiary_date_of_birth = beneficiary_date_of_birth
+                member_request.beneficiary_identity_number = row.get('BeneficiaryIDNumber', None)
+                member_request.beneficiary_first_name = row.get('BeneficiaryFirstName', None)
+                member_request.beneficiary_surname = row.get('BeneficiarySurname', None)
+                member_request.beneficiary_mobile = row.get('BeneficiaryMobileNumber', None)
+
+            DBSession.add(member_request)
+            DBSession.flush()
+
+        this_import = BatchImport.by_id(self.batch_import_id)
+        this_import.notes = 'Start=>Parse'
+        this_import.total_count = fileobject.shape[0]
+        this_import.rejected_count = rejected_count
+        DBSession.flush()
+
+        end = datetime.now()
+        message = f'Parse finished for {self.sane_filename} it took {end-start} seconds.'
+        self.create_batch_import_audit(message)
+        return True
+
+    def check_mandatory_member_fields(self, row):
+        name = row.get('Name', None)
+        surname = row.get('Surname', None)
+        mobile = row.get('MobileNumber', None)
+        identity_number = row.get('IDNumber', None)
+        return all([name, surname, mobile, identity_number])
+
+    def check_optional_beneficiary_fields(self, row):
+        bene_name = row.get('BeneficiaryFirstName', None)
+        bene_surname = row.get('BeneficiarySurname', None)
+        bene_mobile = row.get('BeneficiaryMobileNumber', None)
+        bene_identity_number = row.get('BeneficiaryIDNumber', None)
+        bene_list = [bene_name, bene_surname, bene_mobile, bene_identity_number]
+        if not any(bene_list): return True
+        if any(bene_list) and all(bene_list): return True
+        return False
+
+    def get_user_id_from_usernow(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+        return usernow.id
+
+    def get_file_from_pandas(self, *args, **kwargs):
+        filepath = os.path.join(self.excel_dirname, self.filename)
+        if not os.path.isfile(filepath):
+            return None
+        fileobj = pd.read_excel(filepath, header=0, skip_blank_lines=True).fillna('')
+        if fileobj.empty:
+            return None
+        return fileobj
+
+    def create_batch_import(self, *args, **kwargs):
+        if not self.batch_import_id:
+
+            this_import = BatchImport.by_attr_first('filename', self.sane_filename)
+            if this_import:
+                self.batch_import_id = this_import.id
+
+            else:
+                this_import = BatchImport()
+                this_import.import_type_id = self.import_type_id
+                this_import.filename = self.sane_filename
+                this_import.notes = 'Start'
+                this_import.added_by = self.user_id
+                DBSession.add(this_import)
+                DBSession.flush()
+                self.batch_import_id = this_import.id
+
+    def create_batch_import_audit(self, message, *args, **kwargs):
+        this = BatchImportAudit()
+        this.batch_import_id = self.batch_import_id
+        this.audit_date_time = datetime.now()
+        this.audit = message
+        this.added_by = self.user_id
+        DBSession.add(this)
+        DBSession.flush()
+
+    def create_batch_import_error(self, message, *args, **kwargs):
+        this = BatchImportError()
+        this.batch_import_id = self.batch_import_id
+        this.message = message
+        this.added_by = self.user_id
+        DBSession.add(this)
+        DBSession.flush()

@@ -1,0 +1,8 @@
+#!/bin/python
+
+import requests
+target = "https://testing.calabashpay.co.za"
+sub_target = f"{target}/subcampus"
+print(sub_target)
+r = requests.get(sub_target, json={'username' : 'john20'})
+print(r.text)

@@ -1,0 +1,6 @@
+drop database hardware_catalogue;
+create database hardware_catalogue;
+grant all on hardware_catalogue.* to 'iss'@'localhost' identified by 'jistiss';
+drop database jistestimating;
+create database jistestimating;
+grant all on jistestimating.* to 'iss'@'localhost' identified by 'jistiss';

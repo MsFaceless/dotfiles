@@ -1,0 +1,44 @@
+#rsync -varuzzP qa_webserver:/srv/raidstorage/tripstar/hub/datadir/ALERT_00274_2_*_20200802*.jpg ../input_data/
+#rsync -varuzzP qa_webserver:/srv/raidstorage/tripstar/hub/datadir/ALERT_00274_3_*_20200802*.jpg ../input_data/
+#rsync -varuzzP qa_webserver:/srv/raidstorage/tripstar/hub/datadir/00274_*20200802*_N30.jpg ../input_data/
+#rsync -varuzzP qa_webserver:/srv/raidstorage/tripstar/hub/datadir/00274_*20200802*_N40.jpg ../input_data/
+#
+#rsync -varuzzP qa_webserver:/srv/raidstorage/tripstar/hub/datadir/ALERT_00274_2_*_20200803*.jpg ../input_data/
+#rsync -varuzzP qa_webserver:/srv/raidstorage/tripstar/hub/datadir/ALERT_00274_3_*_20200803*.jpg ../input_data/
+#rsync -varuzzP qa_webserver:/srv/raidstorage/tripstar/hub/datadir/00274_*20200803*_N30.jpg ../input_data/
+#rsync -varuzzP qa_webserver:/srv/raidstorage/tripstar/hub/datadir/00274_*20200803*_N40.jpg ../input_data/
+#
+#rsync -varuzzP qa_webserver:/srv/raidstorage/tripstar/hub/datadir/ALERT_00274_2_*_20200731*.jpg ../input_data/
+#rsync -varuzzP qa_webserver:/srv/raidstorage/tripstar/hub/datadir/ALERT_00274_3_*_20200731*.jpg ../input_data/
+#rsync -varuzzP qa_webserver:/srv/raidstorage/tripstar/hub/datadir/00274_*20200731*_N30.jpg ../input_data/
+#rsync -varuzzP qa_webserver:/srv/raidstorage/tripstar/hub/datadir/00274_*20200731*_N40.jpg ../input_data/
+#
+#rsync -varuzzP qa_webserver:/srv/raidstorage/tripstar/hub/datadir/ALERT_00274_2_*_20200730*.jpg ../input_data/
+#rsync -varuzzP qa_webserver:/srv/raidstorage/tripstar/hub/datadir/ALERT_00274_3_*_20200730*.jpg ../input_data/
+#rsync -varuzzP qa_webserver:/srv/raidstorage/tripstar/hub/datadir/00274_*20200730*_N30.jpg ../input_data/
+#rsync -varuzzP qa_webserver:/srv/raidstorage/tripstar/hub/datadir/00274_*20200730*_N40.jpg ../input_data/
+#
+#rsync -varuzzP qa_webserver:/srv/raidstorage/tripstar/hub/datadir/ALERT_00274_2_*_20200729*.jpg ../input_data/
+#rsync -varuzzP qa_webserver:/srv/raidstorage/tripstar/hub/datadir/ALERT_00274_3_*_20200729*.jpg ../input_data/
+#rsync -varuzzP qa_webserver:/srv/raidstorage/tripstar/hub/datadir/00274_*20200729*_N30.jpg ../input_data/
+#rsync -varuzzP qa_webserver:/srv/raidstorage/tripstar/hub/datadir/00274_*20200729*_N40.jpg ../input_data/
+#
+#rsync -varuzzP qa_webserver:/srv/raidstorage/tripstar/hub/datadir/ALERT_00274_2_*_20200805*.jpg ../input_data/
+#rsync -varuzzP qa_webserver:/srv/raidstorage/tripstar/hub/datadir/ALERT_00274_3_*_20200805*.jpg ../input_data/
+#rsync -varuzzP qa_webserver:/srv/raidstorage/tripstar/hub/datadir/00274_*20200805*_N30.jpg ../input_data/
+#rsync -varuzzP qa_webserver:/srv/raidstorage/tripstar/hub/datadir/00274_*20200805*_N40.jpg ../input_data/
+
+#rsync -varuzzP qa_webserver:/srv/raidstorage/tripstar/hub/datadir/ALERT_01855_2_*_20200805*.jpg ../input_data/
+#rsync -varuzzP qa_webserver:/srv/raidstorage/tripstar/hub/datadir/ALERT_01855_3_*_20200805*.jpg ../input_data/
+#rsync -varuzzP qa_webserver:/srv/raidstorage/tripstar/hub/datadir/01855_*20200805*_N30.jpg ../input_data/
+#rsync -varuzzP qa_webserver:/srv/raidstorage/tripstar/hub/datadir/01855_*20200805*_N40.jpg ../input_data/
+
+rsync -varuzzP qa_webserver:/srv/raidstorage/tripstar/hub/datadir/ALERT_01348_2_*_20200805*.jpg ../input_data/
+rsync -varuzzP qa_webserver:/srv/raidstorage/tripstar/hub/datadir/ALERT_01348_3_*_20200805*.jpg ../input_data/
+rsync -varuzzP qa_webserver:/srv/raidstorage/tripstar/hub/datadir/01348_*20200805*_N30.jpg ../input_data/
+rsync -varuzzP qa_webserver:/srv/raidstorage/tripstar/hub/datadir/01348_*20200805*_N40.jpg ../input_data/
+
+rsync -varuzzP qa_webserver:/srv/raidstorage/tripstar/hub/datadir/ALERT_00274_2_*_20200805*.jpg ../input_data/
+rsync -varuzzP qa_webserver:/srv/raidstorage/tripstar/hub/datadir/ALERT_00274_3_*_20200805*.jpg ../input_data/
+rsync -varuzzP qa_webserver:/srv/raidstorage/tripstar/hub/datadir/00274_*20200805*_N30.jpg ../input_data/
+rsync -varuzzP qa_webserver:/srv/raidstorage/tripstar/hub/datadir/00274_*20200805*_N40.jpg ../input_data/

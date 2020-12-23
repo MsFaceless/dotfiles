@@ -1,0 +1,1668 @@
+priority 1
+
+# The smart def and smart class snippets use a global option called
+# "g:ultisnips_python_style" which, if set to "doxygen" will use doxygen
+# style comments in docstrings.
+
+global !p
+
+NORMAL  = 0x1
+DOXYGEN = 0x2
+SPHINX  = 0x3
+GOOGLE  = 0x4
+NUMPY   = 0x5
+
+SINGLE_QUOTES = "'"
+DOUBLE_QUOTES = '"'
+
+
+class Arg(object):
+	def __init__(self, arg):
+		self.arg = arg
+		self.name = arg.split('=')[0].strip()
+
+	def __str__(self):
+		return self.name
+
+	def __unicode__(self):
+		return self.name
+
+	def is_kwarg(self):
+		return '=' in self.arg
+
+	def capitalize(self):
+		return self.arg.title()
+
+
+def get_args(arglist):
+	args = [Arg(arg) for arg in arglist.split(',') if arg]
+	args = [arg for arg in args if arg.name != 'self']
+	return args
+
+def get_quoting_style(snip):
+	style = snip.opt("g:ultisnips_python_quoting_style", "double")
+	if style == 'single':
+		return SINGLE_QUOTES
+	return DOUBLE_QUOTES
+
+def triple_quotes(snip):
+	style = snip.opt("g:ultisnips_python_triple_quoting_style")
+	if not style:
+		return get_quoting_style(snip) * 3
+	return (SINGLE_QUOTES if style == 'single' else DOUBLE_QUOTES) * 3
+
+def triple_quotes_handle_trailing(snip, quoting_style):
+	"""
+	Generate triple quoted strings and handle any trailing quote char,
+	which might be there from some autoclose/autopair plugin,
+	i.e. when expanding ``"|"``.
+	"""
+	if not snip.c:
+		# Do this only once, otherwise the following error would happen:
+		# RuntimeError: The snippets content did not converge: …
+		_, col = vim.current.window.cursor
+		line = vim.current.line
+
+		# Handle already existing quote chars after the trigger.
+		_ret = quoting_style * 3
+		while True:
+			try:
+				nextc = line[col]
+			except IndexError:
+				break
+			if nextc == quoting_style and len(_ret):
+				_ret = _ret[1:]
+				col = col+1
+			else:
+				break
+		snip.rv = _ret
+	else:
+		snip.rv = snip.c
+
+def get_style(snip):
+	style = snip.opt("g:ultisnips_python_style", "normal")
+
+	if    style == "doxygen": return DOXYGEN
+	elif  style == "sphinx": return SPHINX
+	elif  style == "google": return GOOGLE
+	elif  style == "numpy": return NUMPY
+	else: return NORMAL
+
+
+def format_arg(arg, style):
+	if style == DOXYGEN:
+		return "@param %s TODO" % arg
+	elif style == SPHINX:
+		return ":param %s: TODO" % arg
+	elif style == NORMAL:
+		return ":%s: TODO" % arg
+	elif style == GOOGLE:
+		return "%s (TODO): TODO" % arg
+	elif style == NUMPY:
+		return "%s : TODO" % arg
+
+
+def format_return(style):
+	if style == DOXYGEN:
+		return "@return: TODO"
+	elif style in (NORMAL, SPHINX):
+		return ":returns: TODO"
+	elif style == GOOGLE:
+		return "Returns: TODO"
+
+
+def write_docstring_args(args, snip):
+	if not args:
+		snip.rv += ' {0}'.format(triple_quotes(snip))
+		return
+
+	snip.rv += '\n' + snip.mkline('', indent='')
+
+	style = get_style(snip)
+
+	if style == GOOGLE:
+		write_google_docstring_args(args, snip)
+	elif style == NUMPY:
+		write_numpy_docstring_args(args, snip)
+	else:
+		for arg in args:
+			snip += format_arg(arg, style)
+
+
+def write_google_docstring_args(args, snip):
+	kwargs = [arg for arg in args if arg.is_kwarg()]
+	args = [arg for arg in args if not arg.is_kwarg()]
+
+	if args:
+		snip += "Args:"
+		snip.shift()
+		for arg in args:
+			snip += format_arg(arg, GOOGLE)
+		snip.unshift()
+		snip.rv += '\n' + snip.mkline('', indent='')
+
+	if kwargs:
+		snip += "Kwargs:"
+		snip.shift()
+		for kwarg in kwargs:
+			snip += format_arg(kwarg, GOOGLE)
+		snip.unshift()
+		snip.rv += '\n' + snip.mkline('', indent='')
+
+
+def write_numpy_docstring_args(args, snip):
+	if args:
+		snip += "Parameters"
+		snip += "----------"
+
+	kwargs = [arg for arg in args if arg.is_kwarg()]
+	args = [arg for arg in args if not arg.is_kwarg()]
+
+	if args:
+		for arg in args:
+			snip += format_arg(arg, NUMPY)
+	if kwargs:
+		for kwarg in kwargs:
+			snip += format_arg(kwarg, NUMPY) + ', optional'
+	snip.rv += '\n' + snip.mkline('', indent='')
+
+
+def write_init_body(args, parents, snip):
+	parents = [p.strip() for p in parents.split(", ")]
+	parents = [p for p in parents if p != 'object']
+
+	for p in parents:
+		snip += p + ".__init__(self)"
+
+	if parents:
+		snip.rv += '\n' + snip.mkline('', indent='')
+
+	for arg in args:
+		snip += "self._%s = %s" % (arg, arg)
+
+
+def write_slots_args(args, snip):
+	args = ['"_%s"' % arg for arg in args]
+	snip += '__slots__ = (%s, )' % ', '.join(args)
+
+
+def write_function_docstring(t, snip):
+	"""
+	Writes a function docstring with the current style.
+
+	:param t: The values of the placeholders
+	:param snip: UltiSnips.TextObjects.SnippetUtil object instance
+	"""
+	snip.rv = ""
+	snip >> 1
+
+	args = get_args(t[2])
+	if args:
+		write_docstring_args(args, snip)
+
+	style = get_style(snip)
+
+	if style == NUMPY:
+		snip += 'Returns'
+		snip += '-------'
+		snip += 'TODO'
+	else:
+		snip += format_return(style)
+	snip.rv += '\n' + snip.mkline('', indent='')
+	snip += triple_quotes(snip)
+
+def write_model_columnjold(args, snip, prefix):
+	for arg in args:
+		if arg.name == 'id':
+			snip += "id = Column(Integer, autoincrement=True, primary_key=True)"
+		else:
+			snip += "%s = Column(Unicode(255))" % (arg)
+
+def write_model_column(args,snip,prefix):
+	for arg in args:
+		if arg.name == 'id':
+			snip += "id = Column(Integer, autoincrement=True, primary_key=True)"
+		else:
+			snip += "%s = Column(Unicode(255)) " % (arg)
+
+def write_outputlist(args, snip, prefix):
+	if len(args) >= 1:
+		first = args[0]
+		snip += """'{0}' : "<div class='edit {1}_edit' {1}_id='{{1}}'>{{0}}</div>".format(item.{0}, item.id),  """.format(first, prefix)
+		for arg in args[1:]:
+			snip += "'{0}' : item.{0}, ".format(arg)
+	else:
+		for arg in args:
+			snip += "'{0}' : item.{0}, ".format(arg)
+
+def write_new_form_cards(args, snip, prefix):
+	for arg in args:
+		snip += """<div class="col-md-6">
+					<div class="form-group row">
+						<label class="col-md-3 col-form-label" required for="{0}">{1}</label>
+						<div class="col-md-9">
+							<input id="{0}" type="text" name="{0}" class="form-control" required='true'>
+						</div>
+					</div>
+				</div>""".format(arg, arg.capitalize())
+
+def write_edit_form_cards(args, snip, prefix):
+	for arg in args:
+		if arg.name.lower() == 'id':
+			snip += """<div style='display:none' class="col-md-6">
+					<div class="form-group row">
+						<label class="col-md-3 col-form-label" required for="{2}_{0}">{1}</label>
+						<div class="col-md-9">
+							<input id="{0}" type="text" name="{2}_{0}" value="{{this.{0}}}" class="form-control" required='true'>
+						</div>
+					</div>
+				</div>""".format(arg, arg.capitalize(), prefix)
+		else:
+			snip += """<div class="col-md-6">
+					<div class="form-group row">
+						<label class="col-md-3 col-form-label" required for="{0}">{1}</label>
+						<div class="col-md-9">
+							<input id="{0}" type="text" name="{0}" value="{{this.{0}}}" class="form-control" required='true'>
+						</div>
+					</div>
+				</div>""".format(arg, arg.capitalize())
+
+def write_headers(args, snip, prefix):
+	for arg in args:
+		snip += "'{0}', ".format(arg.capitalize())
+
+def write_headerwidths(args, snip, prefix):
+	for i, arg in enumerate(args):
+		if i != 0:
+			snip += "'', "
+
+def write_headerwidths_pdf(args, snip, prefix):
+	for arg in args:
+		if 'id' in arg.name:
+			snip += '80, '
+		elif 'date' in arg.name:
+			snip += '80, '
+		else:
+			snip += '180, '
+
+def write_tdclassnames(args, snip, prefix):
+	for arg in args:
+		snip += "'', "
+
+def write_dictstuff(args, snip, prefix):
+	for arg in args:
+		snip += "'{0}', ".format(arg)
+
+def write_new_inputbox(args, snip, prefix):
+	for i, arg in enumerate(args):
+		if arg.name != 'id':
+			snip += """<div class="form-group row">
+		  <label class="col-4 col-form-label" for="{1}" required>{2}</label>
+		  <div class="col-8"><input class="form-control" id='{1}' name='{1}' required/></div>
+		</div> """.format(prefix, arg, arg.capitalize())
+
+def write_edit_inputbox(args, snip, prefix):
+	for i, arg in enumerate(args):
+		if arg.name == 'id':
+			snip += """<label style='display: none;' for="{0}_{1}">{3}:</label>
+		<input style='display: none;' id='{0}_{1}' name='{0}_{1}' value='{{{2}}}'/> """.format(prefix, arg, i+1, arg.capitalize())
+		else:
+			snip += """<div class="form-group row">
+		  <label class="col-4 col-form-label" for="{1}" required>{3}</label>
+		  <div class="col-8"><input class="form-control" id='{1}' name='{1}' value='{{{2}}}' required/></div>
+		</div> """.format(prefix, arg, i+1, arg.capitalize())
+
+def write_search_kwarglist(args, snip, prefix):
+	for arg in args:
+		if 'date' in arg.name:
+			snip += """{1}_start = kwargs.get('{1}_start', None)""".format(prefix, arg)
+			snip += """{1}_end = kwargs.get('{1}_end', None)""".format(prefix, arg)
+		elif 'id' in arg.name:
+			snip += """{0}_{1} = kwargs.get('{0}_{1}', None)""".format(prefix, arg)
+		else:
+			snip += """{1} = kwargs.get('{1}', None)""".format(prefix, arg)
+
+def write_search_init_datepicker(args, snip, prefix):
+	for arg in args:
+		if 'date' in arg.name:
+			snip += """ $("#{0}_{1}_start").datepicker().datepicker( "option", "dateFormat", "yy-mm-dd" );""".format(prefix, arg)
+			snip += """ $("#{0}_{1}_end").datepicker().datepicker( "option", "dateFormat", "yy-mm-dd" );""".format(prefix, arg)
+
+def write_init_datepicker_values(args, snip, prefix):
+	for arg in args:
+		if 'date' in arg.name:
+			snip +="""
+		 	var {0}_{1} = $("#{0}_{1}").val()
+		    $("#{0}_{1}").datepicker().datepicker( "option", "dateFormat", "yy-mm-dd" );
+			$("#{0}_{1}").val({0}_{1})
+					""".format(prefix, arg, arg.capitalize())
+
+def write_init_datepicker(args, snip, prefix):
+	for arg in args:
+		if 'date' in arg.name:
+			snip +=""" $("#{1}").datepicker().datepicker( "option", "dateFormat", "yy-mm-dd" ); """.format(prefix, arg, arg.capitalize())
+
+def write_datepicker_js(args, snip, prefix):
+	for arg in args:
+		if 'date' in arg.name:
+			snip +="""$("#{1}").datetimepicker({{ format: 'DD/MM/YYYY' }}); """.format(prefix, arg, arg.capitalize())
+
+def write_search_dbase_queries(args, snip, prefix, classname, dbsession):
+	for arg in args:
+		if 'id' in arg.name:
+			snip += """if {0}_{1}: """.format(prefix, arg, classname, dbsession)
+			snip >> 1
+			snip +="""dbase_query = {3}.query({2}). \\
+		    filter({2}.{0}_{1}=={0}_{1}). \\""".format(prefix, arg, classname, dbsession)
+			snip >> 3
+			snip +="""filter({2}.active==1). \\
+		    order_by(asc({2}.{0}_id)).limit(LIMIT)""".format(prefix, arg, classname, dbsession)
+			snip << 4
+
+		elif 'date' in arg.name:
+			snip += """if {1}_start:""".format(prefix, arg, classname, dbsession)
+			snip >> 1
+			snip +="""if not {1}_end: {1}_end = datetime.date(datetime.now())""".format(prefix, arg, classname, dbsession)
+			snip +="""dbase_query = {3}.query({2}). \\
+			filter({2}.{1}>={1}_start). \\
+			filter({2}.{1}<={1}_end). \\""".format(prefix, arg, classname, dbsession)
+			snip >> 3
+			snip +="""filter({2}.active==1). \\
+			order_by(asc({2}.id)).limit(LIMIT)""".format(prefix, arg, classname, dbsession)
+			snip << 4
+
+		else:
+			snip += """if {1}:""".format(prefix, arg, classname, dbsession)
+			snip >> 1
+			snip +="""searchphrase = "%"+kwargs['{1}']+"%" """.format(prefix, arg, classname, dbsession)
+			snip +="""dbase_query = {3}.query({2}). \\
+			filter({2}.{1}.like(searchphrase)). \\""".format(prefix, arg, classname, dbsession)
+			snip >> 3
+			snip +="""filter({2}.active==1). \\
+			order_by(asc({2}.{1})).limit(LIMIT)""".format(prefix, arg, classname, dbsession)
+			snip << 4
+
+def write_pdf_paragraph_args(args, snip, prefix):
+	for arg in args:
+		if 'id' in arg.name:
+			snip += """
+            {0}.{0}_{1},
+					""".format(prefix, arg)
+		elif 'date' in arg.name:
+			snip += """
+            Paragraph(checknullvalue({0}.{0}_{1}), pdffile.styleNormal),
+						""".format(prefix, arg)
+
+		else:
+			snip += """
+            Paragraph(checknullvalue({0}.{0}_{1}), pdffile.styleNormal),
+						""".format(prefix, arg)
+
+def write_edit_kwarglist(args, snip, prefix):
+	for i, arg in enumerate(args):
+		snip += """this_row.{1},
+				""".format(prefix, arg, i+1)
+
+def write_savenew_record(args, snip, prefix):
+	for arg in args:
+		if arg.name != 'id':
+			snip += """this.{1} = kwargs.get('{1}', None)""".format(prefix, arg)
+
+def write_save_record_nowui(args, snip, prefix):
+	for arg in args:
+		if arg.name != 'id':
+			snip += """this.{1} = data.get('{1}', None)""".format(prefix, arg)
+
+def write_saveedit_record(args, snip, prefix):
+	for arg in args:
+		if arg.name != 'id':
+			snip += """this.{1} = kwargs.get('{1}', None)""".format(prefix, arg)
+endglobal
+
+##############
+# Turbogears #
+##############
+
+snippet _crud "Create Crud Operations" b
+class ${1:VanillaController}(BaseController):
+	`!p snip.rv = triple_quotes(snip)`${3:Docstring for $1. }`!p snip.rv = triple_quotes(snip)`
+
+    @expose('zordon_app.templates.$4')
+    def ${4:things}s_console(self):
+        return dict(page='${4/\w+\s*/\u$0/g} Console')
+
+	$0
+endsnippet
+
+snippet _tgcreateclass_nowui_modal "Create TG Now UI' Classes with Modals" b
+#class_name = ${1:GenericClassName}
+#table_name =${2}
+#prefix =${3}
+#postfix =${4}
+#columns_to_create = [$5] #id - primary_key autoincrement=True
+#cont_name =${6}
+#html_template_name =${7}
+#dbsession =${8}
+#controller_name =${9}
+#view_cols_list = [$10]
+#search_cols_list = [$11]
+#pdf_cols_list = [$12]
+#link_to_id_or_None =${13}
+#link_class_name_None =${14}
+
+############################
+# Model
+############################
+
+class $1(DeclarativeBase):
+    __tablename__='$2'`!p
+snip.rv = ""
+snip >> 1
+args = get_args(t[5])
+write_model_column(args, snip, t[4])
+if args:
+	snip.rv += '\n' + snip.mkline('', indent='') `
+    active = Column(Boolean, default=True)
+    added_by = Column(Integer, nullable=False)
+    added = Column(DateTime, default=datetime.now)
+
+############################
+# Controller
+############################
+
+$0
+class $9(BaseController):
+	`!p snip.rv = triple_quotes(snip)`Docstring for $6.`!p snip.rv = triple_quotes(snip)`
+
+	def __init__(self, *args, **kwargs):
+		pass
+
+	@require(predicates.not_anonymous())
+    @expose('rocket_app.templates.generic')
+    def $2s(self, *args, **kwargs):
+        html = self.get_active_$2_html(*args, **kwargs)
+        javascript = self.get_javascript_$2_onload()
+		title = "${2/\w+\s*/\u$0/g}"
+        return dict(title=title, html=html, javascript=javascript)
+
+    @expose()
+    def get_active_$2_html(self, *args, **kwargs):
+        usernow = request.identity['user']
+		dbase_query = self.get_active_$2_list(*args, **kwargs)
+        outputlist = []
+		for item in dbase_query:
+			outputlist.append({ `!p
+snip >> 4
+args = get_args(t[10])
+write_outputlist(args, snip, t[2]) `
+							 })
+		dbcolumnlist=[ `!p
+snip >> 4
+snip.rv = ""
+args = get_args(t[10])
+write_dictstuff(args, snip, t[4]) `
+					]
+		theadlist=[ `!p
+snip >> 4
+snip.rv = ""
+args = get_args(t[10])
+write_headers(args, snip, t[4]) `
+				]
+		$2table = build_html_table(outputlist, dbcolumnlist, theadlist, "$2_table")
+		html = f"""
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                <div class="card-header">
+                    <div class="row d-flex">
+                        <div class="col-md-6">
+                            <h4 class="card-title">${2/\w+\s*/\u$0/g}</h4>
+                        </div>
+                        <div class="col-md-6 text-right">
+                            <button id="create_new_$2" class="btn btn-primary ml-auto">Create a New ${2/\w+\s*/\u$0/g}</button>
+                        </div>
+                    </div>
+                    <div class="row d-flex align-items-center">
+                        <div class="col-md-4">
+                            <input type="text" class="form-control search" name="searchphrase" placeholder="Search">
+                        </div>
+                        <div class="col-md-8">
+                            <button class="btn btn-primary action_search">Search</button>
+                            <button class="btn btn-primary">Reset</button>
+                        </div>
+                    </div>
+                    <hr>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        {$2table}
+                    </div>
+                </div>
+                </div>
+            </div>
+			<div id='dialogdiv'></div>
+		"""
+		return html
+
+    @expose()
+    def get_javascript_$2_onload(self, *args, **kwargs):
+        javascript = """
+        $("#create_new_$2").click(function(){
+            $('#dialogdiv').load('/$6/get_modal_new_$2?', function(data){
+                return false;
+            });
+        });
+        $(".$2_edit").click(function(){
+            var kwargs = '$2_id='+$(this).attr('$2_id');
+            $('#dialogdiv').load('/$6/get_modal_edit_$2?'+kwargs, function(data){
+                return false;
+            });
+        });
+		"""
+		return javascript
+
+    @expose()
+    def get_modal_new_$2(self, *args, **kwargs):
+        html = """
+        <div class="modal fade" id="dialog_new_$2" tabindex="-1" role="dialog" aria-labelledby="my$2Label" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <div class="col-md-6">
+                            <h4 class="card-title">New ${2/\w+\s*/\u$0/g}</h4>
+                        </div>
+                    </div>
+                    <div class="modal-body">
+                        <form id='form_new_$2'> `!p
+snip >> 8
+args = get_args(t[10])
+write_new_form_cards(args, snip, t[2]) `
+                        </form>
+                    </div>
+                    <div class="modal-footer">
+                        <button id='save_new_$2' class="btn btn-primary">Save</button>
+                        <button class="btn btn-outline-primary $2_back">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+		"""
+        javascript = """
+		<script>
+        setFormValidation('#form_new_$2'); `!p
+snip >> 2
+snip.rv = ""
+args = get_args(t[5])
+write_datepicker_js(args, snip, t[2])`
+        $('#save_new_$2').click(function(){
+             var valid = FormIsValid("#form_new_$2");
+             if(valid){
+                var formserial = getFormData('#form_new_$2');
+                var data = {data : JSON.stringify(formserial)};
+
+                $.post('/$6/save_new_$2?', data, function(data){
+                    var result = JSON.parse(data);
+                    if(result.success === true){
+                        $.redirect('/$6/$2s');
+                    };
+                    return false;
+                });
+             }
+        });
+        $('.$2_back').click(function(){
+			$('#dialog_new_$2').modal('hide');
+        });
+		$('#dialog_new_$2').modal();
+		</script>
+	 	"""
+		return html + javascript
+
+    @expose()
+    def get_modal_edit_$2(self, *args, **kwargs):
+		$2_id = kwargs.get('$2_id', None)
+        if not $2_id: return ''
+		this = self.get_$2_by_id(*args, **kwargs)
+        if not this: return ''
+		checked = 'checked' if this.active else ''
+        html = f"""
+        <div class="modal fade" id="dialog_edit_$2" tabindex="-1" role="dialog" aria-labelledby="my$2Label" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <div class="col-md-6">
+                            <h4 class="card-title">New ${2/\w+\s*/\u$0/g}</h4>
+                        </div>
+                    </div>
+                    <div class="modal-body">
+                        <form id='form_edit_$2'> `!p
+snip >> 7
+args = get_args(t[5])
+write_edit_form_cards(args, snip, t[2]) `
+							<div class="form-group row">
+							  <label class="col-4 col-form-label" for="active" required>Active</label>
+							  <div class="col-8"><div class="form-check">
+								<input class="form-check-input" type="checkbox" name="active" id="active" {checked}/></div>
+							  </div>
+							</div>
+                        </form>
+                    </div>
+                    <div class="modal-footer">
+                        <button id='save_edit_$2' class="btn btn-primary">Save</button>
+                        <button class="btn btn-outline-primary $2_back">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+		"""
+        javascript = """
+		<script>
+        setFormValidation('#form_edit_$2'); `!p
+snip >> 2
+snip.rv = ""
+args = get_args(t[5])
+write_datepicker_js(args, snip, t[2])`
+        $('#save_edit_$2').click(function(){
+             var valid = FormIsValid("#form_edit_$2");
+             if(valid){
+                var formserial = getFormData('#form_edit_$2');
+                var data = {data : JSON.stringify(formserial)};
+
+                $.post('/$6/save_edit_$2?', data, function(data){
+                    var result = JSON.parse(data);
+                    if(result.success === true){
+                        $.redirect('/$6/$2s');
+                    };
+                    return false;
+                });
+             }
+        });
+        $('.$2_back').click(function(){
+			$('#dialog_edit_$2').modal('hide');
+        });
+		$('#dialog_edit_$2').modal();
+		</script>
+	 	"""
+		return html + javascript
+
+    @expose()
+    def save_new_$2(self, *args, **kwargs):
+        data = json.loads(kwargs.get('data', json.dumps({})))
+        if not data: return json.dumps({'success' : False, 'data' : 'No data provided'})
+        usernow = request.identity['user']
+        this = $1()`!p
+snip >> 2
+args = get_args(t[5])
+write_save_record_nowui(args, snip, t[4]) `
+        this.added_by = usernow.id
+        $8.add(this)
+        $8.flush()
+        return json.dumps({'success' : True, 'data' : this.id})
+
+    @expose()
+    def save_edit_$2(self, *args, **kwargs):
+        data = json.loads(kwargs.get('data', json.dumps({})))
+        if not data: return json.dumps({'success' : False, 'data' : 'No data provided'})
+        usernow = request.identity['user']
+		this = self.get_$2_by_id(**data)
+        if not this: return json.dumps({'success' : False, 'data' : 'No $2 found for id provided'}) `!p
+snip >> 2
+args = get_args(t[5])
+write_save_record_nowui(args, snip, t[2]) `
+		if not data.get('active', None): this.active = False
+        $8.flush()
+        return json.dumps({'success' : True, 'data' : this.id})
+
+	@expose()
+	def get_$2_by_id(self, *args, **kwargs):
+		return $8.query($1). \
+			filter($1.id==kwargs.get('$2_id', None)). \
+			first()
+
+	@expose()
+	def get_active_$2_list(self, *args, **kwargs):
+		searchphrase = kwargs.get('searchphrase', None)
+`!p
+snip >> 2
+args = get_args(t[11])
+write_search_kwarglist(args, snip, t[2])`
+`!p
+snip >> 2
+write_search_dbase_queries(args, snip, t[2], t[1], t[8])`
+		else:
+			dbase_query = $8.query($1). \
+				filter($1.active==1). \
+				order_by(asc($1.id)). \
+				limit(LIMIT)
+		return dbase_query
+endsnippet
+
+snippet _tgcreateclass_nowui "Create TG Now UI' Classes" b
+#class_name = ${1:GenericClassName}
+#table_name =${2}
+#prefix =${3}
+#postfix =${4}
+#columns_to_create = [$5] #id - primary_key autoincrement=True
+#cont_name =${6}
+#html_template_name =${7}
+#dbsession =${8}
+#controller_name =${9}
+#view_cols_list = [$10]
+#search_cols_list = [$11]
+#pdf_cols_list = [$12]
+#link_to_id_or_None =${13}
+#link_class_name_None =${14}
+
+############################
+# Model
+############################
+
+class $1(DeclarativeBase):
+    __tablename__='$2'`!p
+snip.rv = ""
+snip >> 1
+args = get_args(t[5])
+write_model_column(args, snip, t[4])
+if args:
+	snip.rv += '\n' + snip.mkline('', indent='') `
+    active = Column(Boolean, default=True)
+    added_by = Column(Integer, nullable=False)
+    added = Column(DateTime, default=datetime.now)
+
+############################
+# Controller
+############################
+
+$0
+class $9(BaseController):
+	`!p snip.rv = triple_quotes(snip)`Docstring for $6.`!p snip.rv = triple_quotes(snip)`
+
+	def __init__(self, *args, **kwargs):
+		pass
+
+	@require(predicates.not_anonymous())
+    @expose('rocket_app.templates.generic')
+    def $2s(self, *args, **kwargs):
+        html = self.get_active_$2_html(*args, **kwargs)
+        javascript = self.get_javascript_$2_onload()
+		title = "${2/\w+\s*/\u$0/g}"
+        return dict(title=title, html=html, javascript=javascript)
+
+    @expose()
+    def get_active_$2_html(self, *args, **kwargs):
+        usernow = request.identity['user']
+		dbase_query = self.get_active_$2_list(*args, **kwargs)
+        outputlist = []
+		for item in dbase_query:
+			outputlist.append({ `!p
+snip >> 4
+args = get_args(t[10])
+write_outputlist(args, snip, t[2]) `
+							 })
+		dbcolumnlist=[ `!p
+snip >> 4
+snip.rv = ""
+args = get_args(t[10])
+write_dictstuff(args, snip, t[4]) `
+					]
+		theadlist=[ `!p
+snip >> 4
+snip.rv = ""
+args = get_args(t[10])
+write_headers(args, snip, t[4]) `
+				]
+		$2table = build_html_table(outputlist, dbcolumnlist, theadlist, "$2_table")
+		html = f"""
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                <div class="card-header">
+                    <div class="row d-flex">
+                        <div class="col-md-6">
+                            <h4 class="card-title">${2/\w+\s*/\u$0/g}</h4>
+                        </div>
+                        <div class="col-md-6 text-right">
+                            <button id="create_new_$2" class="btn btn-primary ml-auto">Create a New ${2/\w+\s*/\u$0/g}</button>
+                        </div>
+                    </div>
+                    <div class="row d-flex align-items-center">
+                        <div class="col-md-4">
+                            <input type="text" class="form-control search" name="searchphrase" placeholder="Search">
+                        </div>
+                        <div class="col-md-8">
+                            <button class="btn btn-primary action_search">Search</button>
+                            <button class="btn btn-primary">Reset</button>
+                        </div>
+                    </div>
+                    <hr>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        {$2table}
+                    </div>
+                </div>
+                </div>
+            </div>
+		"""
+		return html
+
+    @expose()
+    def get_javascript_$2_onload(self, *args, **kwargs):
+        javascript = """
+        $("#create_new_$2").click(function(){
+            $.redirect('/$6/new_$2');
+        });
+        $(".$2_edit").click(function(){
+            var data = {$2_id : $(this).attr('$2_id')};
+            $.redirect('/$6/edit_$2', data);
+        });
+		"""
+		return javascript
+
+    @expose('rocket_app.templates.generic')
+    def new_$2(self, *args, **kwargs):
+        html = """
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header d-flex">
+                        <div class="col-md-6">
+                            <h4 class="card-title">New ${2/\w+\s*/\u$0/g}</h4>
+                        </div>
+                        <div class="col-md-6 text-right">
+                            <button class="btn btn-primary ml-auto action_back $2_back">Back to ${2/\w+\s*/\u$0/g} List</button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <form id='form_new_$2'> `!p
+snip >> 8
+args = get_args(t[10])
+write_new_form_cards(args, snip, t[2]) `
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-body">
+                        <button id='save_new_$2' class="btn btn-primary">Save</button>
+                        <button class="btn btn-outline-primary $2_back">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+		"""
+        javascript = """
+        setFormValidation('#form_new_$2'); `!p
+snip >> 2
+snip.rv = ""
+args = get_args(t[5])
+write_datepicker_js(args, snip, t[2])`
+        $('#save_new_$2').click(function(){
+             var valid = FormIsValid("#form_new_$2");
+             if(valid){
+                var formserial = getFormData('#form_new_$2');
+                var data = {data : JSON.stringify(formserial)};
+
+                $.post('/$6/save_new_$2?', data, function(data){
+                    var result = JSON.parse(data);
+                    if(result.success === true){
+                        $.redirect('/$6/$2s');
+                    };
+                    return false;
+                });
+             }
+        });
+        $('.$2_back').click(function(){
+            $.redirect('/$6/$2s');
+        });
+	 	"""
+		title = "New ${2/\w+\s*/\u$0/g}"
+        return dict(title=title, html=html, javascript=javascript)
+
+    @expose('rocket_app.templates.generic')
+    def edit_$2(self, *args, **kwargs):
+		$2_id = kwargs.get('$2_id', None)
+        if not $2_id: redirect('/$6/$2s')
+		this = self.get_$2_by_id(*args, **kwargs)
+        if not this: redirect('/$6/$2s')
+        html = f"""
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header d-flex">
+                        <div class="col-md-6">
+                            <h4 class="card-title">Edit ${2/\w+\s*/\u$0/g}</h4>
+                        </div>
+                        <div class="col-md-6 text-right">
+                            <button class="btn btn-primary ml-auto action_back $2_back">Back to ${2/\w+\s*/\u$0/g} List</button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <form id='form_edit_$2'> `!p
+snip >> 8
+args = get_args(t[5])
+write_edit_form_cards(args, snip, t[2]) `
+							<div class="col-md-12">
+								<div class="form-group row">
+								  <label class="col-3 col-form-label" for="active" required>Active</label>
+								  <div class="col-9"><div class="form-check">
+									  <label class="form-check-label">
+										<input class="form-check-input" type="checkbox" name="active" id="active" {checked}/></div>
+									  </label>
+								  </div>
+								</div>
+							</div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-body">
+                        <button id='save_edit_$2' class="btn btn-primary">Save</button>
+                        <button class="btn btn-outline-primary $2_back">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+		"""
+        javascript = """
+        setFormValidation('#form_edit_$2'); `!p
+snip >> 2
+snip.rv = ""
+args = get_args(t[5])
+write_datepicker_js(args, snip, t[2])`
+        $('#save_edit_$2').click(function(){
+             var valid = FormIsValid("#form_edit_$2");
+             if(valid){
+                var formserial = getFormData('#form_edit_$2');
+                var data = {data : JSON.stringify(formserial)};
+
+                $.post('/$6/save_edit_$2?', data, function(data){
+                    var result = JSON.parse(data);
+                    if(result.success === true){
+                        $.redirect('/$6/$2s');
+                    };
+                    return false;
+                });
+             }
+        });
+        $('.$2_back').click(function(){
+            $.redirect('/$6/$2s');
+        });
+	 	"""
+		title = "Edit ${2/\w+\s*/\u$0/g}"
+        return dict(title=title, html=html, javascript=javascript)
+
+    @expose()
+    def save_new_$2(self, *args, **kwargs):
+        data = json.loads(kwargs.get('data', json.dumps({})))
+        if not data: return json.dumps({'success' : False})
+        usernow = request.identity['user']
+        this = $1()`!p
+snip >> 2
+args = get_args(t[5])
+write_save_record_nowui(args, snip, t[4]) `
+        this.added_by = usernow.id
+        $8.add(this)
+        $8.flush()
+        return json.dumps({'success' : True})
+
+    @expose()
+    def save_edit_$2(self, *args, **kwargs):
+        data = json.loads(kwargs.get('data', json.dumps({})))
+        if not data: return json.dumps({'success' : False})
+        usernow = request.identity['user']
+		this = self.get_$2_by_id(**data)
+        if not this: return json.dumps({'success' : False}) `!p
+snip >> 2
+args = get_args(t[5])
+write_save_record_nowui(args, snip, t[2]) `
+		if not data.get('active', None): this.active = False
+        $8.flush()
+        return json.dumps({'success' : True})
+
+	@expose()
+	def get_$2_by_id(self, *args, **kwargs):
+		return $8.query($1). \
+			filter($1.id==kwargs.get('$2_id', None)). \
+			first()
+
+	@expose()
+	def get_active_$2_list(self, *args, **kwargs):
+		searchphrase = kwargs.get('searchphrase', None)
+`!p
+snip >> 2
+args = get_args(t[11])
+write_search_kwarglist(args, snip, t[2])`
+`!p
+snip >> 2
+write_search_dbase_queries(args, snip, t[2], t[1], t[8])`
+		else:
+			dbase_query = $8.query($1). \
+				filter($1.active==1). \
+				order_by(asc($1.id)). \
+				limit(LIMIT)
+		return dbase_query
+endsnippet
+
+snippet _tgcreateclass "Create TG' Classes" b
+#class_name = ${1:GenericClassName}
+#table_name =${2}
+#prefix =${3}
+#postfix =${4}
+#columns_to_create = [$5] #id - primary_key autoincrement=True
+#cont_name =${6}
+#html_template_name =${7}
+#dbsession =${8}
+#controller_name =${9}
+#view_cols_list = [$10]
+#search_cols_list = [$11]
+#pdf_cols_list = [$12]
+#link_to_id_or_None =${13}
+#link_class_name_None =${14}
+
+############################
+# Model
+############################
+
+class $1(DeclarativeBase):
+    __tablename__='$2'`!p
+snip.rv = ""
+snip >> 1
+args = get_args(t[5])
+write_model_column(args, snip, t[4])
+if args:
+	snip.rv += '\n' + snip.mkline('', indent='') `
+    active = Column(Boolean, default=True)
+    added_by = Column(Integer, nullable=False)
+    added = Column(DateTime, default=datetime.now)
+
+############################
+# Controller
+############################
+
+$0
+class $9(BaseController):
+	`!p snip.rv = triple_quotes(snip)`Docstring for $6.`!p snip.rv = triple_quotes(snip)`
+
+	@require(predicates.not_anonymous())
+    @expose('lexis_app.templates.generic')
+    def index(self):
+		page = "${2/\w+\s*/\u$0/g}"
+		html = """
+        <div id="dialogdiv" style="display: none"></div>
+        <div id="$2_tabs">
+            <ul>
+                <li><a href="#ui_tabs_$2_all"><span></span>${2/\w+\s*/\u$0/g}</a></li>
+                <li><a href="#ui_tabs_other"><span></span>Other</a></li>
+            </ul>
+            <div id="ui_tabs_$2_all">
+                <div id="div_$2_all" class="col"></div>
+            </div>
+            <div id="ui_tabs_other">
+                <div id="div_other"></div>
+            </div>
+        </div>
+        """
+		javascript = """
+        $( "#$2_tabs" ).tabs({
+            beforeLoad: function( event, ui ) {
+                ui.jqXHR.error(function() {
+                    ui.panel.html('An error occured, please try again.');
+                });
+            },
+            spinner: "<img src ='/images/ui-anim_basic_16x16.gif'></img>",
+            activate: function(event, ui){
+                var current_tab_id = ui.newPanel.attr('id');
+                if (current_tab_id == 'ui_tabs_$2_all'){
+					$("#div_$2_all").load("/$6/get_active_$2?", function(data){ return false });
+                };
+            },
+        });
+        $('#$2_tabs').tabs({active: 1});
+        $('#$2_tabs').tabs({active: 0});
+		"""
+        return dict(page=page, html=html, javascript=javascript)
+
+    @expose()
+    def get_active_$2(self, *args, **kwargs):
+        """ Get active $2 html """
+        html = self.get_active_$2_html(*args, **kwargs)
+        onload_script = self.get_javascript_$2_onload()
+        return html + onload_script
+
+    @expose()
+    def get_active_$2_html(self, *args, **kwargs):
+        username = request.identity['repoze.who.userid']
+        usernow = User.by_username(username)
+		active_$2_count = self.get_active_$2_count()
+		all_$2_count = self.get_all_$2_count()
+		dbase_query = self.get_active_$2_list(*args, **kwargs)
+        outputlist = []
+		for item in dbase_query:
+			outputlist.append({ `!p
+snip >> 4
+args = get_args(t[10])
+write_outputlist(args, snip, t[2]) `
+							 })
+		dictlist=[ `!p
+snip >> 4
+snip.rv = ""
+args = get_args(t[10])
+write_dictstuff(args, snip, t[4]) `
+					]
+		headers=[ `!p
+snip >> 4
+snip.rv = ""
+args = get_args(t[10])
+write_headers(args, snip, t[4]) `
+				]
+		headerwidths=[
+				80, `!p
+snip >> 4
+args = get_args(t[10])
+write_headerwidths(args, snip, t[4]) `
+				]
+		tdclassnames=[ `!p
+snip >> 4
+snip.rv = ""
+args = get_args(t[10])
+write_tdclassnames(args, snip, t[4]) `
+				]
+		htmltbl = build_generic_html_table(dictlist, headers, headerwidths, outputlist, tdclassnames, tblname="active_$2_htmltbl")
+		html = """
+		<h3> ${2/\w+\s*/\u$0/g} </h3>
+		<fieldset id='searchbar' class='mt-4'>
+			<input class="col-3" type="text" id="search_$2" name="search_$2"/>
+			<button class='btn btn-primary' id='$2_search'>Search</button>
+			<button class='btn btn-secondary' id='$2_reset'>Reset</button>
+			<button class='btn btn-primary float-right' id='$2_new'>New ${2/\w+\s*/\u$0/g}</button>
+		</fieldset>
+		{2}
+		<div class='mt-3'>{0} of {1}</div>
+		""".format(active_$2_count, all_$2_count, htmltbl)
+		return html
+
+    @expose()
+    def get_javascript_$2_onload(self, *args, **kwargs):
+		javascript = """
+		<script>
+			$("#$2_new").button();
+			$("#$2_new").click(function(){
+				$("#dialogdiv").load("/$6/get_dialog_new_$2", function(data){ return false });
+			});
+			$("#$2_search").button();
+			$("#$2_search").click(function(){
+				var formserial = 'searchphrase='+$('#search_$2').val();
+				$("#div_$2_all").load("/$6/get_active_$2?"+formserial, function(data){ return false });
+			});
+			$("#$2_reset").button();
+			$("#$2_reset").click(function(){
+				$("#div_$2_all").load("/$6/get_active_$2?", function(data){ return false });
+			});
+			$(".$2_edit").click(function(){
+				var $2_id = $(this).attr('$2_id');
+				$("#dialogdiv").load("/$6/get_dialog_edit_$2?$2_id="+$2_id, function(data){ return false });
+			});
+		</script> """
+		return javascript
+
+    @expose()
+    def get_dialog_new_$2(self, *args, **kwargs):
+        html = """
+		<div id='$2_new_dialog' title='New ${2/\w+\s*/\u$0/g}'>
+			<form id='$2_new_form'> `!p
+snip >> 4
+args = get_args(t[5])
+write_new_inputbox(args, snip, t[2]) `
+			</form>
+		</div> """
+        javascript = """
+		<script>
+`!p
+snip >> 2
+snip.rv = ""
+args = get_args(t[5])
+write_init_datepicker(args, snip, t[2])`
+		 FormValidation('#$2_new_form')
+		 $("#$2_new_dialog").dialog({
+			 autoOpen: true,
+			 width: 500,
+			 //height: 550,
+			 modal: true,
+			 buttons: [
+				{ text: 'Save',
+				  'class': 'btn btn-primary',
+				  click: function(){
+					 var valid = FormIsValid('#$2_new_form');
+					 if(valid){
+						 var formserial = $("#$2_new_form").serialize();
+						 $.post("/$6/save_$2_new?"+formserial, function(){
+							$("#div_$2_all").load("/$6/get_active_$2?", function(data){ return false });
+							return false;
+						 });
+						 ('#$2_new_dialog').dialog('close');
+					 }
+				  }
+				},
+				{ text: 'Close',
+				  'class': 'btn btn-secondary',
+				  click: function(){ $(this).dialog('close'); }
+				}
+			 ],
+			 close: function(){ $(this).remove(); },
+		 });
+	 	</script> """
+        return html + javascript
+
+    @expose()
+    def get_dialog_edit_$2(self, *args, **kwargs):
+		this_row = self.get_$2_by_id(*args, **kwargs)
+        html = """
+		<div id='$2_edit_dialog' title='Edit ${2/\w+\s*/\u$0/g}'>
+			<form id='$2_edit_form'> `!p
+snip >> 4
+args = get_args(t[5])
+write_edit_inputbox(args, snip, t[2]) `
+                <div class="form-group row">
+                  <label class="col-4 col-form-label" for="active" required>Active</label>
+                  <div class="col-8"><div class="form-check">
+				  	<input class="form-check-input" type="checkbox" name="active" id="active" checked="{0}"/></div>
+			      </div>
+				</div>
+			</form>
+		</div> """.format(this_row.active,
+`!p
+snip >> 6
+args = get_args(t[5])
+write_edit_kwarglist(args, snip, t[2])`)
+        javascript = """
+             <script>
+				 FormValidation('#$2_edit_form')
+				 $("#id").prop('disabled', true);
+                 $("#$2_edit_dialog").dialog({
+					 autoOpen: true,
+                     //height: 550,
+                     width: 500,
+                     modal: true,
+					 buttons: [
+						{ text: 'Save',
+						  'class': 'btn btn-primary',
+						  click: function(){
+							 var valid = FormIsValid('#$2_edit_form');
+							 if(valid){
+								 $("id").prop('disabled', false);
+								 var formserial = $("#$2_edit_form").serialize();
+								 $.post("/$6/save_$2_edit?"+formserial, function(){
+									$("#div_$2_all").load("/$6/get_active_$2?", function(data){ return false });
+									return false;
+								 });
+								 $("#$2_edit_dialog").dialog('close');
+							 }
+						  }
+						},
+						{ text: 'Close',
+						  'class': 'btn btn-secondary',
+						  click: function(){ $(this).dialog('close'); }
+						}
+					 ],
+                     close: function(){ $(this).remove(); },
+                 });
+             </script> """
+        return html + javascript
+
+    @expose()
+    def save_$2_new(self, *args, **kwargs):
+        username = request.identity['repoze.who.userid']
+        usernow = User.by_username(username)
+        this = $1()`!p
+snip >> 2
+args = get_args(t[5])
+write_savenew_record(args, snip, t[4]) `
+        this.added_by = usernow.id
+        $8.add(this)
+        $8.flush()
+
+    @expose()
+    def save_$2_edit(self, *args, **kwargs):
+        username = request.identity['repoze.who.userid']
+        usernow = User.by_username(username)
+		this = self.get_$2_by_id(*args, **kwargs) `!p
+snip >> 2
+args = get_args(t[5])
+write_saveedit_record(args, snip, t[2]) `
+		if not kwargs.get('active', None): this.active = False
+        $8.flush()
+
+	@expose()
+	def get_$2_by_id(self, *args, **kwargs):
+		return $8.query($1). \
+			filter($1.id==kwargs.get('$2_id', None)). \
+			filter($1.active==1). \
+			one()
+
+	@expose()
+	def get_active_$2_count(self, *args, **kwargs):
+		return $8.query($1). \
+			filter($1.active==1). \
+			value(func.count($1.id))
+
+	@expose()
+	def get_all_$2_count(self, *args, **kwargs):
+		return $8.query($1).value(func.count($1.id))
+
+	@expose()
+	def get_active_$2_list(self, *args, **kwargs):
+		username = request.identity['repoze.who.userid']
+		usernow = User.by_username(username)
+		searchphrase = kwargs.get('searchphrase', None)
+`!p
+snip >> 2
+args = get_args(t[11])
+write_search_kwarglist(args, snip, t[2])`
+`!p
+snip >> 2
+write_search_dbase_queries(args, snip, t[2], t[1], t[8])`
+		else:
+			dbase_query = $8.query($1). \
+				filter($1.active==1). \
+				order_by(asc($1.id)).limit(100)
+		return dbase_query
+
+    @expose()
+    def export_$2_list_pdf(self, *args, **kwargs):
+        import random
+        username = request.identity['repoze.who.userid']
+        usernow = User.by_username(username)
+        rnd = random.random()
+        rnd = str(rnd).split('.')[1]
+        datename = str(datetime.now()).split(' ')[0]
+        fname = "$2-"+ datename +'.pdf'
+        filename = os.path.join(pdf_dirname, str(fname))
+        pdffile = CreatePDFA4(filename)
+        userdata = {}
+        outputlist = []
+        query_outside = kwargs.get('query_outside', None)
+        dbase_query_count_all = kwargs.get('dbase_query_count_all', None)
+		headers=[`!p
+snip >> 4
+snip.rv = ""
+args = get_args(t[12])
+write_headers(args, snip, t[2])`
+				]
+		headerwidths=[`!p
+snip >> 4
+snip.rv = ""
+args = get_args(t[12])
+write_headerwidths_pdf(args, snip, t[2])`
+				]
+        for $2 in query_outside:
+            outputlist.append((`!p
+snip >> 7
+args = get_args(t[12])
+write_pdf_paragraph_args(args, snip, t[2])`
+                              ))
+        userdata = {
+                'title1_header':'Report:', 'title1':'${2/\w+\s*/\u$0/g} Report',
+                'title2_header':'Sub Title:', 'title2':'Title2',
+                'title3_header':'Title Three', 'title3':'Title Three',
+                'title4_header':'Title Four', 'title4':'Title Four',
+                'datenow_header': "Date Printed:", 'datenow':datetime.date(datetime.now()),
+                'headerl1_header':'Subject', 'headerl1':'Subject',
+                'headerl2_header':'', 'headerl2':'',
+                'headerl3_header':'', 'headerl3':'',
+                'headerl4_header':'', 'headerl4':'',
+                'id_header_header': "RHSHeader", 'id_header':getcurrency(0),
+                'headerr1_header':'RHS1', 'headerr1':getcurrency(0),
+                'headerr2_header':'RHS2', 'headerr2':getcurrency(0),
+                'headerr3_header':'RHS3', 'headerr3':len(outputlist),
+                'headerr4_header':'', 'headerr4':'',
+                }
+        pdffile.CreatePDFGenericReport(userdata, outputlist, headers, headerwidths, 11)
+        response.headers["Content-Type"] = 'application/pdf'
+        response.headers["Content-Disposition"] = 'attachment; filename="'+fname+'"'
+        filecontent = file(filename, "r")
+        return filecontent
+
+endsnippet
+
+
+##############################
+#######Common#################
+##############################
+snippet _test "test" b
+`!p snip.rv = "Test 1"
+snip.mkline("")
+snip >> 2
+snip += "Test 2"
+
+`
+endsnippet
+
+snippet _dic "Create a dictionary"
+${1:dictname} = {
+				 '${2:one}':'${3:one}',
+				 '${4:two}':'${5:two}'${0}
+				}
+endsnippet
+
+snippet _dol
+	def ${1:__init__}(self, *args, **kwargs):
+	    super(${0:ClassName}, self).$1(*args, **kwargs)
+endsnippet
+snippet _kwg
+self.${1:var_name} = kwargs.get('$1', ${2:None})
+endsnippet
+snippet _lkwg
+${1:var_name} = kwargs.get('$1', ${2:None})
+endsnippet
+snippet _args
+	*args${1:, }${0}
+endsnippet
+snippet _kwargs
+	**kwargs${1:, }${0}
+endsnippet
+snippet _akw
+	*args, **kwargs${1:, }${0}
+endsnippet
+
+# doesn't expand when there is a word in front
+snippet /(^|(?<=\W))\./ "self." r
+self.
+endsnippet
+#write_init_body(args, t[2], snip)
+#snip += '{0}'.format(triple_quotes(snip))
+#write_docstring_args(args, snip)
+snippet bsnclass
+#!/bin/python2
+from user import User
+from datetime import datetime
+from ${3:filename} import $2
+
+class ${1:ClassName}(${2:InheritFrom}):
+
+	def __init__(self, *args, **kw):
+		super($1, self).__init__()
+		self.bln_active = True
+		self.added_by_user = User
+		self.edited_by_user = User
+		self.added_datetime = datetime
+		self.edited_datetime = datetime
+
+		$0
+
+	def __repr__(self):
+		return "Nothing"
+
+	def activate(self):
+		if self.bln_active: return False
+		else: self.bln_active = True
+		return True
+
+	def deactivate(self):
+		if not self.bln_active: return False
+		else: self.bln_active = False
+		return True
+
+	def set_added_by_user(self, user):
+		if isinstance(user, User):
+			self.added_by_user = user
+			return True
+		return False
+
+	def get_added_by_user(self):
+		return self.added_by_user
+
+	def set_edited_by_user(self, user):
+		if isinstance(user, User):
+			self.edited_by_user = user
+			return True
+		return False
+
+	def get_edited_by_user(self):
+		return self.edited_by_user
+
+	def set_added_datetime(self, added_datetime):
+		if isinstance(added_datetime, datetime):
+			self.added_datetime = added_datetime
+			return True
+		return False
+
+	def get_added_datetime(self):
+		return self.added_datetime
+
+	def set_edited_datetime(self, edited_datetime):
+		if isinstance(edited_datetime, datetime):
+			self.edited_datetime = edited_datetime
+			return True
+		return False
+
+	def get_edited_datetime(self):
+		return self.edited_datetime
+
+endsnippet
+snippet bsoclass
+#!/bin/python2
+from user import User
+from datetime import datetime
+
+class ${1:ClassName}(object):
+
+	def __init__(self, *args, **kw):
+		self.bln_active = True
+		self.added_by_user = User
+		self.edited_by_user = User
+		self.added_datetime = datetime
+		self.edited_datetime = datetime
+		$0
+
+	def __repr__(self):
+		return "Nothing"
+
+	def activate(self):
+		if self.bln_active: return False
+		else: self.bln_active = True
+		return True
+
+	def deactivate(self):
+		if not self.bln_active: return False
+		else: self.bln_active = False
+		return True
+
+	def set_added_by_user(self, user):
+		if isinstance(user, User):
+			self.added_by_user = user
+			return True
+		return False
+
+	def get_added_by_user(self):
+		return self.added_by_user
+
+	def set_edited_by_user(self, user):
+		if isinstance(user, User):
+			self.edited_by_user = user
+			return True
+		return False
+
+	def get_edited_by_user(self):
+		return self.edited_by_user
+
+	def set_added_datetime(self, added_datetime):
+		if isinstance(added_datetime, datetime):
+			self.added_datetime = added_datetime
+			return True
+		return False
+
+	def get_added_datetime(self):
+		return self.added_datetime
+
+	def set_edited_datetime(self, edited_datetime):
+		if isinstance(edited_datetime, datetime):
+			self.edited_datetime = edited_datetime
+			return True
+		return False
+
+	def get_edited_datetime(self):
+		return self.edited_datetime
+
+endsnippet
+snippet ezprop
+@property
+def $1(self):
+	if self._$1: return self._$1
+	return False
+
+@$1.setter
+def ${1:TypeHere}(self, $1):
+	if $1:
+		self._$1 = $1
+		return True
+	return False
+
+$0
+endsnippet
+snippet ezget
+def set_${1:attribute}(self, $1):
+	if $1:
+		self.$1 = $1
+		return True
+	return False
+
+def get_$1(self):
+	if self.$1: return self.$1
+	return False
+$0
+endsnippet
+snippet ezadd
+
+#from $1 import $2
+def new_${1:TypeHere}(self, $1):
+	if $1 not in self.$1s:
+		if isinstance($1, ${2:InstanceType}):
+			self.$1s.append($1)
+			return True
+	return False
+
+def remove_$1(self, $1):
+	if $1 in self.$1s:
+		if isinstance($1, $2):
+			self.$1s.remove($1)
+			return True
+	return False
+$0
+endsnippet
+snippet _testNone "Test None" b
+${1}
+It should type: `!p
+if t[1]:
+    snip.rv += "{0}_{1}".format(t[1], 'finders')
+else:
+    snip.rv += "{0}".format(t[1])
+`
+$0
+endsnippet

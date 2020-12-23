@@ -1,0 +1,23 @@
+# -*- coding: utf-8 -*-
+import os
+from datetime import datetime
+from hashlib import sha256
+
+from sqlalchemy import Table, ForeignKey, Column
+from sqlalchemy.types import Unicode, Integer, DateTime, Boolean
+from sqlalchemy.orm import relation, synonym
+
+from rocket.model import DeclarativeBase, metadata, DBSession
+from rocket.lib.model_utils import PhatBase, common_columns, get_phat_table, get_type_table
+
+# ********************* Member Enrollment ***********************************#
+
+tbl_member_product_owner_enrollment = {
+    '__tablename__': 'tbl_member_client',
+    'member_client_id': common_columns.get('integer')(),
+    'product_owner_id': common_columns.get('integer')(),
+    'is_enrolled': common_columns.get('integer')(),
+    'is_deceased': common_columns.get('boolean_default_false')(),
+    'client_id': common_columns.get('integer')()
+}
+MemberClient = get_phat_table(model_name='MemberClient', columndict=tbl_member_client)

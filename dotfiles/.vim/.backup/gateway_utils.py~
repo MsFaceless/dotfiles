@@ -1,0 +1,146 @@
+#!/bin/python
+
+import logging
+import requests
+from datetime import datetime
+from dotenv import dotenv_values
+
+LOGGER = logging.getLogger(__name__)
+
+env_vars = dotenv_values()
+API_KEY = env_vars.get("GATEWAY_API_KEY")
+request_headers = {"API_Key":API_KEY}
+GATEWAY_URL = env_vars.get('GATEWAY_URL', None)
+
+EMPTY = {}
+
+def get_all_entity_contact_types(*args, **kwargs):
+    url = "entity/get_all_entity_contact_types"
+    return get_from_url(url)
+
+def get_entity_mobile_contact_by_entity_id(entity_id: int):
+    url = "entity/get_entity_mobile_contact_by_entity_id"
+    params = {'entity_id':entity_id}
+    return get_from_url(url, params)
+
+def get_all_entity_address_types(*args, **kwargs):
+    url = "entity/get_all_entity_address_types"
+    return get_from_url(url)
+
+def get_all_entity_person_identity_types(*args, **kwargs):
+    url = "entity/get_all_entity_personidentity_types"
+    return get_from_url(url)
+
+def get_all_entity_person_titles(*args, **kwargs):
+    url = "entity/get_all_entity_person_titles"
+    return get_from_url(url)
+
+def save_new_person(*args, **kwargs):
+    url = "entity/save_new_person"
+    return post_to_url(url, kwargs)
+
+def save_new_entity_contact(*args, **kwargs):
+    url = "entity/save_new_entity_contact"
+    return post_to_url(url, kwargs)
+
+def get_search_entity_persons_and_identities(searchphrase: str=None, limit: int=100):
+    if not searchphrase or not limit: return False
+    url = "entity/get_search_entity_persons_and_identities"
+    if not searchphrase: searchphrase = ""
+    params = {'searchphrase':searchphrase, 'limit':limit}
+    search_results = get_from_url(url, params)
+    return search_results
+
+def get_entity_person_identity_by_entity_person_id(entity_person_id: int):
+    url = "entity/get_entity_person_identity_by_entity_person_id"
+    params = {'entity_person_id': entity_person_id}
+    return get_from_url(url, params)
+
+def get_entity_persons(limit: int):
+    url = "entity/get_entity_persons"
+    params = {'limit':limit}
+    result = get_from_url(url, params)
+    return result
+
+def save_new_person_with_contact(**kwargs):
+    returnable = {}
+
+    person_dict = {
+        "added_by" :kwargs.get("added_by"),
+        "surname":kwargs.get("surname"),
+        "preferred_name":kwargs.get("preferred_name"),
+        "firstname":kwargs.get("firstname"),
+        "date_of_birth":datetime.strftime(kwargs.get("date_of_birth"), "%Y-%m-%d"),
+        "language_id":kwargs.get("language_id"),
+        "entity_person_title_id":kwargs.get("entity_person_title_id"),
+        "entity_person_gender_type_id":kwargs.get("entity_person_gender_type_id"),
+        "identity_number" :kwargs.get("identity_number"),
+        "expiry_date" :"2100-01-01",
+        "entity_person_identity_type_id" :kwargs.get("entity_person_identity_type_id"),
+            }
+    person = save_new_person(**person_dict)
+    person_success = person.get('success', False)
+    if not person_success: return {"success":False, "message":person.get("message")}
+    person_data = person.get('data')
+    entity_data = person_data.get('entity')
+    entity_person_data = person_data.get('entity_person')
+    returnable['entity'] = entity_data
+    returnable['entity_person'] = entity_person_data
+    entity_id = entity_data.get('id')
+    print()
+    print('entity_data')
+    print(entity_data)
+    print(entity_id)
+    print()
+    
+    person_contact_result = save_new_entity_contact(**{
+        "added_by" :kwargs.get("added_by"),
+
+        "entity_id" :entity_id,
+        "entity_contact_type_id":kwargs.get("entity_contact_type_id"),
+        "name":kwargs.get("contact_name"),
+        "value":kwargs.get("contact_number"),
+        "preferred" :kwargs.get("preferred"),
+    })
+    person_contact_result_success = person_contact_result.get('success', False)
+    if not person_contact_result_success: return {"success":False, "message":person_contact_result.get("message")}
+    person_contact_data = person_contact_result.get('data')
+    returnable['entity_contact'] = person_contact_data
+    return returnable
+
+def get_from_url(url=None, params={}):
+    if not url: return False
+
+    target = f'{GATEWAY_URL}/{url}'
+    try: r = requests.get(target, headers=request_headers, params=params)
+    except requests.exceptions.ConnectionError:
+        LOGGER.warning(f'{target} failed due to ConnectionError')
+        return EMPTY
+
+    try:
+        result = r.json()
+        if result.get('success'): return result.get('data')
+        else: return {}
+    except Exception as e:
+        LOGGER.warning(f'{target} failed due to: {e}')
+        return {}
+
+def post_to_url(url=None, request=None):
+    if not url: return False
+
+    target = f'{GATEWAY_URL}/{url}'
+    try:
+        r = requests.post(target, headers=request_headers, json=request)
+    except requests.exceptions.ConnectionError:
+        LOGGER.warning(f'{target} failed due to ConnectionError')
+        return EMPTY
+
+    print()
+    print(url)
+    print('the r.text output -->', r.text)
+    try:
+        result = r.json()
+    except Exception as e:
+        LOGGER.warning(f'{target} failed due to: {e}')
+        result = EMPTY
+    return result

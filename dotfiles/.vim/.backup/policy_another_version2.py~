@@ -1,0 +1,969 @@
+# -*- coding: utf-8 -*-
+"""Policy controller module"""
+
+import logging
+
+from tg import predicates, require, expose, request
+from tg.i18n import ugettext as _
+from tg.i18n import lazy_ugettext as l_
+
+from rocket.model import *
+
+from rocket.lib.tg_utils import *
+from rocket.lib.base import BaseController
+from rocket.lib.type_utils import TypeDictionary
+
+import rocket.lib.vault_utils as VAULT
+
+from rocket.controllers.common import CommonController
+from rocket.controllers.product import ProductController
+
+from sqlalchemy import func, desc, asc, or_
+
+LOGGER = logging.getLogger(__name__)
+
+TYPEUTIL = TypeDictionary()
+COMMON = CommonController()
+PRODUCT = ProductController()
+
+DBQUERY_LIMIT = 15
+POLICY_NUMBER_MAX_LENGTH = 10
+
+PRICE_TYPE_RATE_TABLE = TYPEUTIL.get_id_of_name('benefit_price_type', 'rate_table')
+PRICE_TYPE_FIXED = TYPEUTIL.get_id_of_name('benefit_price_type', 'fixed_premium_and_sum_insured')
+
+BUSINESS = TYPEUTIL.get_id_of_name('benefit_asset_type', 'business')
+EMPLOYEE = TYPEUTIL.get_id_of_name('benefit_asset_type', 'employee')
+PROPERTY = TYPEUTIL.get_id_of_name('benefit_asset_type', 'property')
+VEHICLE = TYPEUTIL.get_id_of_name('benefit_asset_type', 'vehicle')
+
+MINIMUM_UNKNOWN = 1
+MAXIMUM_UNKNOWN = 999999
+
+class PolicyController(BaseController):
+
+###############################################################################
+# Policy - List
+###############################################################################
+
+    @require(predicates.not_anonymous())
+    @expose('rocket.templates.generic')
+    def index(self, *args, **kwargs):
+        html = self.get_policies_html(*args, **kwargs)
+        javascript = self.get_javascript_policy_onload()
+        title = _("Policy Management")
+        return dict(title=title, html=html, javascript=javascript)
+
+    @expose()
+    def get_policies_html(self, *args, **kwargs):
+        outputlist = []
+        dbase_query = []
+        dbase_query = DBSession.query(Policy). \
+                filter(Policy.active == True). \
+                order_by(Policy.added.desc()). \
+                limit(DBQUERY_LIMIT)
+        for item in dbase_query:
+
+            product = Product.by_id(item.product_id)
+            if not product:
+                continue
+
+            policy_status_name = None
+            state = PolicyStatus.by_attr_first('policy_id', item.id)
+            if state:
+                policy_status_name = TYPEUTIL.get_pretty_name('policy_status_type', state.policy_status_type_id)
+
+            outputlist.append({
+                'policy_number': f"<div class='edit policy_edit action_link' policy_id='{item.id}'>{item.policy_number}</div>",
+                'policy_payer': item.policy_payer_entity_id,
+                'policy_owner': item.policy_owner_entity_id,
+                'product' : product.name,
+                'state': policy_status_name,
+                'added': item.added,
+            })
+        dbcolumnlist = [
+            'policy_number',
+            'policy_payer',
+            'policy_owner',
+            'product',
+            'state',
+            'added',
+        ]
+        theadlist = [
+            'Policy Number',
+            'Policy Holder',
+            'Policy Owner',
+            'Product',
+            'State',
+            'Added',
+        ]
+        tdclasslist = [
+            'action_link',
+            '',
+            '',
+            '',
+            '',
+            'text-right',
+        ]
+        htmltbl = build_html_table(outputlist, dbcolumnlist, theadlist, "policy_table", tdclasslist)
+        html = f"""
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="row d-flex">
+                            <div class="col-md-6">
+                                 <h4 class="card-title">{_('Policy Management')}</h4>
+                            </div>
+                            <div class="col-md-6 text-right">
+                                <button id="create_new_policy" class="btn btn-primary ml-auto">Create New Policy</button>
+                            </div>
+                        </div>
+                        <div class="row d-flex align-items-center">
+                            <div class="col-md-4 d-flex">
+                                <input id='search' type="text" class="form-control mr-2 search" name="searchphrase" placeholder="Search by Code or Description">
+                            </div>
+                            <div class="col-md-4 pl-0">
+                                <button id='btn_search' class="btn btn-primary action_search">Search</button>
+                                <button id='btn_reset' class="btn btn-primary">Reset</button>
+                            </div>
+                        </div>
+                        <hr>
+                    </div>
+                    <div class="card-body">
+                        <div id='div_policy_table' class="table-responsive">
+                            {htmltbl}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        return html
+
+    @expose()
+    def get_javascript_policy_onload(self, *args, **kwargs):
+        javascript = """
+        $("#create_new_policy").click(function(){
+            $.redirect('/policy/new');
+        });
+        $(".policy_edit").click(function(){
+            var policy_id = $(this).attr('policy_id');
+            var kwargs = {'policy_id' : policy_id};
+            $.redirect('/policy/new', kwargs);
+        });
+        """
+        return javascript
+
+###############################################################################
+# Policy - New
+###############################################################################
+
+    @require(predicates.not_anonymous())
+    @expose('rocket.templates.generic')
+    def new(self, *args, **kwargs):
+        html = self.get_new_policy_html(**kwargs)
+        javascript = self.get_new_policy_javascript_onload()
+        title = _("New Policy")
+        return dict(title=title, html=html, javascript=javascript)
+
+    def get_selectbox_product(self, *args, **kwargs):
+        dbase_query = Product.get_all('code')
+        kwargs['id'] = 'product_id'
+        kwargs['selected'] = kwargs.get('product_id', '')
+        kwargs['outputlist'] = [{'name': f'({m.code}) {m.name}', 'id': m.id} for m in dbase_query]
+        return create_selectbox_html(**kwargs)
+
+    def get_new_policy_html(self, *args, **kwargs):
+        policy_id = kwargs.get('policy_id', '')
+        product_id = ''
+        if policy_id:
+            policy = Policy.by_id(policy_id)
+            if policy:
+                kwargs['product_id'] = product_id = policy.product_id
+
+        selectbox_product = self.get_selectbox_product(**kwargs)
+
+        print()
+        print('get_new_policy_html')
+        print(product_id)
+        print(policy_id)
+        print()
+
+        html = f"""
+        <div class="row sticky">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="row d-flex">
+                            <div class="col-md-6">
+                                <h4 class="card-title">New Policy: {selectbox_product}</h4>
+                            </div>
+                            <div class="col-md-3" id="premium_total">
+                                Premium Total Here
+                            </div>
+                            <div class="col-md-3 text-right">
+                                <button class="btn btn-primary ml-auto" id="policy_back" product_id='{product_id}' policy_id='{policy_id}'>Back to Policies</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="card">
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-12">
+                        <div class="form-group row">
+                            <h4 class="col-md-3">Product</h4>
+                            <div class="col-md-6">
+                                {selectbox_product}
+                            </div>
+                            <div class="col-md-3 text-right">
+                                <button id='btn_summary' class="btn btn-primary ml-auto btn_product_summary">Summary</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div id='div_benefits'></div>
+        """
+        return html
+
+    def get_new_policy_javascript_onload(self, *args, **kwargs):
+        javascript = """
+        $('#policy_back').click(function(){
+            $.redirect('/policy/index');
+        });
+        $(".btn_product_summary").click(function(){
+            var kwargs = 'product_id='+$('#product_id option:selected').val();
+            $('#dialogdiv').load('/policy/get_modal_product_summary?', kwargs, function(data){
+                return false;
+            });
+        });
+        $('#product_id').change(function(){
+            var policy_id = $('#policy_back').attr('policy_id');
+            var product_id = $('#product_id option:selected').val();
+            var kwargs = 'product_id=' + product_id + '&policy_id=' + policy_id;
+
+            $.post('/policy/confirm_policy_exists?', kwargs, function(policy_id){
+
+                $('#policy_back').attr('policy_id', policy_id);
+                $('#policy_back').attr('product_id', product_id);
+                var kwargs = 'product_id=' + product_id + '&policy_id=' + policy_id;
+
+                $('#div_benefits').load('/policy/get_benefits_html?', kwargs, function(data){
+                    $('#premium_total').load('/policy/get_premium_total_html', kwargs, function(data){
+                        return false;
+                    });
+                    return false;
+                });
+            });
+
+        });
+        $('#product_id').trigger('change');
+
+        var policy_id = $('#policy_back').attr('policy_id');
+        var kwargs = 'policy_id='+policy_id;
+        $('#premium_total').load('/policy/get_premium_total_html', kwargs, function(data){
+            return false;
+        });
+        """
+        return javascript
+
+    @expose()
+    def confirm_policy_exists(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+
+        policy_id = kwargs.get('policy_id', None)
+        product_id = kwargs.get('product_id', None)
+        if product_id == '0':
+            return ''
+
+        if policy_id:
+            this = Policy.by_id(policy_id)
+            this.product_id = product_id
+            DBSession.flush()
+
+            #self.delete_policy_child_records(this.id)
+
+        else:
+            policy_number = self.get_unique_policy_number(product_id)
+            this = Policy()
+            this.product_id = product_id
+            this.policy_number = policy_number
+            this.added_by = usernow.id
+            DBSession.add(this)
+            DBSession.flush()
+
+            pre_quote = TYPEUTIL.get_id_of_name('policy_status_type', 'pre_quote')
+            status = PolicyStatus()
+            status.policy_id = this.id
+            status.policy_status_type_id = pre_quote
+            status.date_set = datetime.now()
+            status.current_status = True
+            status.added_by = usernow.id
+            DBSession.add(status)
+            DBSession.flush()
+
+        return str(this.id)
+
+    def delete_policy_child_records(self, policy_id=None, *args, **kwargs):
+        if not policy_id:
+            return False
+
+        dbase_query = PolicyBenefit.by_attr_all('policy_id', policy_id)
+        for benefit in dbase_query:
+
+            premiums = PolicyBenefitPremium.by_attr_all('policy_benefit_id', benefit.id)
+            for item in premiums:
+                DBSession.delete(item)
+                DBSession.flush()
+
+            sum_insureds = PolicyBenefitSumInsured.by_attr_all('policy_benefit_id', benefit.id)
+            for item in sum_insureds:
+                DBSession.delete(item)
+                DBSession.flush()
+
+            # Placeholder for other cascading deletes
+            DBSession.delete(benefit)
+            DBSession.flush()
+
+        return True
+
+    def get_unique_policy_number(self, product_id=None, *args, **kwargs):
+        number = ''
+        if product_id:
+            product = Product.by_id(product_id)
+            if product and product.policy_number_prefix:
+                number = product.policy_number_prefix
+
+        number += datetime.now().strftime("%y%m%d%H%M%S")
+        policy_number = number[-POLICY_NUMBER_MAX_LENGTH:]
+        exists = Policy.by_attr_first('policy_number', policy_number)
+        if exists:
+            return self.get_unique_policy_number(product_id)
+        return policy_number
+
+    @expose()
+    def get_benefits_html(self, *args, **kwargs):
+        product_id = kwargs.get('product_id', None)
+        if product_id == '0':
+            return ''
+
+        mandatory_cards = self.get_mandatory_benefits_html(**kwargs)
+        html = f"""
+        {mandatory_cards}
+        """
+        javascript = """
+        <script>
+            $('.rate_table_item').change(function(){
+
+                var this_selectbox = $(this);
+                var benefit_id = $(this).attr('benefit_id');
+                var selected = $(this).find(':selected').val();
+                var policy_id = $('#policy_back').attr('policy_id');
+                var kwargs = 'benefit_id=' + benefit_id + '&rate_table_line_item_id=' + selected + '&policy_id=' + policy_id;
+
+                $.get('/policy/get_rate_table_premium_sum_insured_html', kwargs, function(data){
+                    var result = JSON.parse(data);
+
+                    if(result.success){
+
+                        this_selectbox.parent().parent().siblings('.premium').empty().append(result.premium);
+                        this_selectbox.parent().parent().siblings('.sum_insured').empty().append(result.sum_insured);
+
+                        if(result.javascript){
+                            this_selectbox.append(result.javascript);
+                        };
+
+                    }else{
+                        this_selectbox.parent().parent().siblings('.premium').empty();
+                        this_selectbox.parent().parent().siblings('.sum_insured').empty();
+
+                    };
+                    return false;
+                });
+            });
+        </script>
+        """
+        return html + javascript
+
+    def get_mandatory_benefits_html(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+
+        product_id = kwargs.get('product_id', None)
+        if not product_id:
+            return ''
+
+        policy_id = kwargs.get('policy_id', None)
+        if not policy_id:
+            return ''
+
+        dbase_query = DBSession.query(Benefit). \
+            filter(Benefit.product_id == product_id). \
+            filter(Benefit.is_compulsory == True). \
+            filter(Benefit.active == True). \
+            all()
+        html = ''
+        for item in dbase_query:
+            policy_benefit = self.confirm_policy_benefit_exists(policy_id, item)
+            if not policy_benefit:
+                continue
+
+            premium, sum_insured = self.get_benefit_premium_html(item, policy_id)
+
+            inner_html = ''
+            if item.benefit_price_type_id == PRICE_TYPE_RATE_TABLE:
+                inner_html = f"""
+                <div class="col-md-4">
+                    <label class="col-md-12 col-form-label">{_('Rate Table')}</label>
+                    {premium}
+                </div>
+                <div class="col-md-4 premium">
+                </div>
+                <div class="col-md-4 sum_insured">
+                </div>
+                """
+
+            if item.benefit_price_type_id == PRICE_TYPE_FIXED:
+                inner_html = f"""
+                <div class="col-md-6">
+                    <label class="col-md-12 col-form-label">{_('Premium')}</label>
+                    <div class="col-md-12 premium">
+                        {premium}
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <label class="col-md-12 col-form-label">{_('Sum Insured')}</label>
+                    <div class="col-md-12 sum_insured">
+                        {sum_insured}
+                    </div>
+                </div>
+                """
+
+            card = f"""
+            <div class="row">
+                <div class="col-md-12">
+                    <div class="card">
+                        <div class="card-header">
+                            <div class="row d-flex">
+                                <div class="col-md-6">
+                                     <h6 class="card-title">{item.name}</h6>
+                                </div>
+                            </div>
+                            <hr>
+                        </div>
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-md-12">
+                                    <div class="form-group row">
+                                        {inner_html}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            """
+            html += card
+
+        return html
+
+    def confirm_policy_benefit_exists(self, policy_id=None, item=None, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+
+        if not policy_id or not item:
+            return False
+
+        if not item.benefit_cover_link_id:
+            return False
+
+        policy_benefit = DBSession.query(PolicyBenefit). \
+                filter(PolicyBenefit.policy_id == policy_id). \
+                filter(PolicyBenefit.product_benefit_id == item.id). \
+                first()
+        if not policy_benefit:
+            policy_benefit = PolicyBenefit()
+            policy_benefit.policy_id = policy_id
+            policy_benefit.product_benefit_id = item.id
+            policy_benefit.product_benefit_cover_link_id = item.benefit_cover_link_id
+            policy_benefit.added_by = usernow.id
+            DBSession.add(policy_benefit)
+            DBSession.flush()
+        return policy_benefit
+
+    def get_rate_table_line_items_life(self, rate_table_id=None, *args, **kwargs):
+        outputlist = []
+        dbase_query = RateTableLineItemLife.by_attr_all('rate_table_id', rate_table_id)
+        for item in dbase_query:
+
+            gender = ''
+            if item.gender_type_id:
+                gender = TYPEUTIL.get_pretty_name('person_gender_type', item.gender_type_id)
+                gender = f"{gender}:"
+
+            name = f'{gender} {item.minimum_age} to {item.maximum_age}'
+
+            outputlist.append({
+                'id' : item.id,
+                'name' : name,
+            })
+
+        return outputlist
+
+    def get_rate_table_line_items_turnover(self, rate_table_id=None, *args, **kwargs):
+        outputlist = []
+        dbase_query = RateTableLineItemTurnover.by_attr_all('rate_table_id', rate_table_id)
+        for item in dbase_query:
+            amount = get_currency_by_locale(item.amount, cents=False)
+            minimum_turnover = get_currency_by_locale(item.minimum_turnover, cents=False)
+            maximum_turnover = get_currency_by_locale(item.maximum_turnover, cents=False)
+
+            name = f'{amount}: {minimum_turnover} - {maximum_turnover}'
+            outputlist.append({
+                'id' : item.id,
+                'name' : name,
+            })
+        return outputlist
+
+    def get_rate_table_line_items_employee(self, rate_table_id=None, *args, **kwargs):
+        outputlist = []
+        dbase_query = RateTableLineItemEmployee.by_attr_all('rate_table_id', rate_table_id)
+        for item in dbase_query:
+            name = f'From {item.minimum_employees_coverable} to {item.maximum_employees_coverable} employees'
+            outputlist.append({
+                'id' : item.id,
+                'name' : name,
+            })
+        return outputlist
+
+    def get_rate_table_line_items_vehicle(self, rate_table_id=None, *args, **kwargs):
+        outputlist = []
+        dbase_query = RateTableLineItemVehicle.by_attr_all('rate_table_id', rate_table_id)
+        for item in dbase_query:
+            outputlist.append({
+                'id' : item.id,
+                'name' : item.description,
+            })
+        return outputlist
+
+    def get_benefit_premium_rate_table_html(self, item=None, policy_id=None, *args, **kwargs):
+        if not item:
+            return '', ''
+
+        policy_benefit = DBSession.query(PolicyBenefit). \
+                filter(PolicyBenefit.policy_id == policy_id). \
+                filter(PolicyBenefit.product_benefit_id == item.id). \
+                first()
+
+        selected = ''
+        outputlist = []
+        benefit_rate_table = BenefitRateTable.by_attr_first('benefit_id', item.id)
+        if item.is_life:
+
+            insured = PolicyBenefitInsuredLife.by_attr_first('policy_benefit_id', policy_benefit.id)
+            if insured and insured.rate_table_line_item_life_id:
+                selected = insured.rate_table_line_item_life_id
+
+            outputlist = self.get_rate_table_line_items_life(benefit_rate_table.rate_table_id)
+
+        else:
+            asset_type = RateTableAssetTypeLink.by_attr_first('rate_table_id', benefit_rate_table.rate_table_id)
+
+            if asset_type.benefit_asset_type_id == BUSINESS:
+                outputlist = self.get_rate_table_line_items_turnover(benefit_rate_table.rate_table_id)
+
+            if asset_type.benefit_asset_type_id == EMPLOYEE:
+                outputlist = self.get_rate_table_line_items_employee(benefit_rate_table.rate_table_id)
+
+            if asset_type.benefit_asset_type_id == PROPERTY:
+                outputlist = self.get_rate_table_line_items_turnover(benefit_rate_table.rate_table_id)
+
+            if asset_type.benefit_asset_type_id == VEHICLE:
+                outputlist = self.get_rate_table_line_items_vehicle(benefit_rate_table.rate_table_id)
+
+        kwargs['selected'] = selected
+        kwargs['outputlist'] = outputlist
+        kwargs['class_names'] = 'rate_table_item'
+        kwargs['attributes'] = f'benefit_id="{item.id}"'
+        kwargs['id'] = f'rate_table_benefit_id_{item.id}'
+        premium_selectbox = create_selectbox_html(**kwargs)
+        return premium_selectbox, ''
+
+    def get_benefit_premium_fixed_html(self, item=None, policy_id=None, *args, **kwargs):
+        empty = get_currency_by_locale(0)
+        if not item or not policy_id:
+            return empty, empty
+
+        benefit_price = BenefitPrice.by_attr_first('benefit_id', item.id)
+        if not benefit_price:
+            return empty, empty
+
+        premium = get_currency_by_locale(benefit_price.premium, cents=False)
+        sum_insured = get_currency_by_locale(benefit_price.sum_insured, cents=False)
+
+        kwargs['benefit_id'] = item.id
+        kwargs['policy_id'] = policy_id
+        kwargs['premium'] = benefit_price.premium
+        kwargs['sum_insured'] = benefit_price.sum_insured
+        self.update_policy_benefit_price(**kwargs)
+        return premium, sum_insured
+
+    def get_benefit_premium_html(self, item=None, policy_id=None, *args, **kwargs):
+        if not item or not policy_id:
+            return '', ''
+
+        if item.benefit_price_type_id == PRICE_TYPE_RATE_TABLE:
+            return self.get_benefit_premium_rate_table_html(item, policy_id)
+
+        if item.benefit_price_type_id == PRICE_TYPE_FIXED:
+            return self.get_benefit_premium_fixed_html(item, policy_id)
+
+        return '', ''
+
+    @expose()
+    def get_rate_table_premium_sum_insured_html(self, *args, **kwargs):
+        outputdict = {'success' : False}
+
+        policy_id = kwargs.get('policy_id', None)
+        benefit_id = kwargs.get('benefit_id', None)
+        if not benefit_id:
+            return json.dumps(outputdict)
+
+        rate_table_line_item_id = kwargs.get('rate_table_line_item_id', None)
+        if not rate_table_line_item_id:
+            return json.dumps(outputdict)
+
+        benefit = Benefit.by_id(benefit_id)
+        if not benefit:
+            return json.dumps(outputdict)
+
+        policy_benefit = DBSession.query(PolicyBenefit). \
+                filter(PolicyBenefit.policy_id == policy_id). \
+                filter(PolicyBenefit.product_benefit_id == benefit_id). \
+                first()
+        if not policy_benefit:
+            return json.dumps(outputdict)
+
+        item = PolicyBenefitInsuredLife.by_attr_first('policy_benefit_id', policy_benefit.id)
+        if item:
+            item.rate_table_line_item_life_id = rate_table_line_item_id
+            DBSession.flush()
+
+        else:
+            item = PolicyBenefitInsuredLife()
+            item.policy_benefit_id = policy_benefit.id
+            item.rate_table_line_item_life_id = rate_table_line_item_id
+
+            # PLACEHOLDER - these cols should be nullable
+            item.entity_person_id = 1
+            item.relationship_type_id = 1
+
+            DBSession.add(item)
+            DBSession.flush()
+
+        if benefit.is_life:
+            return self.get_rate_table_premium_sum_insured_life_html(policy_id, benefit_id, rate_table_line_item_id)
+
+        else:
+            benefit_rate_table = BenefitRateTable.by_attr_first('benefit_id', benefit_id)
+            asset_type = RateTableAssetTypeLink.by_attr_first('rate_table_id', benefit_rate_table.rate_table_id)
+
+            if asset_type.benefit_asset_type_id == BUSINESS:
+                return self.get_rate_table_premium_sum_insured_turnover_html(policy_id, benefit_id, rate_table_line_item_id)
+
+            if asset_type.benefit_asset_type_id == EMPLOYEE:
+                return self.get_rate_table_premium_sum_insured_employee_html(policy_id, benefit_id, rate_table_line_item_id)
+
+            if asset_type.benefit_asset_type_id == PROPERTY:
+                return self.get_rate_table_premium_sum_insured_turnover_html(policy_id, benefit_id, rate_table_line_item_id)
+
+            if asset_type.benefit_asset_type_id == VEHICLE:
+                return self.get_rate_table_premium_sum_insured_vehicle_html(policy_id, benefit_id, rate_table_line_item_id)
+
+        return json.dumps(outputdict)
+
+    def get_rate_table_premium_sum_insured_life_html(self, policy_id=None, benefit_id=None, rate_table_line_item_id=None, *args, **kwargs):
+        outputdict = {'success' : False}
+        if not benefit_id:
+            return json.dumps(outputdict)
+        if not rate_table_line_item_id:
+            return json.dumps(outputdict)
+
+        item = RateTableLineItemLife.by_id(rate_table_line_item_id)
+        if not item:
+            return json.dumps(outputdict)
+
+        rate_table = RateTable.by_id(item.rate_table_id)
+        benefit_rate_table = BenefitRateTable.by_attr_first('benefit_id', benefit_id)
+        rate_table_base_value = RateTableBaseValue.by_attr_first('rate_table_id', rate_table.id)
+
+        minimum_premium, maximum_premium = MINIMUM_UNKNOWN, MAXIMUM_UNKNOWN
+        if benefit_rate_table.has_premium_limits:
+            premium_limit = BenefitRateTablePremiumLimit.by_attr_first('benefit_rate_table_id', benefit_rate_table.id)
+            if premium_limit:
+                minimum_premium = premium_limit.minimum_premium
+                maximum_premium = premium_limit.maximum_premium
+        average_premium = (minimum_premium + maximum_premium) / 2
+
+        minimum_sum_insured, maximum_sum_insured = MINIMUM_UNKNOWN, MAXIMUM_UNKNOWN
+        if benefit_rate_table.has_sum_insured_limits:
+            sum_insured_limit = BenefitRateTableSumInsuredLimit.by_attr_first('benefit_rate_table_id', benefit_rate_table.id)
+            if sum_insured_limit:
+                minimum_sum_insured = sum_insured_limit.minimum_sum_insured
+                maximum_sum_insured = sum_insured_limit.maximum_sum_insured
+        average_sum_insured = (minimum_sum_insured + maximum_sum_insured) / 2
+
+        premium_slider_id = f'slider_premium_{rate_table_line_item_id}_{benefit_id}'
+        premium = get_slider_html(slider_id=premium_slider_id, min_val=int(minimum_premium), max_val=int(maximum_premium), cur_val=int(average_premium))
+        premium = f"""
+        <label class="col-md-12 col-form-label">{_('Premium')}</label>
+        {premium}
+        """
+
+        sum_insured_slider_id = f'slider_sum_insured_{rate_table_line_item_id}_{benefit_id}'
+        sum_insured = get_slider_html(slider_id=sum_insured_slider_id, min_val=int(minimum_sum_insured), max_val=int(maximum_sum_insured), cur_val=int(average_sum_insured))
+        sum_insured = f"""
+        <label class="col-md-12 col-form-label">{_('Sum Insured')}</label>
+        {sum_insured}
+        """
+
+        javascript = f"""
+        <script>
+            var benefit_id = {benefit_id};
+            var rate_factor = {item.rate_factor};
+            var base_value = {rate_table_base_value.base_value};
+            var policy_id = $('#policy_back').attr('policy_id');
+            var premium_slider = document.getElementById('{premium_slider_id}');
+            var sum_insured_slider = document.getElementById('{sum_insured_slider_id}');
+        """
+        javascript += """
+            premium_slider.noUiSlider.on('change', function () {
+                var current_premium = premium_slider.noUiSlider.get();
+                var calc_sum_insured = current_premium * base_value / rate_factor;
+                sum_insured_slider.noUiSlider.set(calc_sum_insured);
+
+                console.log('Current premium ', current_premium, ' calculated sum_insured ', calc_sum_insured);
+
+                var kwargs = 'policy_id='+policy_id+'&benefit_id='+benefit_id+'&premium='+current_premium+'&sum_insured='+calc_sum_insured;
+                $.post('/policy/update_policy_benefit_price?', kwargs, function(data){
+                    $('#premium_total').load('/policy/get_premium_total_html', kwargs, function(data){
+                        return false;
+                    });
+                    return false;
+                });
+            });
+            sum_insured_slider.noUiSlider.on('change', function () {
+                var current_sum_insured = sum_insured_slider.noUiSlider.get();
+                var calc_premium = (current_sum_insured * rate_factor) / base_value;
+                premium_slider.noUiSlider.set(calc_premium);
+
+                console.log('Current sum_insured ', current_sum_insured, ' calculated premium ', calc_premium);
+
+                var kwargs = 'policy_id='+policy_id+'&benefit_id='+benefit_id+'&premium='+calc_premium+'&sum_insured='+current_sum_insured;
+                $.post('/policy/update_policy_benefit_price?', kwargs, function(data){
+                    $('#premium_total').load('/policy/get_premium_total_html', kwargs, function(data){
+                        return false;
+                    });
+                    return false;
+                });
+            });
+        </script>
+        """
+
+        outputdict['success'] = True
+        outputdict['premium'] = premium
+        outputdict['sum_insured'] = sum_insured
+        outputdict['javascript'] = javascript
+        return json.dumps(outputdict)
+
+    @expose()
+    def get_premium_total_html(self, *args, **kwargs):
+        policy_id = kwargs.get('policy_id', None)
+        if not policy_id:
+            return ''
+        premium = 0
+        dbase_query = PolicyBenefit.by_attr_all('policy_id', policy_id)
+        for item in dbase_query:
+            if item.premium:
+                premium += item.premium
+        premium = get_currency_by_locale(premium, cents=False)
+        html = f"""
+        <b>Estimated Premium: {premium}</b>
+        """
+        return html
+
+    @expose()
+    def update_policy_benefit_price(self, *args, **kwargs):
+        outputdict = {'success' : False}
+        premium = kwargs.get('premium', None)
+        policy_id = kwargs.get('policy_id', None)
+        benefit_id = kwargs.get('benefit_id', None)
+        sum_insured = kwargs.get('sum_insured', None)
+
+        if not policy_id or not benefit_id:
+            return json.dumps(outputdict)
+
+        policy_benefit = DBSession.query(PolicyBenefit). \
+                filter(PolicyBenefit.policy_id == policy_id). \
+                filter(PolicyBenefit.product_benefit_id == benefit_id). \
+                first()
+        if not policy_benefit:
+            return json.dumps(outputdict)
+
+        if not premium and sum_insured:
+            policy_benefit.premium = 0
+            policy_benefit.sum_insured = 0
+
+        else:
+            if not policy_benefit.premium or not float(policy_benefit.premium) == float(premium):
+                policy_benefit.premium = premium
+
+            if not policy_benefit.sum_insured or not float(policy_benefit.sum_insured) == float(sum_insured):
+                policy_benefit.sum_insured = sum_insured
+
+        DBSession.flush()
+        outputdict['success'] = True
+        return json.dumps(outputdict)
+
+    def get_rate_table_premium_sum_insured_employee_html(self, policy_id=None, benefit_id=None, rate_table_line_item_id=None, *args, **kwargs):
+        outputdict = {'success' : False}
+        if not benefit_id:
+            return json.dumps(outputdict)
+
+        premium = sum_insured = 0;
+        premium_html = sum_insured_html = '';
+        if rate_table_line_item_id:
+            item = RateTableLineItemEmployee.by_id(rate_table_line_item_id)
+            if item:
+                premium = item.amount
+                sum_insured = item.sum_insured
+                premium_html = get_currency_by_locale(item.amount, cents=False)
+                sum_insured_html = get_currency_by_locale(item.sum_insured, cents=False)
+
+        javascript = f"""
+        <script>
+            var benefit_id = {benefit_id};
+            var premium = {premium};
+            var sum_insured = {sum_insured};
+            var policy_id = $('#policy_back').attr('policy_id');
+        """
+        javascript += """
+            var kwargs = 'policy_id='+policy_id+'&benefit_id='+benefit_id+'&premium='+premium+'&sum_insured='+sum_insured;
+            $.post('/policy/update_policy_benefit_price?', kwargs, function(data){
+                $('#premium_total').load('/policy/get_premium_total_html', kwargs, function(data){
+                    return false;
+                });
+                return false;
+            });
+        </script>
+        """
+
+        outputdict['success'] = True
+        outputdict['premium'] = premium_html
+        outputdict['sum_insured'] = sum_insured_html
+        outputdict['javascript'] = javascript
+        return json.dumps(outputdict)
+
+    def get_rate_table_premium_sum_insured_turnover_html(self, policy_id=None, benefit_id=None, rate_table_line_item_id=None, *args, **kwargs):
+        outputdict = {'success' : False}
+        if not benefit_id:
+            return json.dumps(outputdict)
+
+        premium = sum_insured = 0;
+        premium_html = sum_insured_html = '';
+        if rate_table_line_item_id:
+            item = RateTableLineItemTurnover.by_id(rate_table_line_item_id)
+            if item:
+                premium = item.amount
+                sum_insured = item.sum_insured
+                premium_html = get_currency_by_locale(item.amount, cents=False)
+                sum_insured_html = get_currency_by_locale(item.sum_insured, cents=False)
+
+        javascript = f"""
+        <script>
+            var benefit_id = {benefit_id};
+            var premium = {premium};
+            var sum_insured = {sum_insured};
+            var policy_id = $('#policy_back').attr('policy_id');
+        """
+        javascript += """
+            var kwargs = 'policy_id='+policy_id+'&benefit_id='+benefit_id+'&premium='+premium+'&sum_insured='+sum_insured;
+            $.post('/policy/update_policy_benefit_price?', kwargs, function(data){
+                $('#premium_total').load('/policy/get_premium_total_html', kwargs, function(data){
+                    return false;
+                });
+                return false;
+            });
+        </script>
+        """
+
+        outputdict['success'] = True
+        outputdict['premium'] = premium_html
+        outputdict['sum_insured'] = sum_insured_html
+        outputdict['javascript'] = javascript
+        return json.dumps(outputdict)
+
+    def get_rate_table_premium_sum_insured_vehicle_html(self, policy_id=None, benefit_id=None, rate_table_line_item_id=None, *args, **kwargs):
+        outputdict = {'success' : False}
+        if not benefit_id:
+            return json.dumps(outputdict)
+
+        average_premium = average_sum_insured = 0
+        premium_html = sum_insured_html = '';
+        if rate_table_line_item_id:
+            item = RateTableLineItemVehicle.by_id(rate_table_line_item_id)
+            if item:
+                insured_amount = get_currency_by_locale(item.insured_amount, cents=False)
+                uninsured_amount = get_currency_by_locale(item.uninsured_amount, cents=False)
+                third_party_amount = get_currency_by_locale(item.third_party_amount, cents=False)
+                average_premium = (item.insured_amount + item.uninsured_amount + item.third_party_amount) / 3
+                average_premium_html = get_currency_by_locale(average_premium, cents=False)
+
+                insured_sum_insured = get_currency_by_locale(item.insured_sum_insured, cents=False)
+                uninsured_sum_insured = get_currency_by_locale(item.uninsured_sum_insured, cents=False)
+                third_party_sum_insured = get_currency_by_locale(item.third_party_sum_insured, cents=False)
+                average_sum_insured = (item.insured_sum_insured + item.uninsured_sum_insured + item.third_party_sum_insured) / 3
+                average_sum_insured_html = get_currency_by_locale(average_sum_insured, cents=False)
+
+                premium_html = f"""
+                Insured: {insured_amount} <br/>
+                Uninsured: {uninsured_amount} <br/>
+                Third Party: {third_party_amount} <br/>
+                Average: {average_premium_html}
+                """
+                sum_insured_html = f"""
+                Insured: {insured_sum_insured} <br/>
+                Uninsured: {uninsured_sum_insured} <br/>
+                Third Party: {third_party_sum_insured} <br/>
+                Average: {average_sum_insured_html}
+                """
+
+        javascript = f"""
+        <script>
+            var benefit_id = {benefit_id};
+            var average_premium = {average_premium};
+            var average_sum_insured = {average_sum_insured};
+            var policy_id = $('#policy_back').attr('policy_id');
+        """
+        javascript += """
+            var kwargs = 'policy_id='+policy_id+'&benefit_id='+benefit_id+'&premium='+average_premium+'&sum_insured='+average_sum_insured;
+            $.post('/policy/update_policy_benefit_price?', kwargs, function(data){
+                $('#premium_total').load('/policy/get_premium_total_html', kwargs, function(data){
+                    return false;
+                });
+                return false;
+            });
+        </script>
+        """
+
+        outputdict['success'] = True
+        outputdict['premium'] = premium_html.strip()
+        outputdict['sum_insured'] = sum_insured_html.strip()
+        outputdict['javascript'] = javascript
+        return json.dumps(outputdict)

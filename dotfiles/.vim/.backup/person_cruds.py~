@@ -1,0 +1,310 @@
+from datetime import datetime
+from revault.lib import wrap_error
+from revault.model import get_db_session, Person, PersonIdentity
+from revault.schema import validators
+import transaction
+from revault.crud.bankaccounts import *
+from revault.crud.contacts import *
+from revault.crud.addresses import *
+from revault.model.models import BankAccount
+from revault.schema.link_validators import *
+
+###VALIDATORS###
+person_validators = validators.get('person')
+PersonCreate = person_validators.get('create')
+PersonUpdate = person_validators.get('update')
+PersonGet = person_validators.get('get')
+PersonDelete = person_validators.get('delete')
+PersonDeactivate = person_validators.get('deactivate')
+PersonActivate = person_validators.get('activate')
+PersonSearch = person_validators.get('search')
+
+person_identity_validators = validators.get('person_identity')
+PersonIdentityCreate = person_identity_validators.get('create')
+PersonIdentityCreateNoPersonId = person_identity_validators.get('create')
+PersonIdentityUpdate = person_identity_validators.get('update')
+PersonIdentityGet = person_identity_validators.get('get')
+PersonIdentityDelete = person_identity_validators.get('delete')
+PersonIdentityDeactivate = person_identity_validators.get('deactivate')
+PersonIdentityActivate = person_identity_validators.get('activate')
+PersonIdentitySearch = person_identity_validators.get('search')
+
+person_with_identity_validators = validators.get('person_with_identity')
+PersonWithIdentityCreate = person_with_identity_validators.get('create')
+PersonWithIdentityUpdate = person_with_identity_validators.get('update')
+PersonWithIdentityGet = person_with_identity_validators.get('get')
+PersonWithIdentityDelete = person_with_identity_validators.get('delete')
+PersonWithIdentityDeactivate = person_with_identity_validators.get('deactivate')
+PersonWithIdentityActivate = person_with_identity_validators.get('activate')
+PersonWithIdentitySearch = person_with_identity_validators.get('search')
+###CRUDS###
+
+#PERSON#
+def is_person(person_id: int = None):
+    if not person_id: return False
+    DBSession = get_db_session(True)
+    query = DBSession.query(Person.id). \
+            filter(Person.id==person_id). \
+            first()
+    if query: return True
+    return False
+
+def is_personidentity(identity_type_id: int = None, number: str = None):
+    DBSession = get_db_session(True)
+    if not identity_type_id or not number: return False
+    person_identity = DBSession.query(PersonIdentity). \
+            filter(PersonIdentity.active==True). \
+            filter(PersonIdentity.identity_type_id==identity_type_id). \
+            filter(PersonIdentity.number==number). \
+            first()
+    if person_identity: return True
+    return False
+
+def get_personidentity(identity_type_id: int = None, number: str = None):
+    DBSession = get_db_session(True)
+    if not identity_type_id or not number: return False
+    person_identity = DBSession.query(PersonIdentity). \
+            filter(PersonIdentity.active==True). \
+            filter(PersonIdentity.identity_type_id==identity_type_id). \
+            filter(PersonIdentity.number==number). \
+            first()
+    return person_identity
+
+def get_person(person_id: int = None):
+    if not person_id: return False
+    DBSession = get_db_session(True)
+    query = DBSession.query(Person). \
+            filter(Person.id==person_id). \
+            first()
+    if query: return query
+    return False
+
+def get_person_by_identity_number(identity_type_id: int, identity_number: int):
+    DBSession = get_db_session(True)
+    if not identity_type_id or not identity_number: return False
+    person_identity = DBSession.query(PersonIdentity). \
+            filter(PersonIdentity.active==True). \
+            filter(PersonIdentity.identity_type_id==identity_type_id). \
+            filter(PersonIdentity.number==identity_number). \
+            first()
+    return person_identity
+
+def get_person_object_all(person_id: int):
+    person_object = {}
+    person = get_person(person_id)
+    if not person: return False
+    person_object['person'] = person
+    
+    person_identities = get_all_person_identities_for_person_id(person_id)
+    person_object['identities'] = person_identities
+
+    person_bankaccounts = get_all_person_bankaccounts_for_person_id(person_id)
+    person_object['bankaccounts'] = person_bankaccounts
+
+    person_contacts = get_all_person_contacts_for_person_id(person_id)
+    person_object['contacts'] = person_contacts
+
+    person_addresses = get_all_person_addresses_for_person_id(person_id)
+    person_object['addresses'] = person_addresses
+    if person_object: return person_object
+    return False
+
+def get_all_person_contacts_for_person_id(person_id: int = None):
+    if not person_id: return wrap_error(msg="No person_id provided")
+    DBSession = get_db_session(True)
+
+    person_contact_links = DBSession.query(PersonContactLink). \
+            filter(PersonContactLink.active==True). \
+            filter(PersonContactLink.person_id==person_id). \
+            all()
+
+    my_contacts = []
+    for link in person_contact_links:
+        this_contact = DBSession.query(Contact). \
+                filter(Contact.active==True). \
+                filter(Contact.id==link.contact_id). \
+                first()
+        if not this_contact: continue
+        my_contacts.append(this_contact)
+    return my_contacts 
+
+def create_personidentity(create_validator: PersonIdentityCreate):
+    DBSession = get_db_session(True)
+    person_id = create_validator.person_id
+    if not is_person(person_id): return wrap_error(msg=f"No Person for ID: {person_id}")
+    if is_personidentity(create_validator.identity_type_id, create_validator.number): return wrap_error(msg="Person ID Exists")
+
+    new_person_identity = PersonIdentity(**create_validator.dict())
+    DBSession.add(new_person_identity)
+    DBSession.commit()
+    DBSession.flush()
+    new_person_identity_id = new_person_identity.id
+    return new_person_identity
+
+def get_all_person_identities_for_person_id(person_id: int = None):
+    if not person_id: return wrap_error(msg="No person_id provided")
+    DBSession = get_db_session(True)
+    person_identities = DBSession.query(PersonIdentity). \
+            filter(PersonIdentity.active==True). \
+            filter(PersonIdentity.person_id==person_id). \
+            all()
+    return person_identities
+
+def get_person_with_identity(create_validator: PersonWithIdentityCreate):
+    print()
+    print('HERE get_person_with_identity')
+    print()
+    DBSession = get_db_session(True)
+    if not DBSession: return wrap_error(msg="Meow")
+    person_fields = PersonCreate.__dict__.get('__fields__').keys()
+    print(person_fields)
+    person_dict = {field:getattr(create_validator, field) for field in person_fields if hasattr(create_validator, field)}
+    print(person_dict)
+    person_validator = PersonGet(**person_dict)
+    print(person_validator)
+    return True
+
+def create_person_with_identity(create_validator: PersonWithIdentityCreate):
+    DBSession = get_db_session(True)
+    if not DBSession: return wrap_error(msg="Meow")
+    person_fields = PersonCreate.__dict__.get('__fields__').keys()
+    person_dict = {field:getattr(create_validator, field) for field in person_fields if hasattr(create_validator, field)}
+    person_validator = PersonCreate(**person_dict)
+    if not person_validator: return wrap_error(msg="Failed to Validate Person")
+
+    person_identity_fields = PersonIdentityCreate.__dict__.get('__fields__').keys()
+    person_identity_dict = {field:getattr(create_validator, field) for field in person_identity_fields if hasattr(create_validator, field)}
+    person_identity_validator = PersonCreate(**person_dict)
+    if not person_identity_validator: return wrap_error(msg="Failed to Validate PersonIdentity")
+
+    new_person = Person(**person_dict)
+    DBSession.add(new_person)
+    DBSession.commit()
+    DBSession.flush()
+
+    person_id = new_person.id
+    person_identity_dict['person_id'] = person_id
+
+    new_person_identity = PersonIdentity(**person_identity_dict)
+    DBSession.add(new_person_identity)
+    DBSession.commit()
+    DBSession.flush()
+    new_person_identity_id = new_person_identity.id
+    returndict = {
+            'id':person_id,
+            'person_identity_id':new_person_identity_id,
+            'language_id':new_person.language_id,
+            'surname':new_person.surname,
+            'preferred_name':new_person.preferred_name,
+            'firstname':new_person.firstname,
+            'language_id':new_person.language_id,
+            'date_of_birth':new_person.date_of_birth,
+            'person_gender_type_id':new_person.person_gender_type_id,
+            'person_title_type_id':new_person.person_title_type_id,
+            'identity_type_id':person_identity_dict.get("identity_type_id"),
+            'id_number':person_identity_dict.get("number"),
+            'added_by':new_person.added_by,
+            }
+    response = PersonWithIdentityGet(**returndict)
+    return response
+
+def update_person(update_person_validator: PersonUpdate):
+    person_id = update_person_validator.id
+    if not is_person(person_id): return False
+    DBSession = get_db_session(True)
+    person_record = get_person(person_id)
+    if not person_record: return wrap_error(msg=f"No Person Record for ID: {person_id}")
+    changed_values = {k:v for k, v in person_record.__dict__.items() if v != None and hasattr(Person, k)}
+    person_fields = PersonUpdate.__dict__.get('__fields__').keys()
+    person_dict = {field:getattr(update_person_validator, field) for field in person_fields if hasattr(update_person_validator, field)}
+    for colname, value in person_dict.items(): setattr(person_record, colname, value)
+    #DBSession.add(person_record)
+    DBSession.commit()
+    DBSession.flush()
+    return person_record
+
+def update_personidentity(update_personidentity_validator: PersonIdentityUpdate):
+    person_id = update_personidentity_validator.person_id
+    personidentity_id = update_personidentity_validator.id
+    identity_type_id = update_personidentity_validator.identity_type_id
+    number = update_personidentity_validator.number
+    if not is_person(person_id): return False
+    person_identity_record = get_person_identity_by_id(personidentity_id)
+    if not person_identity_record: return False
+    DBSession = get_db_session(True)
+
+    person_identity_record.active = update_personidentity_validator.active
+    person_identity_record.number = update_personidentity_validator.number
+    person_identity_record.expiry_date = update_personidentity_validator.expiry_date
+    person_identity_record.identity_type_id = update_personidentity_validator.identity_type_id
+    person_identity_record.added_by = update_personidentity_validator.added_by
+    person_identity_record.person_id = person_id
+
+    DBSession.commit()
+    DBSession.flush()
+    #person_identity_record = get_person_identity_by_id(person_identity_id=personidentity_id)
+    return person_identity_record
+
+def get_all_persons(limit: int = 20):
+    DBSession = get_db_session(True)
+    person_query = DBSession.query(Person). \
+            filter(Person.active==True)
+    if not limit: return person_query.all()
+    return person_query.limit(limit)
+
+def get_person_identity_by_id(person_identity_id: int):
+    if not person_identity_id: return False
+    DBSession = get_db_session(True)
+    person_identity = DBSession.query(PersonIdentity). \
+            filter(PersonIdentity.active==True). \
+            filter(PersonIdentity.id==person_identity_id). \
+            first()
+    return person_identity
+
+def deactivate_identity(person_identity_id: int):
+    if not person_identity_id: return False
+    getted_identity = get_person_identity_by_id(person_identity_id)
+    DBSession = get_db_session(True)
+    if not getted_identity: return False
+    getted_identity.active = False
+    DBSession.commit()
+    DBSession.flush()
+    return True
+
+def _deactivate_person(person_id: int):
+    if not person_id: return False
+    DBSession = get_db_session(True)
+    person = get_person(person_id)
+    person.active = False
+    DBSession.commit()
+    DBSession.flush()
+    return True
+
+def deactivate_person(person_id: int):
+    DBSession = get_db_session(True)
+    person_full = get_person_object_all(person_id=person_id)
+    returnable = {'identities':{},'contacts':{},'bankaccounts':{}, 'addresses':{}}
+
+    kill_person = False
+    if person_full and person_full.get('person', {}).active: kill_person = True
+    if not kill_person: return False
+
+    for identity in person_full.get('identities'):
+        if not deactivate_identity(identity.id): returnable['identities'][identity.id] = False
+        else: returnable['identities'][identity.id] = True
+
+    for bankaccount in person_full.get('bankaccounts'):
+        if not deactivate_bankaccount(bankaccount.id): returnable['bankaccounts'][bankaccount.id] = False
+        else: returnable['bankaccounts'][bankaccount.id]:True
+
+    for contact in person_full.get('contacts'):
+        if not _deactivate_contact(contact.id): returnable['contacts'][contact.id] = False
+        else: returnable['contacts'][contact.id] = True
+
+    for address in person_full.get('addresses'):
+        if not _deactivate_address(address.id): returnable['addresses'][address.id] = False
+        else: returnable['addresses'][address.id] = True
+    
+    if kill_person: deactivated_person = _deactivate_person(person_id) 
+    if deactivated_person: return True
+    return False

@@ -1,0 +1,17 @@
+#!/bin/python
+
+from wsgiref.simple_server import make_server
+from tg import expose, TGController, AppConfig
+
+class Controller(TGController):
+
+    @expose()
+    def index(self):
+        return 'Some text for the page'
+
+
+config = AppConfig(minimal=True, root_controller=Controller())
+app = config.make_wsgi_app()
+
+server = make_server('', 8000, app)
+server.serve_forever()

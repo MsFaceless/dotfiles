@@ -1,0 +1,77 @@
+#!/bin/python
+
+from tg import expose
+from dotenv import dotenv_values
+
+from calabash.model import *
+
+from calabash.lib.html_utils import *
+from calabash.lib.base import BaseController
+from calabash.lib.tg_decorators import safe_headers
+from calabash.lib.myimali_api_gateway import MyImaliApiGateway
+
+from calabash.controllers.common import CommonController
+
+COMMON = CommonController()
+MYIMALI = MyImaliApiGateway()
+
+PURCHASE_MOBILE_ERROR_DICT = {
+        'purchaseKey' : '',
+        'date' : '',
+        'product' : '',
+        'amount' : '',
+        'operator_reference' : '',
+        'reference' : '',
+        'datetime' : '',
+        'product_type' : '',
+        'mobile_number' : '',
+        }
+
+class ValueAddedServicesController(BaseController):
+
+    @safe_headers
+    @expose('json')
+    def get_airtime_list(self, *args, **kwargs):
+        result = MYIMALI.get_product_list_airtime(**kwargs)
+        product_list = result.get('product_list', [])
+        return success_response(product_list)
+
+    @safe_headers
+    @expose('json')
+    def get_data_list(self, *args, **kwargs):
+        result = MYIMALI.get_product_list_data(**kwargs)
+        product_list = result.get('product_list', [])
+        return success_response(product_list)
+
+    @safe_headers
+    @expose('json')
+    def purchase_mobile(self, *args, **kwargs):
+        data = MYIMALI.purchase_mobile(**kwargs)
+        if not data:
+            outputdict = {
+                'success' : False,
+                'message' : 'purchase_mobile failed',
+                'data' : PURCHASE_MOBILE_ERROR_DICT,
+            }
+            return json.dumps(outputdict)
+
+        message = 'Success'
+        success = data.pop('success', False)
+        if not success:
+            message = data.pop('message', '')
+            if not message:
+                message = data.pop('error', '')
+
+            username = kwargs.get('username', None)
+            transfer_result = COMMON.auto_transfer_user_api_key(message, username)
+            if transfer_result:
+                return self.purchase_mobile(**kwargs)
+
+            data = PURCHASE_MOBILE_ERROR_DICT
+
+        outputdict = {
+            'success' : success,
+            'message' : message,
+            'data' : data,
+        }
+        return json.dumps(outputdict)

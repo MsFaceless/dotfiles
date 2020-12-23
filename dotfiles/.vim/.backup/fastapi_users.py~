@@ -1,0 +1,78 @@
+import databases
+import sqlalchemy
+from fastapi import FastAPI
+from fastapi_users import models
+from fastapi_users.db import SQLAlchemyBaseUserTable, SQLAlchemyUserDatabase
+from fastapi_users.db.sqlalchemy import GUID
+from sqlalchemy import Boolean, Column, ForeignKey, Integer, String, Table, func, select
+from sqlalchemy.ext.declarative import DeclarativeMeta, declarative_base
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from dotenv import dotenv_values
+
+env_dict = dotenv_values()
+user_controller_dict = {}
+
+class User(models.BaseUser):
+    pass
+
+class UserCreate(models.BaseUserCreate):
+    pass
+
+class UserUpdate(User, models.BaseUserUpdate):
+    pass
+
+class UserDB(User, models.BaseUserDB):
+    pass
+
+def init_user_db():
+    dbdict = {'base':None, 'session_maker':None, 'engine':None}
+
+    DBUSER = env_dict.get("USERDBUSER")
+    DBPASS = env_dict.get("USERDBPASS")
+    DBHOST = env_dict.get("USERDBHOST")
+    DBPORT = env_dict.get("USERDBPORT")
+    DBNAME = env_dict.get("USERDBNAME")
+
+    DATABASE_URL = f'mysql://{DBUSER}:{DBPASS}@{DBHOST}:{DBPORT}/{DBNAME}'
+    database = databases.Database(DATABASE_URL)
+
+    #Base: DeclarativeMeta = declarative_base()
+    Base = declarative_base()
+
+    engine = create_engine(
+            DATABASE_URL, echo=False, pool_size=100, max_overflow=50, 
+            pool_timeout=10, pool_recycle=280, strategy='threadlocal', case_sensitive=True
+                        )
+
+    class UserTable(Base, SQLAlchemyBaseUserTable):
+        __tablename__ = 'tbl_user'
+
+        api_key = Column(GUID, unique=True)
+        pass
+
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine, expire_on_commit=False)
+    Base.metadata.create_all(engine)
+
+    dbdict['base'] = Base
+    dbdict['engine'] = engine
+    dbdict['database'] = database
+    dbdict['session_maker'] = SessionLocal
+
+    users = UserTable.__table__
+    user_db = SQLAlchemyUserDatabase(UserDB, database, users)
+
+    user_controller_dict['db'] = dbdict
+    user_controller_dict['tables'] = {'User':UserTable}
+    user_controller_dict['validators'] = {'User': {'create':UserCreate, 'update':UserUpdate, 'db':UserDB, 'user':User, 'userdb':user_db}}
+    return user_controller_dict
+
+user_app = FastAPI(title="User", root_path="/user", version='0.0.1')
+
+@user_app.on_event("startup")
+async def startup():
+    await database.connect()
+
+@user_app.on_event("shutdown")
+async def shutdown():
+    await database.disconnect()

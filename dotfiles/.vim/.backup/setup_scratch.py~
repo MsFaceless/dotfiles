@@ -1,0 +1,1674 @@
+#!/bin/python
+
+
+###############################################################################
+# Rate Tables
+###############################################################################
+
+    @require(predicates.not_anonymous())
+    @expose('rocket.templates.generic')
+    def premium_rates(self, *args, **kwargs):
+        html = self.get_rate_table_html(*args, **kwargs)
+        javascript = self.get_javascript_rate_table_onload()
+        title = "Rate Tables"
+        return dict(title=title, html=html, javascript=javascript)
+
+    @expose()
+    def get_rate_table_html(self, *args, **kwargs):
+        kwargs['searchkey'] = SEARCHKEY_PREMIUMRATE
+        searchphrase = COMMON.get_searchphrase(**kwargs)
+        rate_table_table = self.get_product_premium_htmltbl(**kwargs)
+        html = f"""
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                <div class="card-header">
+                    <div class="row d-flex">
+                        <div class="col-md-6">
+                            <h4 class="card-title">{_('Rate Tables')}</h4>
+                        </div>
+                        <div class="col-md-6 text-right">
+                            <button id="create_new_rate_table" class="btn btn-primary ml-auto">{_('Create New Rate Table')}</button>
+                        </div>
+                    </div>
+                    <div class="row d-flex align-items-center">
+                            <div class="col-md-4">
+                                <input type="text" class="form-control search" name="searchphrase"  id='searchphrase'  value='{searchphrase}' placeholder="Search">
+                            </div>
+                            <div class="col-md-8">
+                                <button class="btn btn-primary" id='action_search'>Search</button>
+                                <button class="btn btn-primary" id='btn_reset'>Reset</button>
+                            </div>
+                        </div>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive" id='div_premium_rate'>
+                        {rate_table_table}
+                    </div>
+                </div>
+                </div>
+            </div>
+        """
+        return html
+
+    @expose()
+    def get_product_premium_htmltbl(self, *args, **kwargs):
+        dbase_query = self.get_rate_table_list(*args, **kwargs)
+        outputlist = []
+        for item in dbase_query:
+            rate_name = 'Unknown'
+            rate_table_base = DBSession.query(RateTableBaseValue).\
+                filter(RateTableBaseValue.rate_table_id==item.id).\
+                filter(RateTableBaseValue.bln_active==True).\
+                first()
+
+            if rate_table_base:
+                rate_name = rate_table_base.base_value
+            else:
+                rate_table_benefit_link = DBSession.query(RateTableAssetTypeLink).\
+                    filter(RateTableAssetTypeLink.rate_table_id==item.id).\
+                    filter(RateTableAssetTypeLink.bln_active==True).\
+                    first()
+                if rate_table_benefit_link:
+                    rate_name = TypeDict().get_pretty_name("benefit_asset_type", rate_table_benefit_link.benefit_asset_type_id)
+
+            outputlist.append({
+                'code': f"<div class='edit rate_table_edit' rate_table_id='{item.id}'>{item.code}</div>",
+                'name': item.name,
+                'base_value': rate_name, })
+
+        dbcolumnlist = [
+            'code',
+            'name',
+            'base_value',
+        ]
+        theadlist = [
+            'Code',
+            'Name',
+            'Base Value/Asset',
+        ]
+        tdclasslist = [
+            'action_link',
+            '',
+            'text-right',
+        ]
+        html = build_html_table(outputlist, dbcolumnlist, theadlist, "rate_table_table", tdclasslist)
+        javascript = """
+        <script nonce='1234'>
+            $(".rate_table_edit").click(function(){
+                var data = {rate_table_id : $(this).attr('rate_table_id')};
+                $.redirect('/setup/get_rate_table_edit', data);
+            });
+        </script>
+        """
+        return html + javascript
+
+    @expose()
+    def get_javascript_rate_table_onload(self, *args, **kwargs):
+        javascript = """
+        $("#create_new_rate_table").click(function(){
+            $('#dialogdiv').load('/setup/get_modal_new_rate_table?', function(data){
+                return false;
+            });
+        });
+        $('#action_search').click(function(){
+            var kwargs = 'searchphrase='+$('#searchphrase').val();
+            $('#div_premium_rate').load('/setup/get_product_premium_htmltbl', kwargs, function(data){
+                return false;
+            });
+        })
+        $('#btn_reset').click(function(){
+            $('#searchphrase').val('').focus();
+            $('#div_premium_rate').load('/setup/get_product_premium_htmltbl', 'reset=true', function(data){
+                return false;
+            });
+        })
+        """
+        return javascript
+
+    @expose()
+    def get_modal_new_rate_table(self, *args, **kwargs):
+        html = f"""
+        <div class="modal fade" id="dialog_new_rate_table" tabindex="-1" role="dialog" aria-labelledby="myrate_tableLabel" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <div class="col-md-6">
+                            <h4 class="card-title">New Rate Table</h4>
+                        </div>
+                    </div>
+                    <div class="modal-body">
+                        <form id='form_new_rate_table'>
+                            <div class="col-md-12">
+                                <div class="form-group row">
+                                    <label class="col-md-4 col-form-label" required for="code">Code</label>
+                                    <div class="col-md-8">
+                                        <input id="code" type="text" name="code" class="form-control" required='true' maxlength='10'>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-12">
+                                <div class="form-group row">
+                                    <label class="col-md-4 col-form-label" required for="name">Name</label>
+                                    <div class="col-md-8">
+                                        <input id="name" type="text" name="name" class="form-control" required='true'>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-12">
+                                <div class="form-group row">
+                                    <label class="col-md-4 col-form-label">Life Cover</label>
+                                    <div class="form-check">
+                                        <label class="form-check-label">
+                                            <input class="form-check-input" type="checkbox" id='is_life_rate_table' name='is_life' checked>
+                                            <span class="form-check-sign"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                            <div id="rate_type_fields" class="col-md-12">
+                            </div>
+                        </form>
+                    </div>
+                    <div class="modal-footer">
+                        <button id='save_new_rate_table' class="btn btn-primary">Save</button>
+                        <button class="btn btn-outline-primary rate_table_back" data-dismiss="modal">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        javascript = """
+        <script nonce='1234'>
+            setFormValidation('#form_new_rate_table');
+            $('#save_new_rate_table').click(function(){
+                var valid = FormIsValid("#form_new_rate_table");
+                if(valid){
+                    var formserial = $('#form_new_rate_table').serialize();
+
+                    $.post('/setup/save_new_rate_table?', formserial, function(data){
+                        var result = JSON.parse(data);
+                        if(result.success === true){
+                            $.redirect(result.redirect, {'rate_table_id' : result.rate_table_id});
+                        };
+                        showNotification(result.status, result.message);
+                        return false;
+                    });
+                }
+            });
+
+            $('#is_life_rate_table').change(function(){
+                var is_life = $('#is_life_rate_table').val();
+                if(this.checked) {
+                    $('#rate_type_fields').load('/setup/get_rate_type_field_life', function(data){
+                        return false;
+                    });
+                } else {
+                    $('#rate_type_fields').load('/setup/get_rate_type_field_not_life', function(data){
+                        return false;
+                    });
+                }
+            });
+            $('#is_life_rate_table').trigger('change');
+
+            $('.rate_table_back').click(function(){
+                $('#dialog_new_rate_table').modal('hide');
+            });
+
+            $('#dialog_new_rate_table').modal();
+
+        </script>
+     	"""
+        return html + javascript
+
+    @expose()
+    def get_rate_type_field_life(self, *args, **kwargs):
+        return f"""
+        <div class="form-group row">
+            <label class="col-md-4 col-form-label" required for="base_rate">Base Rate</label>
+            <div class="col-md-8">
+                <input id="base_rate" type="number" value='1000' name="base_rate" class="form-control" required='true'>
+            </div>
+        </div>
+        """
+
+    @expose()
+    def get_rate_type_field_not_life(self, *args, **kwargs):
+        selectbox_benefit_asset_type = self.get_selectbox_benefit_asset_type()
+        return f"""
+        <div class="form-group row">
+            <label class="col-md-4 col-form-label" required for="benefit_asset_type_id">Benefit Asset</label>
+            <div class="col-md-8">
+                {selectbox_benefit_asset_type}
+            </div>
+        </div>
+        """
+
+    def get_selectbox_benefit_asset_type(self, selected=None, *args, **kwargs):
+        kwargs['id'] = 'benefit_asset_type_id'
+        kwargs['selected'] = selected
+        kwargs['outputdict'] = TypeDict().get_dict_of_types("benefit_asset_type")
+        return create_selectbox_html(**kwargs)
+
+    @expose()
+    def save_new_rate_table(self, *args, **kwargs):
+        if not kwargs: return json.dumps({'success': False, 'data': 'No data provided', 'status': 'danger'})
+        usernow = request.identity.get('user', None)
+        rate_code = kwargs.get('code', None)
+        rate_code = rate_code[0:10]
+        base_rate = kwargs.get('base_rate', None)
+
+        exists = DBSession.query(RateTable).\
+            filter(RateTable.code==rate_code).\
+            filter(RateTable.bln_active==True).\
+            first()
+        if exists: return json.dumps({'success': False, 'message': 'This code already exists.', 'status': 'danger'})
+
+        this_is_life = True if kwargs.get('is_life', None) else False
+
+        this_benefit_asset_type_id = kwargs.get('benefit_asset_type_id', None)
+
+        if this_is_life and this_benefit_asset_type_id \
+            or not this_is_life and not this_benefit_asset_type_id:
+            return json.dumps({'success': False, 'message': 'Select either Life or Benefit Asset.', 'status': 'danger'})
+
+        if this_is_life and not base_rate:
+            return json.dumps({'success': False, 'message': 'Please supply a base rate.', 'status': 'danger'})
+
+        if this_is_life: this_benefit_asset_type_id = None
+        if this_benefit_asset_type_id:
+            this_is_life = False
+            base_rate = None
+
+        this = RateTable()
+        this.code = rate_code
+        this.name = kwargs.get('name', None)
+        this.is_life = this_is_life
+        this.added_by = usernow.id
+        DBSession.add(this)
+        DBSession.flush()
+
+        #Add the basae rate if necessary
+        if this.is_life:
+            that = RateTableBaseValue()
+            that.rate_table_id = this.id
+            that.base_rate = int(base_rate)
+            that.added_by = usernow.id
+        else:
+            that = RateTableAssetTypeLink()
+            that.rate_table_id = this.id
+            that.benefit_asset_type_id = int(this_benefit_asset_type_id)
+            that.added_by = usernow.id
+        DBSession.add(that)
+        DBSession.flush()
+
+        redirect_url = '/setup/get_rate_table_edit'
+        return json.dumps({'success': True, 'rate_table_id': this.id, 'redirect': redirect_url})
+
+    @expose()
+    def save_edit_rate_table(self, *args, **kwargs):
+        rate_table_id = kwargs.get('rate_table_id', None)
+        rate_table_name = kwargs.get('name', None)
+        rate_table_active = kwargs.get('active', 'off')
+        if not rate_table_active: rate_table_active = 'off'
+        if not rate_table_id: return json.dumps({'success': False, 'data': 'Rate Table not provided.', 'status':'danger'})
+
+        this = RateTable.by_id(rate_table_id)
+        if not this: return json.dumps({'success': False, 'data': 'No rate_table found for id provided', 'status':'danger'})
+        this.name = rate_table_name
+        if rate_table_active =='on':
+            this.bln_active = True
+        else:
+            this.bln_active = False
+        DBSession.flush()
+        return json.dumps({'success': True, 'data': this.id, 'status':'success'})
+
+    @expose()
+    def get_rate_table_list(self, *args, **kwargs):
+        kwargs['searchkey'] = SEARCHKEY_PREMIUMRATE
+        searchphrase = COMMON.get_searchphrase(**kwargs).lower()
+        if searchphrase:
+            searchphrase = "%" + searchphrase + "%"
+            dbase_query = DBSession.query(RateTable). \
+                filter(or_(RateTable.code.like(searchphrase),
+                           RateTable.name.like(searchphrase), )). \
+                filter(RateTable.bln_active == True). \
+                order_by(asc(RateTable.code)).limit(LIMIT)
+            return dbase_query
+        else:
+            dbase_query = DBSession.query(RateTable). \
+                filter(RateTable.bln_active == True). \
+                order_by(asc(RateTable.id)). \
+                limit(LIMIT)
+        return dbase_query
+
+    @require(predicates.not_anonymous())
+    @expose('rocket.templates.generic')
+    def get_rate_table_edit(self, *args, **kwargs):
+        rate_table_id = kwargs.get('rate_table_id', None)
+        if not rate_table_id: redirect('/setup/premium_rates')
+        html = self.get_edit_rate_table_html(*args, **kwargs)
+        javascript = self.get_javascript_rate_table_edit_onload()
+        title = self.get_rate_table_title_html(rate_table_id)
+        return dict(title=title, html=html, javascript=javascript)
+
+    def get_rate_table_title_html(self, rate_table_id=None, *args, **kwargs):
+        if not rate_table_id: return ''
+        rate_table = RateTable.by_id(rate_table_id)
+        if not rate_table: return ''
+        return f"Edit: {rate_table.name}"
+
+    @expose('rocket.templates.generic')
+    def get_edit_rate_table_html(self, *args, **kwargs):
+        rate_table_id = kwargs.get('rate_table_id', None)
+        rate_table = RateTable.by_id(rate_table_id)
+        checked = 'checked' if rate_table.bln_active else ''
+        base_value = ''
+        if rate_table.is_life:
+            rate_table_base = DBSession.query(RateTableBaseValue).\
+                filter(RateTableBaseValue.rate_table_id==rate_table.id).\
+                filter(RateTableBaseValue.bln_active==True).\
+                first()
+            if rate_table_base:
+                base_value = rate_table_base.base_value
+
+        rate_table_line_item_table = self.get_rate_table_line_item_html(**kwargs)
+
+        html = f"""
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header d-flex">
+                        <div class="col-md-6">
+                            <h4 class="card-title">Edit '{rate_table.name}'</h4>
+                        </div>
+                        <div class="col-md-6 text-right">
+                            <button class="btn btn-outline-primary" id='save_edit_rate_table'>Save</button>
+                            <button class="btn btn-primary ml-auto action_back product_premium_back">Back Rate Table List</button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <form id='form_edit_loader' class="d-flex flex-wrap">
+                            <div style='display: none' class="col-md-6">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label" required for="rate_table_id">ID</label>
+                                    <div class="col-md-9">
+                                        <input id="rate_table_id" type="text" name="rate_table_id" value="{rate_table.id}" class="form-control"
+                                            required='true'>
+
+                                    </div>
+                                </div>
+                            </div>
+                             <div class="col-md-6">
+                                <div class="form-group row">
+                                    <label class="col-md-6 col-form-label" required for="code">{_('Rate Table Code')}</label>
+                                    <div class="col-md-4">
+                                        <input id="code" type="text" maxlength='100' name="code" value="{rate_table.code}"
+                                            class="form-control" required='true' disabled='true'>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-group row">
+                                    <label class="col-md-6 col-form-label" required for="name">{_('Rate Table Name')}</label>
+                                    <div class="col-md-6">
+                                        <input id="name" type="text" maxlength='100' name="name" value="{rate_table.name}"
+                                            class="form-control" required='true'>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-group row">
+                                    <label class="col-md-6 col-form-label">Active</label>
+                                    <div class="form-check">
+                                        <label class="form-check-label">
+                                            <input class="form-check-input" type="checkbox" name='active' {checked}>
+                                            <span class="form-check-sign"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+        """
+
+        if rate_table.is_life:
+            html += f"""
+                            <div class="col-md-6">
+                                <div class="form-group row">
+                                    <label class="col-md-6 col-form-label" required for="base_value">{_('Base Value')}</label>
+                                    <div class="col-md-6">
+                                        <input id="base_value" type="number" maxlength='1000'  max="1000" name="base_value" value="{base_value}"
+                                            class="form-control" required='true' disabled='true'>
+                                    </div>
+                                </div>
+                            </div>
+            """
+
+        html += f"""
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        {rate_table_line_item_table}
+        """
+        javascript = """
+        <script nonce='1234'>
+            $('#save_edit_rate_table').click(function(){
+                var formserial = $('#form_edit_loader').serialize();
+
+                $.post('/setup/save_edit_rate_table?', formserial, function(data){
+                    var result = JSON.parse(data);
+                    if(result.success === true){
+                        $.redirect('/setup/premium_rates');
+                    };
+                    showNotification(result.status, result.data);
+                    return false;
+                });
+            });
+            $('.product_premium_back').click(function(){
+                    $.redirect('/setup/premium_rates');
+               });
+         </script>
+         """
+        return html + javascript
+
+    def get_rate_table_line_itemtable_is_life(self, rate_table_id=None, *args, **kwargs):
+        if not rate_table_id:
+            return ''
+
+        dbase_query = DBSession.query(RateTableLineItemLife). \
+            filter(RateTableLineItemLife.rate_table_id == rate_table_id). \
+            filter(RateTableLineItemLife.bln_active == True). \
+            order_by(asc(RateTableLineItemLife.rate_table_id)). \
+            limit(LIMIT)
+
+        outputlist = []
+        for item in dbase_query:
+            active = IMG_ACTIVE
+            disable_text = 'Remove'
+            if not item.bln_active:
+                active = IMG_INACTIVE
+                disable_text = 'Recover'
+
+            gender = TYPEUTIL.get_pretty_name("entity_person_gender_type", item.gender_type_id)
+            outputlist.append({
+                'gender': gender,
+                'maximum_age': item.maximum_age,
+                'minimum_age': item.minimum_age,
+                'rate_factor': item.rate_factor,
+                'disable' : f"<div class='line_item_active' active='{item.bln_active}' rate_table_id='{rate_table_id}' rate_table_line_item_id='{item.id}'>{disable_text}</div>",
+            })
+        dbcolumnlist = [
+            'gender',
+            'maximum_age',
+            'minimum_age',
+            'rate_factor',
+            'disable',
+        ]
+        theadlist = [
+            'Gender',
+            'Maximum Age',
+            'Minimum Age',
+            'Rate Factor',
+            '',
+        ]
+        tdclasslist = [
+            '',
+            '',
+            '',
+            'text-right',
+            'action_link text-right',
+        ]
+        return build_html_table(outputlist, dbcolumnlist, theadlist, "rate_table_line_item_table", tdclasslist)
+
+    def get_rate_table_line_itemtable_employee(self, rate_table_id=None, *args, **kwargs):
+        if not rate_table_id:
+            return ''
+
+        dbase_query = DBSession.query(RateTableLineItemEmployee). \
+            filter(RateTableLineItemEmployee.rate_table_id == rate_table_id). \
+            filter(RateTableLineItemEmployee.bln_active == True). \
+            order_by(asc(RateTableLineItemEmployee.rate_table_id)). \
+            limit(LIMIT)
+
+        outputlist = []
+        for item in dbase_query:
+            active = IMG_ACTIVE
+            disable_text = 'Remove'
+            if not item.bln_active:
+                active = IMG_INACTIVE
+                disable_text = 'Recover'
+
+            outputlist.append({
+                'min_employees': item.minimum_employees,
+                'max_employees': item.maximum_employees,
+                'amount': get_currency_by_locale(item.amount, cents=False),
+                'sum_insured': get_currency_by_locale(item.sum_insured, cents=False),
+                'disable' : f"<div class='line_item_active' active='{item.bln_active}' rate_table_id='{rate_table_id}' rate_table_line_item_id='{item.id}'>{disable_text}</div>",
+            })
+        dbcolumnlist = [
+            'min_employees',
+            'max_employees',
+            'amount',
+            'sum_insured',
+            'disable',
+        ]
+        theadlist = [
+            'Min No. Employees',
+            'Max No. Employees',
+            'Premium',
+            'Sum Insured',
+            '',
+        ]
+        tdclasslist = [
+            '',
+            '',
+            'text-right',
+            'text-right',
+            'action_link text-right',
+        ]
+        return build_html_table(outputlist, dbcolumnlist, theadlist, "rate_table_line_item_table", tdclasslist)
+
+    def get_rate_table_line_itemtable_turnover(self, rate_table_id=None, *args, **kwargs):
+        if not rate_table_id:
+            return ''
+
+        dbase_query = DBSession.query(RateTableLineItemTurnover). \
+            filter(RateTableLineItemTurnover.rate_table_id == rate_table_id). \
+            filter(RateTableLineItemTurnover.bln_active == True). \
+            order_by(asc(RateTableLineItemTurnover.minimum_turnover)). \
+            limit(LIMIT)
+
+        outputlist = []
+        for item in dbase_query:
+            active = IMG_ACTIVE
+            disable_text = 'Remove'
+            if not item.bln_active:
+                active = IMG_INACTIVE
+                disable_text = 'Recover'
+
+            outputlist.append({
+                'min_turnover': get_currency_by_locale(item.minimum_turnover, cents=False),
+                'max_turnover': get_currency_by_locale(item.maximum_turnover, cents=False),
+                'amount': get_currency_by_locale(item.amount, cents=False),
+                'sum_insured': get_currency_by_locale(item.sum_insured, cents=False),
+                'disable' : f"<div class='line_item_active' active='{item.bln_active}' rate_table_id='{rate_table_id}' rate_table_line_item_id='{item.id}'>{disable_text}</div>",
+            })
+        dbcolumnlist = [
+            'min_turnover',
+            'max_turnover',
+            'amount',
+            'sum_insured',
+            'disable',
+        ]
+        theadlist = [
+            'Minimum Turnover',
+            'Maximum Turnover',
+            'Premium',
+            'Sum Insured',
+            '',
+        ]
+        tdclasslist = [
+            '',
+            '',
+            'text-right',
+            'text-right',
+            'action_link text-right',
+        ]
+        return build_html_table(outputlist, dbcolumnlist, theadlist, "rate_table_line_item_table", tdclasslist)
+
+    def get_rate_table_line_itemtable_vehicle(self, rate_table_id=None, *args, **kwargs):
+        if not rate_table_id:
+            return ''
+
+        dbase_query = DBSession.query(RateTableLineItemVehicle). \
+            filter(RateTableLineItemVehicle.rate_table_id == rate_table_id). \
+            filter(RateTableLineItemVehicle.bln_active == True). \
+            order_by(asc(RateTableLineItemVehicle.description)). \
+            limit(LIMIT)
+
+        outputlist = []
+        for item in dbase_query:
+
+            active = IMG_ACTIVE
+            disable_text = 'Remove'
+            if not item.bln_active:
+                active = IMG_INACTIVE
+                disable_text = 'Recover'
+
+            outputlist.append({
+                'description': item.description,
+                'ins_amount': get_currency_by_locale(item.insured_amount, cents=False),
+                'ins_sum_insured': get_currency_by_locale(item.insured_sum_insured, cents=False),
+                'unins_amount': get_currency_by_locale(item.uninsured_amount, cents=False),
+                'unins_sum_insured': get_currency_by_locale(item.uninsured_sum_insured, cents=False),
+                'tp_amount': get_currency_by_locale(item.third_party_amount, cents=False),
+                'tp_sum_insured': get_currency_by_locale(item.third_party_sum_insured, cents=False),
+                'disable' : f"<div class='line_item_active' active='{item.bln_active}' rate_table_id='{rate_table_id}' rate_table_line_item_id='{item.id}'>{disable_text}</div>",
+            })
+        dbcolumnlist = [
+            'description',
+            'ins_amount',
+            'ins_sum_insured',
+            'unins_amount',
+            'unins_sum_insured',
+            'tp_amount',
+            'tp_sum_insured',
+            'disable',
+        ]
+        theadlist = [
+            'Description',
+            'Insured Premium',
+            'Insured Sum Insured',
+            'Uninsured Premium',
+            'Uninsured Sum Insured',
+            'Third Party Premium',
+            'Third Party Sum Insured',
+            '',
+        ]
+        tdclasslist = [
+            '',
+            'text-right',
+            'text-right',
+            'text-right',
+            'text-right',
+            'text-right',
+            'text-right',
+            'action_link text-right',
+        ]
+        return build_html_table(outputlist, dbcolumnlist, theadlist, "rate_table_line_item_table", tdclasslist)
+
+    @expose()
+    def get_rate_table_line_item_html(self, *args, **kwargs):
+        rate_table_id = kwargs.get('rate_table_id', None)
+        if not rate_table_id:
+            return ''
+
+        rate_table = RateTable.by_id(rate_table_id)
+        if not rate_table:
+            return ''
+
+        rate_table_benefit_link = DBSession.query(RateTableAssetTypeLink).\
+            filter(RateTableAssetTypeLink.rate_table_id==rate_table.id).\
+            filter(RateTableAssetTypeLink.bln_active==True).\
+            first()
+
+        if not rate_table.is_life and not rate_table_benefit_link:
+            return ''
+
+        employee = TYPEUTIL.get_id_of_name('benefit_asset_type', 'employee')
+        business = TYPEUTIL.get_id_of_name('benefit_asset_type', 'business')
+        property_type = TYPEUTIL.get_id_of_name('benefit_asset_type', 'property')
+        vehicle = TYPEUTIL.get_id_of_name('benefit_asset_type', 'vehicle')
+
+        rate_table_line_itemtable = ''
+
+        if rate_table.is_life:
+            rate_table_line_itemtable = self.get_rate_table_line_itemtable_is_life(rate_table_id)
+
+        elif rate_table_benefit_link.benefit_asset_type_id == employee:
+            rate_table_line_itemtable = self.get_rate_table_line_itemtable_employee(rate_table_id)
+
+        elif rate_table_benefit_link.benefit_asset_type_id == business:
+            rate_table_line_itemtable = self.get_rate_table_line_itemtable_turnover(rate_table_id)
+
+        elif rate_table_benefit_link.benefit_asset_type_id == property_type:
+            rate_table_line_itemtable = self.get_rate_table_line_itemtable_turnover(rate_table_id)
+
+        elif rate_table_benefit_link.benefit_asset_type_id == vehicle:
+            rate_table_line_itemtable = self.get_rate_table_line_itemtable_vehicle(rate_table_id)
+
+        html = f"""
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="row d-flex">
+                            <div class="col-md-6">
+                                <h4 class="card-title">{_('Rate Table Line Item')}</h4>
+                            </div>
+                            <div class="col-md-6 text-right">
+                                <button id="create_new_rate_table_line_item" class="btn btn-primary ml-auto">{_('New Rate Table Item')}</button>
+                            </div>
+                        </div>
+                        <hr>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            {rate_table_line_itemtable}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        return html
+
+    @expose()
+    def get_javascript_rate_table_edit_onload(self, *args, **kwargs):
+        javascript = """
+        $("#create_new_rate_table_line_item").click(function(){
+            var kwargs = {'rate_table_id': $('#rate_table_id').attr('value')};
+
+            $('#dialogdiv').load('/setup/get_modal_new_rate_table_line_item?', kwargs, function(data){
+                return false;
+            });
+        });
+
+        $(".rate_table_line_item_edit").click(function(){
+            var data = {rate_table_line_item_id : $(this).attr('rate_table_line_item_id'), 'rate_table_id': $('#rate_table_id').attr('value')};
+            $('#dialogdiv').load('/setup/get_modal_edit_rate_table_line_item?', data, function(data){
+                return false;
+            });
+        });
+
+        $(".line_item_active").click(function(){
+            var text = $(this).html();
+            var data = {rate_table_line_item_id : $(this).attr('rate_table_line_item_id'), 'rate_table_id': $('#rate_table_id').attr('value')};
+            var kwargs = {'rate_table_id': $('#rate_table_id').attr('value')};
+            $.post('/setup/toggle_line_item_active?', data, function(data){
+                $.redirect('/setup/get_rate_table_edit?', kwargs);
+                return false;
+            });
+        });
+        """
+        return javascript
+
+    @expose()
+    def toggle_line_item_active(self, *args, **kwargs):
+        rate_table_id = kwargs.get('rate_table_id', None)
+        rate_table_line_item_id = kwargs.get('rate_table_line_item_id', None)
+
+        rate_table = RateTable.by_id(rate_table_id)
+        rate_table_benefit_link = DBSession.query(RateTableAssetTypeLink).\
+            filter(RateTableAssetTypeLink.rate_table_id==rate_table.id).\
+            filter(RateTableAssetTypeLink.bln_active==True).\
+            first()
+
+        employee_type_id = TYPEUTIL.get_id_of_name('benefit_asset_type', 'employee')
+        business_type_id = TYPEUTIL.get_id_of_name('benefit_asset_type', 'business')
+        property_type_id = TYPEUTIL.get_id_of_name('benefit_asset_type', 'property')
+        vehicle_type_id = TYPEUTIL.get_id_of_name('benefit_asset_type', 'vehicle')
+
+        if rate_table.is_life:
+            this = DBSession.query(RateTableLineItemLife). \
+                filter(RateTableLineItemLife.id == rate_table_line_item_id). \
+                first()
+
+        elif rate_table_benefit_link.benefit_asset_type_id == employee_type_id:
+            this = DBSession.query(RateTableLineItemEmployee). \
+                filter(RateTableLineItemEmployee.id == rate_table_line_item_id). \
+                first()
+
+        elif rate_table_benefit_link.benefit_asset_type_id == business_type_id \
+            or rate_table_benefit_link.benefit_asset_type_id == property_type_id:
+            this = DBSession.query(RateTableLineItemTurnover). \
+                filter(RateTableLineItemTurnover.id == rate_table_line_item_id). \
+                first()
+
+        elif rate_table_benefit_link.benefit_asset_type_id == vehicle_type_id:
+            this = DBSession.query(RateTableLineItemVehicle). \
+                filter(RateTableLineItemVehicle.id == rate_table_line_item_id). \
+                first()
+
+        if not this: return 'true'
+
+        if this.bln_active:
+            this.bln_active = False
+        else:
+            this.bln_active = True
+        DBSession.flush()
+        return 'true'
+
+    @expose()
+    def get_modal_new_rate_table_line_item(self, *args, **kwargs):
+        rate_table_id = kwargs.get('rate_table_id', None)
+        form_html = self.get_new_rate_table_type_fields(*args, **kwargs)
+        html = f"""
+        <div class="modal fade" id="dialog_new_rate_table" tabindex="-1" role="dialog" aria-labelledby="myrate_tableLabel" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <div class="col-md-12">
+                            <h4 class="card-title">New Rate Table Item</h4>
+                        </div>
+                    </div>
+                    <div class="modal-body">
+                        <form id='form_new_rate_table_line_item'>
+                            <div style='display: none' class="col-md-6">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label" required for="tbl_rate_table_line_item_id">ID</label>
+                                    <div class="col-md-9">
+                                        <input id="id" type="text" name="rate_table_id" value="{rate_table_id}" class="form-control" required='true'>
+                                    </div>
+                                </div>
+                            </div>
+                            {form_html}
+                        </form>
+                    </div>
+                    <div class="modal-footer">
+                        <button id='save_new_rate_table_line_item' class="btn btn-primary">Save</button>
+                        <button class="btn btn-outline-primary rate_table_line_item_back" data-dismiss="modal">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        javascript = """
+        <script nonce='1234'>
+            setFormValidation('#form_new_rate_table_line_item');
+            $('#save_new_rate_table_line_item').click(function(){
+                    var valid = FormIsValid("#form_new_rate_table_line_item");
+                    if(valid){
+                            var formserial = $('#form_new_rate_table_line_item').serialize();
+                            $.post('/setup/save_new_rate_table_line_item?', formserial, function(data){
+                                    var result = JSON.parse(data);
+                                    if(result.success === true){
+                                            $.redirect(result.redirect, {'rate_table_id' : result.rate_table_id});
+                                        };
+                                    return false;
+                                });
+                        }
+                });
+            $('.rate_table_line_item_back').click(function(){
+                    $('#dialog_new_rate_table').modal('hide');
+                });
+            $('#dialog_new_rate_table').modal();
+        </script>
+        """
+        return html + javascript
+
+    def get_new_rate_table_type_fields(self, *args, **kwargs):
+        rate_table_id = kwargs.get('rate_table_id', None)
+        rate_table = RateTable.by_id(rate_table_id)
+        rate_table_benefit_link = DBSession.query(RateTableAssetTypeLink).\
+            filter(RateTableAssetTypeLink.rate_table_id==rate_table.id).\
+            filter(RateTableAssetTypeLink.bln_active==True).\
+            first()
+
+        employee_type_id = TYPEUTIL.get_id_of_name('benefit_asset_type', 'employee')
+        business_type_id = TYPEUTIL.get_id_of_name('benefit_asset_type', 'business')
+        property_type_id = TYPEUTIL.get_id_of_name('benefit_asset_type', 'property')
+        vehicle_type_id = TYPEUTIL.get_id_of_name('benefit_asset_type', 'vehicle')
+
+        form_html = ''
+        if rate_table.is_life:
+            form_html = self.get_new_rate_table_type_fields_life(self, *args, **kwargs)
+
+        elif rate_table_benefit_link.benefit_asset_type_id == employee_type_id:
+            form_html = self.get_new_rate_table_type_fields_employee(self, *args, **kwargs)
+
+        elif rate_table_benefit_link.benefit_asset_type_id == business_type_id \
+            or rate_table_benefit_link.benefit_asset_type_id == property_type_id:
+            form_html = self.get_new_rate_table_type_fields_turnover(self, *args, **kwargs)
+
+        elif rate_table_benefit_link.benefit_asset_type_id == vehicle_type_id:
+            form_html = self.get_new_rate_table_type_fields_vehicle(self, *args, **kwargs)
+
+        return form_html
+
+    def get_new_rate_table_type_fields_life(self, *args, **kwargs):
+        dropdown_gender = COMMON.get_selectbox_gender_type()
+        maximum_age = 0
+        minimum_age = 0
+        rate_factor = 0
+
+        form_html =f"""
+            <div class="col-md-12">
+                <div class="form-group row">
+                    <label class="col-md-3 col-form-label" required for="gender_type_id">Gender</label>
+                    <div class="col-md-9">
+                        {dropdown_gender}
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-12">
+                <div class="form-group row">
+                    <label class="col-md-3 col-form-label" required for="maximum_age">Maximum Age</label>
+                    <div class="col-md-9">
+                        <input id="maximum_age" type="number" name="maximum_age" value="{maximum_age}" class="form-control" required='true'>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-12">
+                <div class="form-group row">
+                    <label class="col-md-3 col-form-label" required for="minimum_age">Minimum Age</label>
+                    <div class="col-md-9">
+                        <input id="minimum_age" type="number" name="minimum_age" value="{minimum_age}" class="form-control" required='true'>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-12">
+                <div class="form-group row">
+                    <label class="col-md-3 col-form-label" required for="rate_factor">Rate Factor</label>
+                    <div class="col-md-9">
+                        <input id="rate_factor" type="number" name="rate_factor" value="{rate_factor}" class="form-control" required='true'>
+                    </div>
+                </div>
+            </div>
+        """
+        return form_html
+
+    def get_new_rate_table_type_fields_employee(self, *args, **kwargs):
+        minimum_employees = 0
+        maximum_employees = 0
+        amount = 0.00
+        sum_insured = 0.00
+
+        form_html = f"""
+        <div class="col-md-12">
+            <div class="form-group row">
+                <label class="col-md-3 col-form-label" required for="maximum_employees">Min No. Employees</label>
+                <div class="col-md-9">
+                    <input id="minimum_employees" type="text" name="minimum_employees" value="{minimum_employees}" class="form-control" required='true'>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-12">
+            <div class="form-group row">
+                <label class="col-md-3 col-form-label" required for="minimum_employees">Max No. Employees</label>
+                <div class="col-md-9">
+                    <input id="maximum_employees" type="text" name="maximum_employees" value="{maximum_employees}" class="form-control" required='true'>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-12">
+            <div class="form-group row">
+                <label class="col-md-3 col-form-label" required for="amount">Premium</label>
+                <div class="col-md-9">
+                    <input id="amount" type="text" name="amount" value="{amount}" class="form-control" required='true'>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-12">
+            <div class="form-group row">
+                <label class="col-md-3 col-form-label" required for="sum_insured">Sum Insured</label>
+                <div class="col-md-9">
+                    <input id="sum_insured" type="text" name="sum_insured" value="{sum_insured}" class="form-control" required='true'>
+                </div>
+            </div>
+        </div>
+        """
+        return form_html
+
+    def get_new_rate_table_type_fields_turnover(self, *args, **kwargs):
+        minimum_turnover = 0.00
+        maximum_turnover = 0.00
+        amount = 0.00
+        sum_insured = 0.00
+
+        form_html =f"""
+        <div class="col-md-12">
+            <div class="form-group row">
+                <label class="col-md-3 col-form-label" required for="minimum_turnover">Minimum Turnover</label>
+                <div class="col-md-9">
+                    <input id="minimum_turnover" type="text" name="minimum_turnover" value="{minimum_turnover}" class="form-control" required='true'>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-12">
+            <div class="form-group row">
+                <label class="col-md-3 col-form-label" required for="maximum_turnover">Maximum Turnover</label>
+                <div class="col-md-9">
+                    <input id="maximum_turnover" type="text" name="maximum_turnover" value="{maximum_turnover}" class="form-control" required='true'>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-12">
+            <div class="form-group row">
+                <label class="col-md-3 col-form-label" required for="amount">Premium</label>
+                <div class="col-md-9">
+                    <input id="amount" type="text" name="amount" value="{amount}" class="form-control" required='true'>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-12">
+            <div class="form-group row">
+                <label class="col-md-3 col-form-label" required for="sum_insured">Sum Insured</label>
+                <div class="col-md-9">
+                    <input id="sum_insured" type="text" name="sum_insured" value="{sum_insured}" class="form-control" required='true'>
+                </div>
+            </div>
+        </div>
+        """
+        return form_html
+
+    def get_new_rate_table_type_fields_vehicle(self, *args, **kwargs):
+        description = ''
+        insured_amount = 0.00
+        uninsured_amount = 0.00
+        third_party_amount = 0.00
+        insured_sum_insured = 0.00
+        uninsured_sum_insured = 0.00
+        third_party_sum_insured = 0.00
+        selectbox_vehicle_category = self.get_vehicle_category_list()
+        form_html =f"""
+        <div class="col-md-12">
+            <div class="form-group row">
+                <label class="col-md-3 col-form-label" required for="asset_vehicle_category_id">Vehicle Category</label>
+                <div class="col-md-9">
+                    {selectbox_vehicle_category}
+                </div>
+            </div>
+        </div>
+        <div class="col-md-12">
+            <div class="form-group row">
+                <label class="col-md-3 col-form-label" required for="description">Description</label>
+                <div class="col-md-9">
+                    <input id="description" type="text" name="description" value="{description}" class="form-control" required='true'>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-12">
+            <div class="form-group row">
+                <label class="col-md-3 col-form-label" required for="insured_amount">Insured Premium</label>
+                <div class="col-md-9">
+                    <input id="insured_amount" type="text" name="insured_amount" value="{insured_amount}" class="form-control" required='true'>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-12">
+            <div class="form-group row">
+                <label class="col-md-3 col-form-label" required for="insured_sum_insured">Insured Sum Insured</label>
+                <div class="col-md-9">
+                    <input id="insured_sum_insured" type="text" name="insured_sum_insured" value="{insured_sum_insured}" class="form-control" required='true'>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-12">
+            <div class="form-group row">
+                <label class="col-md-3 col-form-label" required for="uninsured_amount">Uninsured Premium</label>
+                <div class="col-md-9">
+                    <input id="uninsured_amount" type="text" name="uninsured_amount" value="{uninsured_amount}" class="form-control" required='true'>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-12">
+            <div class="form-group row">
+                <label class="col-md-3 col-form-label" required for="uninsured_sum_insured">Uninsured Sum Insured</label>
+                <div class="col-md-9">
+                    <input id="uninsured_sum_insured" type="text" name="uninsured_sum_insured" value="{uninsured_sum_insured}" class="form-control" required='true'>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-12">
+            <div class="form-group row">
+                <label class="col-md-3 col-form-label" required for="third_party_amount">Third Party Premium</label>
+                <div class="col-md-9">
+                    <input id="third_party_amount" type="text" name="third_party_amount" value="{third_party_amount}" class="form-control" required='true'>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-12">
+            <div class="form-group row">
+                <label class="col-md-3 col-form-label" required for="third_party_sum_insured">Third Party Sum Insured</label>
+                <div class="col-md-9">
+                    <input id="third_party_sum_insured" type="text" name="third_party_sum_insured" value="{third_party_sum_insured}" class="form-control" required='true'>
+                </div>
+            </div>
+        </div>
+        """
+        return form_html
+
+    @expose()
+    def get_modal_edit_rate_table_line_item(self, *args, **kwargs):
+        rate_table_line_item_id = kwargs.get('rate_table_line_item_id', None)
+        rate_table_id = kwargs.get('rate_table_id', None)
+        rate_table = RateTable.by_id(rate_table_id)
+        rate_table_benefit_link = DBSession.query(RateTableAssetTypeLink).\
+            filter(RateTableAssetTypeLink.rate_table_id==rate_table.id).\
+            filter(RateTableAssetTypeLink.bln_active==True).\
+            first()
+        if not rate_table.is_life and not rate_table_benefit_link:
+            return ''
+
+        html = f"""
+            <div class="modal fade" id="dialog_edit_rate_table_line" tabindex="-1" role="dialog" aria-labelledby="myrate_tableLabel" aria-hidden="true">
+                <div class="modal-dialog modal-dialog-centered modal-lg">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <div class="col-md-12">
+                                <h4 class="card-title">Edit</h4>
+                            </div>
+                        </div>
+                        <div class="modal-body">
+                            <form id='form_edit_rate_table_line_item'>
+                                <div style='display: none' class="col-md-6">
+                                    <div class="form-group row">
+                                        <label class="col-md-3 col-form-label" required for="tbl_rate_table_line_item_id">ID</label>
+                                        <div class="col-md-9">
+                                            <input id="id" type="text" name="rate_table_line_item_id" value="{rate_table_line_item_id}" class="form-control" required='true'>
+                                            <input id="id" type="text" name="rate_table_id" value="{rate_table_id}" class="form-control" required='true'>
+                                        </div>
+                                    </div>
+                                </div>
+        """
+        html += self.get_edit_rate_table_type_fields(*args, **kwargs)
+        html +="""
+                     </form>
+                        </div>
+                            <div class="modal-footer">
+                                <button id='save_edit_rate_table_line_item' class="btn btn-primary">Save</button>
+                        <button class="btn btn-outline-primary rate_table_line_item_back" data-dismiss="modal">Cancel</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        """
+        javascript = """
+        <script nonce='1234'>
+            setFormValidation('#form_edit_rate_table_line_item');
+            $('#save_edit_rate_table_line_item').click(function(){
+                var valid = FormIsValid("#form_edit_rate_table_line_item");
+                if(valid){
+                    var formserial = $('#form_edit_rate_table_line_item').serialize();
+                    $.post('/setup/save_edit_rate_table_line_item?', formserial, function(data){
+                        var result = JSON.parse(data);
+                        if(result.success === true){
+                            $.redirect(result.redirect, {'rate_table_id' : result.rate_table_id});
+                        };
+                        return false;
+                    });
+                }
+            });
+            $('.rate_table_line_item_back').click(function(){
+                $('#dialog_edit_rate_table_line').modal('hide');
+            });
+            $('#dialog_edit_rate_table_line').modal();
+        </script>
+        """
+        return html + javascript
+
+    def get_edit_rate_table_type_fields(self, *args, **kwargs):
+        rate_table_id = kwargs.get('rate_table_id', None)
+        rate_table = RateTable.by_id(rate_table_id)
+        rate_table_benefit_link = DBSession.query(RateTableAssetTypeLink).\
+            filter(RateTableAssetTypeLink.rate_table_id==rate_table.id).\
+            filter(RateTableAssetTypeLink.bln_active==True).\
+            first()
+
+        employee_type_id = TYPEUTIL.get_id_of_name('benefit_asset_type', 'employee')
+        business_type_id = TYPEUTIL.get_id_of_name('benefit_asset_type', 'business')
+        property_type_id = TYPEUTIL.get_id_of_name('benefit_asset_type', 'property')
+        vehicle_type_id = TYPEUTIL.get_id_of_name('benefit_asset_type', 'vehicle')
+
+        form_html = ''
+        if rate_table.is_life:
+            form_html = self.get_edit_rate_table_type_fields_life(self, *args, **kwargs)
+
+        elif rate_table_benefit_link.benefit_asset_type_id == employee_type_id:
+            form_html = self.get_edit_rate_table_type_fields_employee(self, *args, **kwargs)
+
+        elif rate_table_benefit_link.benefit_asset_type_id == business_type_id \
+            or rate_table_benefit_link.benefit_asset_type_id == property_type_id:
+            form_html = self.get_edit_rate_table_type_fields_turnover(self, *args, **kwargs)
+
+        elif rate_table_benefit_link.benefit_asset_type_id == vehicle_type_id:
+            form_html = self.get_edit_rate_table_type_fields_vehicle(self, *args, **kwargs)
+        return form_html
+
+    def get_edit_rate_table_type_fields_life(self, *args, **kwargs):
+        rate_table_line_item_id = kwargs.get('rate_table_line_item_id', None)
+        item = DBSession.query(RateTableLineItemLife). \
+            filter(RateTableLineItemLife.id == rate_table_line_item_id). \
+            first()
+        if not item: return ''
+
+        dropdown_gender = COMMON.get_selectbox_gender_type(item.gender_type_id)
+        checked = 'checked' if item.bln_active else ''
+        form_html =f"""
+            <div class="col-md-12">
+                <div class="form-group row">
+                    <label class="col-md-3 col-form-label" required for="gender_type_id">Gender</label>
+                    <div class="col-md-9">
+                        {dropdown_gender}
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-12">
+                <div class="form-group row">
+                    <label class="col-md-3 col-form-label" required for="maximum_age">Maximum Age</label>
+                    <div class="col-md-9">
+                        <input id="maximum_age" type="text" name="maximum_age" value="{item.maximum_age}" class="form-control" required='true'>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-12">
+                <div class="form-group row">
+                    <label class="col-md-3 col-form-label" required for="minimum_age">Minimum Age</label>
+                    <div class="col-md-9">
+                        <input id="minimum_age" type="text" name="minimum_age" value="{item.minimum_age}" class="form-control" required='true'>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-12">
+                <div class="form-group row">
+                    <label class="col-md-3 col-form-label" required for="rate_factor">Rate Factor</label>
+                    <div class="col-md-9">
+                        <input id="rate_factor" type="text" name="rate_factor" value="{item.rate_factor}" class="form-control" required='true'>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-12">
+                <div class="form-group row">
+                    <label class="col-3 col-form-label" for="active" required>Active</label>
+                    <div class="col-9">
+                        <div class="form-check">
+                            <label class="form-check-label">
+                                <input class="form-check-input" type="checkbox" name="active" id="active"{checked}/>
+                                <span class="form-check-sign"></span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        """
+        return form_html
+
+    def get_edit_rate_table_type_fields_employee(self, *args, **kwargs):
+        rate_table_line_item_id = kwargs.get('rate_table_line_item_id', None)
+        item = DBSession.query(RateTableLineItemEmployee). \
+            filter(RateTableLineItemEmployee.id == rate_table_line_item_id). \
+            first()
+        if not item: return ''
+
+        checked = 'checked' if item.bln_active else ''
+        form_html =f"""
+            <div class="col-md-12">
+                <div class="form-group row">
+                    <label class="col-md-3 col-form-label" required for="maximum_employees">Min No. Employees</label>
+                    <div class="col-md-9">
+                        <input id="minimum_employees" type="text" name="minimum_employees" value="{item.minimum_employees}" class="form-control" required='true'>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-12">
+                <div class="form-group row">
+                    <label class="col-md-3 col-form-label" required for="minimum_employees">Max No. Employees</label>
+                    <div class="col-md-9">
+                        <input id="maximum_employees" type="text" name="maximum_employees" value="{item.maximum_employees}" class="form-control" required='true'>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-12">
+                <div class="form-group row">
+                    <label class="col-md-3 col-form-label" required for="amount">Premium</label>
+                    <div class="col-md-9">
+                        <input id="amount" type="text" name="amount" value="{item.amount}" class="form-control" required='true'>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-12">
+                <div class="form-group row">
+                    <label class="col-3 col-form-label" for="active" required>Active</label>
+                    <div class="col-9">
+                        <div class="form-check">
+                            <label class="form-check-label">
+                                <input class="form-check-input" type="checkbox" name="active" id="active"{checked}/>
+                                <span class="form-check-sign"></span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        """
+        return form_html
+
+    def get_edit_rate_table_type_fields_turnover(self, *args, **kwargs):
+        rate_table_line_item_id = kwargs.get('rate_table_line_item_id', None)
+        item = DBSession.query(RateTableLineItemTurnover). \
+            filter(RateTableLineItemTurnover.id == rate_table_line_item_id). \
+            first()
+        if not item: return ''
+
+        checked = 'checked' if item.bln_active else ''
+        form_html =f"""
+            <div class="col-md-12">
+                <div class="form-group row">
+                    <label class="col-md-3 col-form-label" required for="minimum_turnover">Minimum Turnover</label>
+                    <div class="col-md-9">
+                        <input id="minimum_turnover" type="text" name="minimum_turnover" value="{item.minimum_turnover}" class="form-control" required='true'>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-12">
+                <div class="form-group row">
+                    <label class="col-md-3 col-form-label" required for="maximum_turnover">Maximum Turnover</label>
+                    <div class="col-md-9">
+                        <input id="maximum_turnover" type="text" name="maximum_turnover" value="{item.maximum_turnover}" class="form-control" required='true'>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-12">
+                <div class="form-group row">
+                    <label class="col-md-3 col-form-label" required for="amount">Premium</label>
+                    <div class="col-md-9">
+                        <input id="amount" type="text" name="amount" value="{item.amount}" class="form-control" required='true'>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-12">
+                <div class="form-group row">
+                    <label class="col-3 col-form-label" for="active" required>Active</label>
+                    <div class="col-9">
+                        <div class="form-check">
+                            <label class="form-check-label">
+                                <input class="form-check-input" type="checkbox" name="active" id="active"{checked}/>
+                                <span class="form-check-sign"></span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        """
+        return form_html
+
+    def get_edit_rate_table_type_fields_vehicle(self, *args, **kwargs):
+        rate_table_line_item_id = kwargs.get('rate_table_line_item_id', None)
+        item = DBSession.query(RateTableLineItemVehicle). \
+            filter(RateTableLineItemVehicle.id == rate_table_line_item_id). \
+            first()
+        if not item: return ''
+        selectbox_vehicle_category = self.get_vehicle_category_list(**{'selected': item.asset_vehicle_category_id, })
+        checked = 'checked' if item.bln_active else ''
+
+        form_html =f"""
+            <div class="col-md-12">
+                <div class="form-group row">
+                    <label class="col-md-3 col-form-label" required for="asset_vehicle_category_id">Vehicle Category</label>
+                    <div class="col-md-9">
+                        {selectbox_vehicle_category}
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-12">
+                <div class="form-group row">
+                    <label class="col-md-3 col-form-label" required for="description">Description</label>
+                    <div class="col-md-9">
+                        <input id="description" type="text" name="description" value="{item.description}" class="form-control" required='true'>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-12">
+                <div class="form-group row">
+                    <label class="col-md-3 col-form-label" required for="insured_amount">Insured Premium</label>
+                    <div class="col-md-9">
+                        <input id="insured_amount" type="text" name="insured_amount" value="{item.insured_amount}" class="form-control" required='true'>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-12">
+                <div class="form-group row">
+                    <label class="col-md-3 col-form-label" required for="uninsured_amount">Uninsured Premium</label>
+                    <div class="col-md-9">
+                        <input id="uninsured_amount" type="text" name="uninsured_amount" value="{item.uninsured_amount}" class="form-control" required='true'>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-12">
+                <div class="form-group row">
+                    <label class="col-md-3 col-form-label" required for="third_party_amount">Third Party Premium</label>
+                    <div class="col-md-9">
+                        <input id="third_party_amount" type="text" name="third_party_amount" value="{item.third_party_amount}" class="form-control" required='true'>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-12">
+                <div class="form-group row">
+                    <label class="col-3 col-form-label" for="active" required>Active</label>
+                    <div class="col-9">
+                        <div class="form-check">
+                            <label class="form-check-label">
+                                <input class="form-check-input" type="checkbox" name="active" id="active"{checked}/>
+                                <span class="form-check-sign"></span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        """
+        return form_html
+
+    def get_vehicle_category_list(self, selected=None, *args, **kwargs):
+        kwargs['id'] = 'asset_vehicle_category_id'
+        kwargs['selected'] = selected
+        kwargs['case_sensitive'] = True
+        dbase_query = DBSession.query(AssetVehicleCategory).filter(AssetVehicleCategory.bln_active == True).order_by(asc(AssetVehicleCategory.name)).all()
+        kwargs['outputlist'] = [{'id': x.id, 'name': x.name} for x in dbase_query]
+        return create_selectbox_html(**kwargs)
+
+    @expose()
+    def get_rate_table_line_item_by_id(self, *args, **kwargs):
+        rate_table_line_item_id = kwargs.get('rate_table_line_item_id', None)
+        rate_table_id = kwargs.get('rate_table_id', None)
+        rate_table = RateTable.by_id(rate_table_id)
+        if rate_table.is_life:
+            dbase_query =  DBSession.query(BenefitRateTableLineItem). \
+                filter(BenefitRateTableLineItem.id == rate_table_line_item_id). \
+                first()
+        else:
+            rate_table_benefit_link = DBSession.query(RateTableAssetTypeLink).\
+                filter(RateTableAssetTypeLink.rate_table_id==item.id).\
+                filter(RateTableAssetTypeLink.bln_active==True).\
+                first()
+
+            employee_type_id = TYPEUTIL.get_id_of_name('benefit_asset_type', 'employee')
+            business_type_id = TYPEUTIL.get_id_of_name('benefit_asset_type', 'business')
+            property_type_id = TYPEUTIL.get_id_of_name('benefit_asset_type', 'property')
+            vehicle_type_id = TYPEUTIL.get_id_of_name('benefit_asset_type', 'vehicle')
+
+            form_html = ''
+            if rate_table.is_life:
+                dbase_query = DBSession.query(RateTableLineItemLife). \
+                    filter(RateTableLineItemLife.id == rate_table_line_item_id). \
+                    first()
+
+            elif rate_table_benefit_link.benefit_asset_type_id == employee_type_id:
+                dbase_query = DBSession.query(RateTableLineItemEmployee). \
+                    filter(RateTableLineItemEmployee.id == rate_table_line_item_id). \
+                    first()
+
+            elif rate_table_benefit_link.benefit_asset_type_id == business_type_id \
+                or rate_table_benefit_link.benefit_asset_type_id == property_type_id:
+                dbase_query = DBSession.query(RateTableLineItemTurnover). \
+                    filter(RateTableLineItemTurnover.id == rate_table_line_item_id). \
+                    first()
+
+            elif rate_table_benefit_link.benefit_asset_type_id == vehicle_type_id:
+                dbase_query = DBSession.query(RateTableLineItemVehicle). \
+                    filter(RateTableLineItemVehicle.id == rate_table_line_item_id). \
+                    first()
+
+        return dbase_query
+
+    @expose()
+    def save_new_rate_table_line_item(self, *args, **kwargs):
+        rate_table_id = kwargs.get('rate_table_id', None)
+        rate_table = RateTable.by_id(rate_table_id)
+        rate_table_benefit_link = DBSession.query(RateTableAssetTypeLink).\
+            filter(RateTableAssetTypeLink.rate_table_id==rate_table.id).\
+            filter(RateTableAssetTypeLink.bln_active==True).\
+            first()
+
+        employee_type_id = TYPEUTIL.get_id_of_name('benefit_asset_type', 'employee')
+        business_type_id = TYPEUTIL.get_id_of_name('benefit_asset_type', 'business')
+        property_type_id = TYPEUTIL.get_id_of_name('benefit_asset_type', 'property')
+        vehicle_type_id = TYPEUTIL.get_id_of_name('benefit_asset_type', 'vehicle')
+
+        if rate_table.is_life:
+            this_id = self.save_new_rate_table_line_item_life(**kwargs)
+
+        elif rate_table_benefit_link.benefit_asset_type_id == employee_type_id:
+            this_id = self.save_new_rate_table_line_item_employee(**kwargs)
+
+        elif rate_table_benefit_link.benefit_asset_type_id == business_type_id \
+            or rate_table_benefit_link.benefit_asset_type_id == property_type_id:
+            this_id = self.save_new_rate_table_line_item_turnover(**kwargs)
+
+        elif rate_table_benefit_link.benefit_asset_type_id == vehicle_type_id:
+            this_id = self.save_new_rate_table_line_item_vehicle(**kwargs)
+
+        rate_table_id = kwargs.get("rate_table_id")
+        redirect_url = '/setup/get_rate_table_edit'
+
+        return json.dumps(
+            {'success': True, 'rate_table_id': rate_table_id, 'redirect': redirect_url})
+
+    @expose()
+    def save_edit_rate_table_line_item(self, *args, **kwargs):
+        rate_table_line_item_id = kwargs.get('rate_table_line_item_id', None)
+        rate_table_id = kwargs.get('rate_table_id', None)
+        rate_table = RateTable.by_id(rate_table_id)
+        rate_table_benefit_link = DBSession.query(RateTableAssetTypeLink).\
+            filter(RateTableAssetTypeLink.rate_table_id==item.id).\
+            filter(RateTableAssetTypeLink.bln_active==True).\
+            first()
+
+        employee_type_id = TYPEUTIL.get_id_of_name('benefit_asset_type', 'employee')
+        business_type_id = TYPEUTIL.get_id_of_name('benefit_asset_type', 'business')
+        property_type_id = TYPEUTIL.get_id_of_name('benefit_asset_type', 'property')
+        vehicle_type_id = TYPEUTIL.get_id_of_name('benefit_asset_type', 'vehicle')
+
+        form_html = ''
+        if rate_table.is_life:
+            if not self.save_new_rate_table_line_item_life(**kwargs):
+                return json.dumps({'success': False})
+
+        elif rate_table_benefit_link.benefit_asset_type_id == employee_type_id:
+            if not self.save_new_rate_table_line_item_employee(**kwargs):
+                return json.dumps({'success': False})
+
+        elif rate_table_benefit_link.benefit_asset_type_id == business_type_id \
+            or rate_table_benefit_link.benefit_asset_type_id == property_type_id:
+            if not self.save_new_rate_table_line_item_turnover(**kwargs):
+                return json.dumps({'success': False})
+
+        elif rate_table_benefit_link.benefit_asset_type_id == vehicle_type_id:
+            if not self.save_new_rate_table_line_item_vehicle(**kwargs):
+                return json.dumps({'success': False})
+
+        redirect_url = '/setup/get_rate_table_edit'
+        return json.dumps({'success': True, 'rate_table_id': rate_table_id, 'redirect': redirect_url})
+
+    def save_edit_rate_table_line_item_life(self, *args, **kwargs):
+        rate_table_line_item_id = kwargs.get('rate_table_line_item_id', None)
+        this = DBSession.query(RateTableLineItemLife). \
+            filter(RateTableLineItemLife.id == rate_table_line_item_id). \
+            first()
+        if not this: return False
+
+        this.gender_type_id = kwargs.get('gender_type_id', None)
+        this.maximum_age = kwargs.get('maximum_age', None)
+        this.minimum_age = kwargs.get('minimum_age', None)
+        this.rate_factor = kwargs.get('rate_factor', None)
+        if not kwargs.get('active', None): this.bln_active = False
+        DBSession.flush()
+        return True
+
+    def save_edit_rate_table_line_item_employee(self, *args, **kwargs):
+        this = DBSession.query(RateTableLineItemEmployee). \
+            filter(RateTableLineItemEmployee.id == rate_table_line_item_id). \
+            first()
+        if not this: return False
+
+        this.minimum_employees = kwargs.get('minimum_employees', None)
+        this.maximum_employees = kwargs.get('maximum_employees', None)
+        this.amount = kwargs.get('amount', None)
+        if not kwargs.get('active', None): this.bln_active = False
+        DBSession.flush()
+        return True
+
+    def save_edit_rate_table_line_item_turnover(self, *args, **kwargs):
+        this = DBSession.query(RateTableLineItemTurnover). \
+            filter(RateTableLineItemTurnover.id == rate_table_line_item_id). \
+            first()
+        if not this: return False
+
+        this.minimum_turnover = kwargs.get('minimum_turnover', None)
+        this.maximum_turnover = kwargs.get('maximum_turnover', None)
+        this.amount = kwargs.get('amount', None)
+        if not kwargs.get('active', None): this.bln_active = False
+        DBSession.flush()
+        return True
+
+    def save_edit_rate_table_line_item_vehicle(self, *args, **kwargs):
+        this = DBSession.query(RateTableLineItemVehicle). \
+            filter(RateTableLineItemVehicle.id == rate_table_line_item_id). \
+            first()
+        if not this: return False
+
+        this.description = kwargs.get('description', None)
+        this.insured_amount = kwargs.get('insured_amount', None)
+        this.uninsured_amount = kwargs.get('uninsured_amount', None)
+        this.third_party_amount = kwargs.get('third_party_amount', None)
+        if not kwargs.get('active', None): this.bln_active = False
+        DBSession.flush()
+        return True
+
+    def save_new_rate_table_line_item_life(self, *args, **kwargs):
+        usernow = request.identity.get('user', None)
+
+        this = RateTableLineItemLife()
+        this.rate_table_id = kwargs.get('rate_table_id', None)
+        this.gender_type_id = kwargs.get('entity_person_gender_type_id', None)
+        this.maximum_age = kwargs.get('maximum_age', None)
+        this.minimum_age = kwargs.get('minimum_age', None)
+        this.rate_factor = kwargs.get('rate_factor', None)
+        this.added_by = usernow.id
+        DBSession.add(this)
+        DBSession.flush()
+        return this.id
+
+    def save_new_rate_table_line_item_employee(self, *args, **kwargs):
+        usernow = request.identity.get('user', None)
+
+        this = RateTableLineItemEmployee()
+        this.rate_table_id = kwargs.get('rate_table_id', None)
+        this.minimum_employees = kwargs.get('minimum_employees', None)
+        this.maximum_employees = kwargs.get('maximum_employees', None)
+        this.amount = kwargs.get('amount', None)
+        this.sum_insured = kwargs.get('sum_insured', None)
+        this.added_by = usernow.id
+        DBSession.add(this)
+        DBSession.flush()
+        return this.id
+
+    def save_new_rate_table_line_item_turnover(self, *args, **kwargs):
+        usernow = request.identity.get('user', None)
+
+        this = RateTableLineItemTurnover()
+        this.rate_table_id = kwargs.get('rate_table_id', None)
+        this.minimum_turnover = kwargs.get('minimum_turnover', None)
+        this.maximum_turnover = kwargs.get('maximum_turnover', None)
+        this.amount = kwargs.get('amount', None)
+        this.sum_insured = kwargs.get('sum_insured', None)
+        this.added_by = usernow.id
+        DBSession.add(this)
+        DBSession.flush()
+        return this.id
+
+    def save_new_rate_table_line_item_vehicle(self, *args, **kwargs):
+        usernow = request.identity.get('user', None)
+
+        this = RateTableLineItemVehicle()
+        this.rate_table_id = kwargs.get('rate_table_id', None)
+        this.asset_vehicle_category_id = kwargs.get('asset_vehicle_category_id', None)
+        this.description = kwargs.get('description', None)
+        this.insured_amount = kwargs.get('insured_amount', None)
+        this.insured_sum_insured = kwargs.get('insured_sum_insured', None)
+        this.uninsured_amount = kwargs.get('uninsured_amount', None)
+        this.uninsured_sum_insured = kwargs.get('uninsured_sum_insured', None)
+        this.third_party_amount = kwargs.get('third_party_amount', None)
+        this.third_party_sum_insured = kwargs.get('third_party_sum_insured', None)
+        this.added_by = usernow.id
+        DBSession.add(this)
+        DBSession.flush()
+        return this.id
+
+    @expose()
+    def get_rate_table_by_id(self, *args, **kwargs):
+        return DBSession.query(BenefitRateTable). \
+            filter(BenefitRateTable.id == kwargs.get('rate_table_id', None)). \
+            first()
+

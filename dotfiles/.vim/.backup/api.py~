@@ -1,0 +1,60 @@
+# -*- coding: utf-8 -*-
+"""Api controller module"""
+import os, json, requests, base64, hashlib
+from datetime import datetime, timedelta
+from pkg_resources import resource_filename
+from tg import expose, require, request, predicates, redirect, flash
+
+from eiffel_front.model import *
+
+from eiffel_front.lib.tg_utils import *
+from eiffel_front.lib.base import BaseController
+
+from eiffel_front.controllers.common import CommonController
+from eiffel_front.controllers.chat import ChatController
+
+from sqlalchemy import func, desc, asc, or_
+
+PUBLIC_DIRNAME = os.path.abspath(resource_filename('eiffel_front', 'public'))
+UPLOADS_DIRNAME = os.path.join(PUBLIC_DIRNAME, 'img')
+
+class ApiController(BaseController):
+
+    @expose()
+    def set_image(self, *args, **kwargs):
+        params = request.json
+        b64_file = params.get('file', None)
+        if not b64_file:
+            return json.dumps({'success': False, 'message': 'Please select a file before uploading.'})
+
+        checksum = params.get('checksum', None)
+        if not checksum:
+            return json.dumps({'success': False, 'message': 'Checksum not present in request.'})
+
+        valid = self.validate_checksum(checksum, b64_file)
+        if not valid:
+            return json.dumps({'success': False, 'message': 'Invalid file, checksums do not match.'})
+
+        file_obj = base64.b64decode(b64_file)
+        filename = params.get('filename', None)
+        if not filename:
+            return json.dumps({'success': False, 'message': 'Filename can not be blank.'})
+
+        file_path = os.path.join(UPLOADS_DIRNAME, filename)
+        with open(file_path, 'wb') as f:
+            f.write(file_obj)
+            f.close()
+
+        old_filename = params.get('old_filename', None)
+        old_file = os.path.join(UPLOADS_DIRNAME, old_filename)
+        if old_filename and os.path.isfile(old_file):
+            os.remove(old_file)
+
+        return json.dumps({'success': True, 'message': f'"{filename}" was successfully saved.', 'status':'success'})
+
+    def validate_checksum(self, checksum=None, b64_string=None):
+        if not checksum or not b64_string: return False
+        local_sum = hashlib.sha256()
+        local_sum.update(b64_string.encode("utf8"))
+        if local_sum.hexdigest() == checksum: return True
+        return False

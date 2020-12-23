@@ -1,0 +1,8 @@
+source .env
+vertdir=/home/$USER/enviros/live/$VERTICAL
+envdir=$vertdir/$APPNAME"_env"
+bindir=$envdir/bin
+appdir=$envdir/$APPNAME
+source $($bindir/python $appdir/lib/pyact.py)
+cd $appdir
+$bindir/uvicorn main:app --host=0.0.0.0 --reload --port 5432

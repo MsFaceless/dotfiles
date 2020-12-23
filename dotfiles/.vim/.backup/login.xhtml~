@@ -1,0 +1,58 @@
+<html>
+    <head>
+        <title py:block="master_title">Rocket | Login</title>
+        <link rel="stylesheet" href="${tg.url('/public/css/bootstrap.min.css')}"/>
+        <link rel="stylesheet" href="${tg.url('/public/css/font-awesome.css')}"/>
+        <link rel="stylesheet" href="${tg.url('/public/css/login.css')}"/>
+        <link href="${h.branding_url()}" rel="stylesheet" type='text/stylesheet'/>
+
+        <script src="${tg.url('/public/javascript/jquery.min.js')}"></script>
+    </head>
+    <body>
+        <div class="logo">
+            <div class="logo-text">R<span class="orange-o">O</span>CKET</div>
+            <div class="logo-banner"> Insurtech </div>
+        </div>
+        <div class="login-box">
+            <div class="container">
+                <div class="d-flex justify-content-center h-100">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Sign in</h3>
+                        </div>
+                        <div class="card-body">
+                            <form action="${tg.url('/login_handler', params=dict(came_from=came_from, __logins=login_counter))}" method="post" accept-charset="UTF-8">
+                                <div class="input-group form-group">
+                                    <div class="input-group-prepend">
+                                        <span class="input-group-text"><i class="fas fa-user"></i></span>
+                                    </div>
+                                    <input class="form-control" type="text" name="login" placeholder="username" autofocus="autofocus" value="${login}"/>
+                                </div>
+                                <div class="input-group form-group">
+                                    <div class="input-group-prepend">
+                                        <span class="input-group-text"><i class="fas fa-key"></i></span>
+                                    </div>
+                                    <input class="form-control" type="password" name="password" placeholder="password" autocomplete="off"/>
+                                </div>
+                                <div class="form-group">
+                                    <button type="submit" class="btn float-right action_btn">Login</button>
+                                </div>
+                            </form>
+                        </div>
+                        <div class="card-footer">
+                            <div class="d-flex justify-content-center">
+                                <a class="login-link" href="/forgot_password?">Forgot your password?</a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <footer class='footer fixed-bottom text-right p-3'></footer>
+        <script nonce='1234'>
+            $(document).ready(function(){
+                $('.footer').load('/common/get_footer', function(){return false;});
+            });
+        </script>
+    </body>
+</html>

@@ -1,0 +1,3820 @@
+# -*- coding: utf-8 -*-
+"""CommonController module"""
+
+import transaction
+from tg import expose, require, redirect, validate, url, request, response, predicates
+
+from tg.i18n import ugettext as _
+from tg.i18n import lazy_ugettext as l_
+
+import os
+import json
+import logging
+import requests
+from datetime import datetime
+from pkg_resources import resource_filename
+
+from rocket.model import *
+
+from rocket.lib.tg_utils import *
+from rocket.lib.base import BaseController
+from rocket.lib.tgfileuploader import FileUploader
+from rocket.lib.email_creator import RocketEmailCreator
+from rocket.lib.type_utils import TypeDictionary as TypeDict
+from rocket.lib.tg_generic_reportlab import PDFCreator, Paragraph
+
+import rocket.lib.gateway_utils as GATEWAY
+
+from sqlalchemy import func, desc, asc, or_, and_
+
+FILENAME = os.path.abspath(resource_filename('rocket', 'public'))
+PUBLIC_DIRNAME = os.path.join(FILENAME)
+PDF_DIRNAME = os.path.join(PUBLIC_DIRNAME, 'pdf')
+IMAGES_DIRNAME = os.path.join(PUBLIC_DIRNAME, 'images')
+CATALOG_DIRNAME = os.path.join(IMAGES_DIRNAME, 'catalog_pictures')
+
+SEARCHKEY_GROUP = 'Organisation_SearchKeyword'
+SEARCHKEY_MEMBER = 'Members_SearchKeyword'
+SEARCHKEY_MEMBER_GROUP_ID = 'Members_Group_ID_SearchKeyword'
+SEARCHKEY_FAMILY_MEMBER = 'FamilyMember_SearchKeyword'
+ID_NUMBER_LENGTH = 13
+
+TYPEUTIL = TypeDict()
+
+MOBILE = TYPEUTIL.get_id_of_name('entity_contact_type', 'mobile')
+EMAIL = TYPEUTIL.get_id_of_name('entity_contact_type', 'email')
+FACSIMILE = TYPEUTIL.get_id_of_name('entity_contact_type', 'facsimile')
+
+POSTAL = TYPEUTIL.get_id_of_name('entity_address_type', 'postal')
+STREET = TYPEUTIL.get_id_of_name('entity_address_type', 'street')
+
+LIMIT = 20
+
+log = logging.getLogger(__name__)
+
+__all__ = ['CommonController']
+
+class CommonController(BaseController):
+    """Docstring for CommonController."""
+
+    @expose()
+    def _default(self, *args, **kwargs):
+        return 'This page is not available.'
+
+    def get_selectbox_benefit_cover_links(self, *args, **kwargs):
+        outputlist = []
+        display_col = kwargs.get('display_col', 'code')
+        dbase_query = CoverAndExclusion.by_attr_all('is_cover', True)
+        for i in dbase_query:
+            outputlist.append({'id': i.id, 'name': getattr(i, display_col), })
+
+        kwargs['required'] = True
+        kwargs['outputlist'] = outputlist
+        kwargs['id'] = 'cover_and_exclusion_id'
+        return create_selectbox_html(**kwargs)
+
+################################################################################
+# Entity - Entity Person - Vault Person - New
+################################################################################
+
+    def save_new_personobj(self, *args, **kwargs):
+        if not request.identity:
+            return False
+
+        usernow = request.identity.get('user', None)
+
+        entity_person_title_id = kwargs.get('entity_person_title_id', None)
+        if not entity_person_title_id:
+            log.warning('Missing entity_person_title_id')
+            return False
+
+        try:
+            entity_person_title_id = int(entity_person_title_id)
+        except Exception as e:
+            print(e)
+            entity_person_title = EntityPersonTitle.by_attr_first('title', entity_person_title_id.lower())
+            if entity_person_title:
+                entity_person_title_id = entity_person_title.id
+            else:
+                entity_person_title_id = 1
+
+        name = kwargs.get('name', None)
+        if not name:
+            log.warning('Missing name')
+            return False
+
+        surname = kwargs.get('surname', None)
+        if not surname:
+            log.warning('Missing surname')
+            return False
+
+        preferred_name = kwargs.get('preferred_name', None)
+        if not preferred_name:
+            preferred_name = name
+
+        entity_person_gender_type_id = kwargs.get('entity_person_gender_type_id', None)
+        if not entity_person_gender_type_id:
+            male = TYPEUTIL.get_id_of_name('entity_person_gender_type', 'male')
+            entity_person_gender_type_id = male
+
+        date_of_birth = kwargs.get('date_of_birth', None)
+        if not date_of_birth:
+            log.warning('Missing date_of_birth')
+            return False
+
+        date_of_birth = str_to_date(date_of_birth)
+        if not date_of_birth:
+            log.warning('Converting date_of_birth to date failed')
+            return False
+
+        try:
+            date_of_birth = date_of_birth.date().isoformat()
+        except:
+            log.warning('Converting date_of_birth to isoformat failed')
+            return False
+
+        language_id = kwargs.get('language_id', None)
+        if not language_id:
+            english = Language.by_attr_first('code', 'ENG')
+            if not english:
+                log.warning('Missing language_id and English not found')
+                return False
+            language_id = english
+
+        identity_type_id = kwargs.get('identity_type_id', None)
+        if not identity_type_id:
+            identity_number = TYPEUTIL.get_id_of_name('entity_person_identity_type', 'identity_number')
+            identity_type_id = identity_number
+
+        number = kwargs.get('number', None)
+        if not number:
+            log.warning('Missing number')
+            return False
+
+        mobile = kwargs.get('mobile', None)
+        if not mobile:
+            log.warning('Missing mobile')
+            return False
+
+        person = TYPEUTIL.get_id_of_name('entity_type', 'person')
+        entity = Entity()
+        entity.entity_type_id = person
+        DBSession.add(entity)
+        DBSession.flush()
+        entity_id = entity.id
+
+        person = EntityPerson()
+        person.surname = surname
+        person.firstname = name
+        person.preferred_name = preferred_name
+        person.entity_id = entity_id
+        person.entity_person_gender_type_id = entity_person_gender_type_id
+        person.entity_person_title_id = entity_person_title_id
+        person.language_id = language_id
+        person.date_of_birth = date_of_birth
+        DBSession.add(person)
+        DBSession.flush()
+
+        identity = EntityPersonIdentity()
+        identity.entity_person_identity_type_id = identity_type_id
+        identity.value = number
+        identity.entity_person_id = person.id
+        identity.expiry_date = '1990-01-01'
+        DBSession.add(identity)
+        DBSession.flush()
+        """
+        result = GATEWAY.save_new_person(**{
+            "added_by" : usernow.id,
+
+            "name" : name,
+            "surname": surname,
+            "preferred_name" : preferred_name,
+            "date_of_birth" : date_of_birth,
+
+            "language_id" : language_id,
+
+            "entity_person_title_id" : entity_person_title_id,
+            "entity_person_gender_type_id" : entity_person_gender_type_id,
+            "entity_person_identity_number" : number,
+            "entity_person_identity_expiry_date" : '1990-01-01',
+            "entity_person_identity_type_id" : identity_type_id,
+
+        })
+        success = result.get('success', False)
+        if not success:
+            log.warning(f'Failed to save_new_person')
+            return False
+
+        data = result.get('data', {})
+        entity = data.get('entity', {})
+        entity_id = entity.get('id', None)
+        """
+        if not entity_id:
+            log.warning(f'Failed to get_entity_id')
+            return False
+
+        mobile_id = TYPEUTIL.get_id_of_name('entity_contact_type', 'mobile')
+        contact = EntityContact()
+        contact.entity_id = entity_id
+        contact.entity_contact_type_id = mobile_id
+        contact.name = preferred_name
+        contact.value = mobile
+        contact.preferred = True
+        DBSession.add(contact)
+        DBSession.flush()
+        """
+        result = GATEWAY.save_new_entity_contact(**{
+            "added_by" : usernow.id,
+
+            "entity_id" : entity_id,
+            "entity_contact_type_id": mobile_id,
+            "name": preferred_name,
+            "value": mobile,
+            "preferred" : True,
+        })
+        success = result.get('success', False)
+        if not success:
+            log.warning(f'Failed to save_new_entity_contact')
+            return False
+        transaction.commit()
+        """
+        return entity_id
+
+################################################################################
+# Entity - Entity Person - Vault Person - Edit
+################################################################################
+
+    def save_edit_personobj(self, *args, **kwargs):
+        usernow = request.identity.get('user', None)
+
+        entity_person_id = kwargs.get('entity_person_id', None)
+        if not entity_person_id:
+            log.warning('Missing entity_person_id')
+            return False
+
+        entity_person_title_id = kwargs.get('entity_person_title_id', None)
+        if not entity_person_title_id:
+            log.warning('Missing entity_person_title_id')
+            return False
+
+        mobile = kwargs.get('mobile', None)
+        if not mobile:
+            log.warning('Missing mobile')
+            return False
+
+        name = kwargs.get('name', None)
+        if not name:
+            log.warning('Missing name')
+            return False
+
+        surname = kwargs.get('surname', None)
+        if not surname:
+            log.warning('Missing surname')
+            return False
+
+        preferred_name = kwargs.get('preferred_name', None)
+        if not preferred_name:
+            preferred_name = name
+
+        entity_person_gender_type_id = kwargs.get('entity_person_gender_type_id', None)
+        if not entity_person_gender_type_id:
+            male = TYPEUTIL.get_id_of_name('entity_person_gender_type', 'male')
+            entity_person_gender_type_id = male
+
+        date_of_birth = kwargs.get('date_of_birth', None)
+        if not date_of_birth:
+            log.warning('Missing date_of_birth')
+            return False
+
+        date_of_birth = str_to_date(date_of_birth)
+        if not date_of_birth:
+            log.warning('Converting date_of_birth to date failed')
+            return False
+
+        try:
+            date_of_birth = date_of_birth.date().isoformat()
+        except:
+            log.warning('Converting date_of_birth to isoformat failed')
+            return False
+
+        language_id = kwargs.get('language_id', None)
+        if not language_id:
+            english = Language.by_attr_first('code', 'ENG')
+            if not english:
+                log.warning('Missing language_id and English not found')
+                return False
+            language_id = english
+
+        identity_type_id = kwargs.get('identity_type_id', None)
+        if not identity_type_id:
+            identity_number = TYPEUTIL.get_id_of_name('entity_person_identity_type', 'identity_number')
+            identity_type_id = identity_number
+
+        number = kwargs.get('number', None)
+        if not number:
+            log.warning('Missing number')
+            return False
+
+        print()
+        print('identity start')
+        entity_person_identity_id = kwargs.get('entity_person_identity_id', None)
+        print(entity_person_identity_id)
+        print(number)
+        if not entity_person_identity_id:
+            print('finding')
+            identity = DBSession.query(EntityPersonIdentity). \
+                    filter(EntityPersonIdentity.entity_person_identity_type_id == identity_type_id). \
+                    filter(EntityPersonIdentity.value == number). \
+                    first()
+            print(identity)
+        else:
+            identity = EntityPersonIdentity.by_id(entity_person_identity_id)
+            print(identity)
+        print(identity)
+        if not identity:
+            log.warning('Could not find identity.')
+            return False
+
+        entity_person = EntityPerson.by_id(entity_person_id)
+        if not entity_person:
+            log.warning('Could not get EntityPerson')
+            return False
+
+        mobile_id = TYPEUTIL.get_id_of_name('entity_contact_type', 'mobile')
+        contact = DBSession.query(EntityContact). \
+                filter(EntityContact.entity_id == entity_person.entity_id). \
+                filter(EntityContact.entity_contact_type_id == mobile_id). \
+                first()
+        if not contact:
+            log.warning('Could not get mobile.')
+            return False
+
+        entity_person.firstname = name
+        entity_person.surname = surname
+        entity_person.preferred_name = preferred_name
+        entity_person.entity_person_gender_type_id = entity_person_gender_type_id
+        entity_person.entity_person_title_id = entity_person_title_id
+        entity_person.language_id = language_id
+        entity_person.date_of_birth = date_of_birth
+        DBSession.flush()
+
+        identity.value = number
+        DBSession.flush()
+
+        contact.value = mobile
+        DBSession.flush()
+        return True
+
+################################################################################
+# Address - Forms
+################################################################################
+
+    @expose()
+    def get_person_address_html(self, *args, **kwargs):
+        print(kwargs)
+        entity_person_id = kwargs.get('entity_person_id', None)
+
+        show_save = kwargs.get('show_save', True)
+        if show_save == 'false':
+            show_save = False
+        postal_address_html = self.get_person_postal_address_html(**{
+            'entity_person_id' : entity_person_id,
+            'show_save': show_save
+        })
+        street_address_html = self.get_person_street_address_html(**{
+            'entity_person_id' : entity_person_id,
+            'show_save': show_save
+        })
+        return postal_address_html + street_address_html
+
+    def get_person_postal_address_html(self, *args, **kwargs):
+        entity_person_id = kwargs.get('entity_person_id', None)
+
+        postal = street = None
+        hidden_input_entity_person = ''
+        if entity_person_id:
+            hidden_input_entity_person = get_hidden_input(**{'id': 'entity_person_id', 'value': entity_person_id})
+
+            entity_person = EntityPerson.by_id(entity_person_id)
+            if entity_person:
+                postal = DBSession.query(EntityAddress). \
+                        filter(EntityAddress.entity_id == entity_person.entity_id). \
+                        filter(EntityAddress.entity_address_type_id == POSTAL). \
+                        first()
+
+
+
+        city = region_id = postal_address_id = country_id = postal_code = address_line = ''
+        if postal:
+            city = postal.city
+            region_id = postal.region_id
+            postal_address_id = postal.id
+            country_id = postal.country_id
+            postal_code = postal.postal_code
+            address_line = postal.address_line
+
+        hidden_input_address_type_id = get_hidden_input(**{'id': 'entity_address_type_id', 'value': POSTAL})
+        hidden_input_postal_id = get_hidden_input(**{'id': 'postal_address_id', 'value': postal_address_id})
+
+        selectbox_region = self.get_selectbox_region(**{'selected': region_id})
+        selectbox_country = self.get_selectbox_country(**{'selected': country_id})
+
+        show_save = kwargs.get('show_save', True)
+        save_btn = '<button id="save_postal_address" class="btn btn-primary">Save</button>' if show_save else ''
+        html = f"""
+        <div class="row">
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="row d-flex">
+                            <div class="col-md-6">
+                                <h4 class="card-title">{_('Postal Address')}</h4>
+                            </div>
+                            <div class="col-md-6 text-right">
+                                {save_btn}
+                            </div>
+                        </div>
+                        <hr>
+                    </div>
+                    <div class="card-body">
+                        <form id="form_postal_address">
+                            <div class="row">
+                                {hidden_input_address_type_id}
+                                {hidden_input_entity_person}
+                                {hidden_input_postal_id}
+                                <div class="col-md-12">
+                                    <div class="form-group row">
+                                        <label class="col-md-3 col-form-label">Address Line</label>
+                                        <div class="col-md-9">
+                                            <input type="text" id= "address_line" class="form-control" maxlength='255' name="address_line" value='{address_line}'>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-md-12">
+                                    <div class="form-group row">
+                                        <label class="col-md-3 col-form-label">{_('City')}</label>
+                                        <div class="col-md-9">
+                                            <input type="text" class="form-control" maxlength='255' name="city"  id="city" value='{city}'>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-md-12">
+                                    <div class="form-group row">
+                                        <label class="col-md-3 col-form-label">{_('Postal Code')}</label>
+                                        <div class="col-md-9">
+                                            <input type="text" class="form-control" maxlength='255' id="postal_code" name="postal_code" value='{postal_code}'>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-md-12">
+                                    <div class="form-group row">
+                                        <label class="col-md-3 col-form-label">{_('Country')}</label>
+                                        <div class="col-md-9">
+                                            {selectbox_country}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-md-12">
+                                    <div class="form-group row">
+                                        <label class="col-md-3 col-form-label">{_('Region')}</label>
+                                        <div class="col-md-9">
+                                            {selectbox_region}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div id="div_district"></div>
+                            <div id="div_centre"></div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        """
+        if not show_save:
+            return html
+
+        javascript = """
+        <script nonce='1234'>
+            $('#save_postal_address').click(function(){
+                var formserial = $('#form_postal_address').serialize();
+                $.post('/common/save_person_address?', formserial, function(data){
+                    var result = JSON.parse(data);
+                    if(result.success === true){
+                        $.redirect('/members/edit_member', result);
+                    };
+                    return false;
+                });
+            });
+        </script>
+        """
+        return html + javascript
+
+    def get_person_street_address_html(self, *args, **kwargs):
+        entity_person_id = kwargs.get('entity_person_id', None)
+        hidden_input_entity_person = ''
+        if not entity_person_id:
+            hidden_input_entity_person = get_hidden_input(**{'id': 'entity_person_id', 'value': entity_person_id})
+
+        street = street = None
+        hidden_input_entity_person = ''
+        if entity_person_id:
+            hidden_input_entity_person = get_hidden_input(**{'id': 'entity_person_id', 'value': entity_person_id})
+
+            entity_person = EntityPerson.by_id(entity_person_id)
+            if entity_person:
+                street = DBSession.query(EntityAddress). \
+                        filter(EntityAddress.entity_id == entity_person.entity_id). \
+                        filter(EntityAddress.entity_address_type_id == STREET). \
+                        first()
+
+        city = region_id = street_address_id = country_id = postal_code = address_line = ''
+        if street:
+            city = street.city
+            region_id = street.region_id
+            street_address_id = street.id
+            country_id = street.country_id
+            postal_code = street.postal_code
+            address_line = street.address_line
+
+        hidden_input_address_type_id = get_hidden_input(**{'id': 'entity_address_type_id', 'value': STREET})
+        hidden_input_street_id = get_hidden_input(**{'id': 'street_address_id', 'value': street_address_id})
+
+        selectbox_country = self.get_selectbox_country(**{'selected': country_id})
+
+        show_save = kwargs.get('show_save', True)
+        save_btn = '<button id="save_street_address" class="btn btn-primary">Save</button>' if show_save else ''
+
+        html = f"""
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="row d-flex">
+                            <div class="col-md-6">
+                                <h4 class="card-title">{_('Street Address')}</h4>
+                            </div>
+                            <div class="col-md-6 text-right">
+                                {save_btn}
+                            </div>
+                        </div>
+                        <hr>
+                    </div>
+                    <div class="card-body">
+                        <form id="form_street_address">
+                            {hidden_input_address_type_id}
+                            {hidden_input_entity_person}
+                            {hidden_input_street_id}
+                            <div class="row">
+                                <div class="col-md-12">
+                                    <div class="form-group row">
+                                        <label class="col-md-3 col-form-label">Address Line</label>
+                                        <div class="col-md-9">
+                                            <input type="text" id= "address_line" class="form-control" maxlength='255' name="address_line" value='{address_line}'>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-md-12">
+                                    <div class="form-group row">
+                                        <label class="col-md-3 col-form-label">{_('City')}</label>
+                                        <div class="col-md-9">
+                                            <input type="text" class="form-control" maxlength='255' name="city"  id="city" value='{city}'>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-md-12">
+                                    <div class="form-group row">
+                                        <label class="col-md-3 col-form-label">{_('Postal Code')}</label>
+                                        <div class="col-md-9">
+                                            <input type="text" class="form-control" maxlength='255' id="postal_code" name="postal_code" value='{postal_code}'>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-md-12">
+                                    <div class="form-group row">
+                                        <label class="col-md-3 col-form-label">{_('Country')}</label>
+                                        <div class="col-md-9">
+                                            {selectbox_country}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        if not show_save:
+            return html
+
+        javascript = """
+        <script nonce='1234'>
+            $('#save_street_address').click(function(){
+                var formserial = $('#form_street_address').serialize();
+                $.post('/common/save_person_address?', formserial, function(data){
+                    var result = JSON.parse(data);
+                    if(result.success === true){
+                        $.redirect('/members/edit_member', result);
+                    };
+                    return false;
+                });
+            });
+        </script>
+        """
+        return html + javascript
+
+    def get_address_form_inputs(self, *args, **kwargs):
+        address = kwargs.get('address', None)
+
+        form_id = kwargs.get('form_id', 'address_form')
+
+        show_location = kwargs.get('show_location', False)
+
+        address_type_id = kwargs.get('entity_address_type_id', STREET)
+        hidden_input_address_type_dict = {
+            'input_type': 'widget',
+            'widget': get_hidden_input(**{'id': 'entity_address_type_id', 'value': address_type_id})
+            }
+
+        address_line = address.get('address_line', '') if address else ''
+        address_line_dict = {
+            'input_wrapper_class': 'form-group row col-md-12 d-flex align-items-center',
+            'input_id': 'address_line',
+            'label_val': _('Address Line'),
+            'input_attrs': f' maxlength="255" data-form_id="{form_id}"',
+            'input_val': f'value="{address_line}"'
+            }
+        city = address.get('city', '') if address else ''
+        city_dict = {
+            'input_wrapper_class': 'form-group row col-md-12 d-flex align-items-center',
+            'input_id': 'city',
+            'label_val': _('City'),
+            'input_attrs': f' maxlength="255"',
+            'input_val': f'value="{city}"'
+            }
+        postal_code = address.get('postal_code', '') if address else ''
+        postal_code_dict = {
+            'input_wrapper_class': 'form-group row col-md-12 d-flex align-items-center',
+            'input_id': 'postal_code',
+            'label_val': _('Postal Code'),
+            'input_attrs': f' maxlength="255"',
+            'input_val': f'value="{postal_code}"'
+            }
+        params_list = [
+            hidden_input_address_type_dict,
+            address_line_dict,
+            city_dict,
+            postal_code_dict
+        ]
+        if show_location:
+            selected_country = address.get('country_id', '') if address else ''
+            country_dict = {
+                'input_wrapper_class': 'form-group row col-md-12 d-flex align-items-center',
+                'input_id': 'country_id',
+                'label_val': _('Country'),
+                'input_type': 'custom',
+                'input_field': self.get_selectbox_country(**{'selected': selected_country, 'class_names': 'col-sm-9 px-0'})
+                }
+            selected_region = address.get('region_id', '') if address else ''
+            region_dict = {
+                'input_wrapper_class': 'form-group row col-md-12 d-flex align-items-center',
+                'input_id': 'region_id',
+                'label_val': _('Region'),
+                'input_type': 'custom',
+                'input_field': self.get_selectbox_region(**{'selected': selected_region, 'class_names': 'col-sm-9 px-0'})
+                }
+            selected_district = address.get('district_id', '') if address else ''
+            district_dict = {
+                'input_wrapper_class': 'form-group row col-md-12 d-flex align-items-center',
+                'input_id': 'district_id',
+                'label_val': _('District'),
+                'input_type': 'custom',
+                'input_field': self.get_selectbox_district(**{'selected': selected_district, 'class_names': 'col-sm-9 px-0'})
+                }
+            selected_centre = address.get('centre_id', '') if address else ''
+            centre_dict = {
+                'input_wrapper_class': 'form-group row col-md-12 d-flex align-items-center',
+                'input_id': 'centre_id',
+                'label_val': _('Centre'),
+                'input_type': 'custom',
+                'input_field': self.get_selectbox_centre(**{'selected': selected_centre, 'class_names': 'col-sm-9 px-0'})
+                }
+            location_list = [
+                country_dict,
+                region_dict,
+                district_dict,
+                centre_dict
+            ]
+            params_list = params_list + location_list
+            javascript = f"""
+            <script nonce='1234'>
+                var formId = '{form_id}';
+            """
+            javascript += """
+
+            </script>
+            """
+            return build_html_form_inputs(params_list) + javascript
+        return build_html_form_inputs(params_list)
+
+################################################################################
+# Address - Save
+################################################################################
+
+    @expose()
+    def save_person_address(self, *args, **kwargs):
+        usernow = request.identity.get('user', None)
+
+        entity_person_id = kwargs.get('entity_person_id', None)
+        if not entity_person_id:
+            log.warning('Missing entity_person_id')
+            return json.dumps({'success': False})
+
+        entity_person = EntityPerson.by_id(entity_person_id)
+        if not entity_person:
+            log.warning('Missing entity_person')
+            return json.dumps({'success': False})
+
+        address_type_id = int(kwargs.get('entity_address_type_id', POSTAL))
+
+        address_line = kwargs.get('address_line', '')
+        city = kwargs.get('city', '')
+        postal_code = kwargs.get('postal_code', '')
+        country_id = kwargs.get('country_id', 0)
+        region_id = kwargs.get('region_id', 0)
+        district_id = kwargs.get('district_id', 0)
+        centre_id = kwargs.get('centre_id', 0)
+        country_id = kwargs.get('country_id', 0)
+        latitude = 0
+        longitude = 0
+
+        if address_type_id == POSTAL:
+            postal_address_id = kwargs.get('postal_address_id', None)
+            if postal_address_id:
+                address = EntityAddress.by_id(postal_address_id)
+                address.address_line = address_line
+                address.city = city
+                address.postal_code = postal_code
+                address.region_id = region_id
+                address.district_id = district_id
+                address.centre_id = centre_id
+                address.country_id = country_id
+                address.latitude = latitude
+                address.longitude = longitude
+                DBSession.flush()
+                #log.info(f'Postal: update_person_address {address}')
+
+            else:
+                address = EntityAddress()
+                address.entity_id = entity_person.entity_id
+                address.entity_address_type_id = POSTAL
+                address.address_line = address_line
+                address.city = city
+                address.postal_code = postal_code
+                address.region_id = region_id
+                address.district_id = district_id
+                address.centre_id = centre_id
+                address.country_id = country_id
+                address.latitude = latitude
+                address.longitude = longitude
+                DBSession.add(address)
+                DBSession.flush()
+                #log.info(f'Postal: save_person_address {address}')
+
+        if address_type_id == STREET:
+            street_address_id = kwargs.get('street_address_id', None)
+            if street_address_id:
+                address = EntityAddress.by_id(street_address_id)
+                address.address_line = address_line
+                address.city = city
+                address.postal_code = postal_code
+                address.region_id = region_id
+                address.district_id = district_id
+                address.centre_id = centre_id
+                address.country_id = country_id
+                address.latitude = latitude
+                address.longitude = longitude
+                DBSession.flush()
+                #log.info(f'Street: update_person_address {address}')
+
+            else:
+                address = EntityAddress()
+                address.entity_id = entity_person.entity_id
+                address.entity_address_type_id = STREET
+                address.address_line = address_line
+                address.city = city
+                address.postal_code = postal_code
+                address.region_id = region_id
+                address.district_id = district_id
+                address.centre_id = centre_id
+                address.country_id = country_id
+                address.latitude = latitude
+                address.longitude = longitude
+                DBSession.add(address)
+                DBSession.flush()
+                #log.info(f'Street: save_person_address {address}')
+
+        return json.dumps({'success': True, 'entity_person_id': entity_person_id, 'entity_id' : entity_person.entity_id})
+
+    @expose()
+    def get_district_html(self, *args, **kwargs):
+        selectbox_district = self.get_selectbox_district(**kwargs)
+        html = f"""
+            <div class="row">
+                <div class="col-md-12">
+                    <div class="form-group row">
+                        <label class="col-md-3 col-form-label">{_('District')}</label>
+                        <div class="col-md-9">
+                             {selectbox_district}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        """
+        javascript = """
+        <script nonce='1234'>
+            $("#district_id").change(function () {
+                var district_id = $('#district_id option:selected').val();
+                var kwargs ={'district_id': district_id};
+                $('#div_centre').load('/common/get_centre_html', kwargs, function(data){
+                    return false;
+                });
+            });
+            $('#district_id').trigger('change');
+        </script>
+        """
+        return html + javascript
+
+    @expose()
+    def get_centre_html(self, *args, **kwargs):
+        selectbox_centre = self.get_selectbox_centre(**kwargs)
+        html = f"""
+        <div class="row">
+                <div class="col-md-12">
+                    <div class="form-group row">
+                        <label class="col-md-3 col-form-label">{_('Center')}</label>
+                        <div class="col-md-9">
+                             {selectbox_centre}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        """
+        return html
+
+    def get_selectbox_country(self, *args, **kwargs):
+        dbase_query = Country.get_all('name')
+        kwargs['limit'] = 'all'
+        kwargs['active'] = True
+        kwargs['id'] = 'country_id'
+        kwargs['outputlist'] = [{'name': m.name, 'id': m.id} for m in dbase_query]
+        return create_selectbox_html(**kwargs)
+
+    @expose()
+    def get_selectbox_region(self, *args, **kwargs):
+        country_id = kwargs.get("country_id", 207)
+        region_list = Region.by_attr_all('country_id', country_id)
+        kwargs['id'] = 'region_id'
+        kwargs['outputlist'] = [{'name': m.name, 'id': m.id} for m in region_list]
+        return create_selectbox_html(**kwargs)
+
+    def get_selectbox_district(self, *args, **kwargs):
+        region_id = kwargs.get("region_id")
+        district_list = District.by_attr_all('region_id', region_id)
+        kwargs['id'] = 'district_id'
+        kwargs['outputlist'] = [{'name': m.name, 'id': m.id} for m in district_list]
+        return create_selectbox_html(**kwargs)
+
+    def get_selectbox_centre(self, *args, **kwargs):
+        district_id = kwargs.get("district_id")
+        centre_list = Centre.by_attr_all('district_id', district_id)
+        kwargs['id'] = 'centre_id'
+        kwargs['outputlist'] = [{'name': m.name, 'id': m.id} for m in centre_list]
+        return create_selectbox_html(**kwargs)
+
+################################################################################
+# Other Selectboxes
+################################################################################
+
+    def get_selectbox_bank(self, *args, **kwargs):
+        dbase_query = Bank.get_all('name')
+        kwargs['id'] = 'bank_id'
+        kwargs['outputlist'] = [{'name': m.name, 'id': m.id} for m in dbase_query]
+        return create_selectbox_html(**kwargs)
+
+    def get_selectbox_currency(self, *args, **kwargs):
+        currency_list = Currency.get_all('name')
+        kwargs['id'] = 'currency_id'
+        kwargs['outputlist'] = [{'name': m.name, 'id': m.id} for m in currency_list]
+        return create_selectbox_html(**kwargs)
+
+    def get_selectbox_bank_account_types(self, *args, **kwargs):
+        kwargs['outputdict'] = TYPEUTIL.get_dict_of_types("entity_bank_account_type")
+        return create_selectbox_html(**kwargs)
+
+    def get_selectbox_contact(self, selected=None, *args, **kwargs):
+        kwargs['id'] = 'entity_contact_type_id'
+        kwargs['selected'] = selected
+        kwargs['outputdict'] = TYPEUTIL.get_dict_of_types("entity_contact_type")
+        return create_selectbox_html(**kwargs)
+
+    def get_selectbox_entity_type(self, selected=None, *args, **kwargs):
+        kwargs['id'] = 'entity_type_id'
+        kwargs['selected'] = selected
+        kwargs['outputdict'] = TYPEUTIL.get_dict_of_types("entity_type")
+        return create_selectbox_html(**kwargs)
+
+    def get_selectbox_ownership_type(self, selected=None, *args, **kwargs):
+        kwargs['id'] = 'policy_benefit_insured_asset_ownership_type_id'
+        kwargs['selected'] = selected
+        kwargs['outputdict'] = TYPEUTIL.get_dict_of_types("policy_benefit_insured_asset_ownership_type")
+        return create_selectbox_html(**kwargs)
+
+    def get_selectbox_person_title(self, selected=None, *args, **kwargs):
+        kwargs['id'] = 'entity_person_title_id'
+        kwargs['selected'] = selected
+        outputlist = []
+        dbase_query = DBSession.query(EntityPersonTitle). \
+                filter(EntityPersonTitle.bln_active == True). \
+                order_by(EntityPersonTitle.title.asc()). \
+                all()
+        for item in dbase_query:
+            name = item.title.title()
+            outputlist.append({
+                'id' : item.id,
+                'name' : name,
+            })
+        kwargs['outputlist'] = outputlist
+        return create_selectbox_html(**kwargs)
+
+    def get_selectbox_identity_type(self, selected=None, *args, **kwargs):
+        kwargs['id'] = kwargs.get('id', 'identity_type_id')
+        kwargs['selected'] = selected
+        kwargs['outputdict'] = TypeDict().get_dict_of_types("entity_person_identity_type")
+        return create_selectbox_html(**kwargs)
+
+    def get_selectbox_gender_type(self, selected=None, *args, **kwargs):
+        kwargs['id'] = 'entity_person_gender_type_id'
+        kwargs['selected'] = selected
+        kwargs['outputdict'] = TypeDict().get_dict_of_types("entity_person_gender_type")
+        return create_selectbox_html(**kwargs)
+
+    def get_selectbox_transaction_type(self, selected=None, *args, **kwargs):
+        kwargs['id'] = 'transaction_type_id'
+        kwargs['selected'] = selected
+        kwargs['outputdict'] = TypeDict().get_dict_of_types("transaction_type")
+        return create_selectbox_html(**kwargs)
+
+    def get_selectbox_transaction_state_type(self, selected=None, *args, **kwargs):
+        kwargs['id'] = 'transaction_state_type_id'
+        kwargs['selected'] = selected
+        kwargs['outputdict'] = TypeDict().get_dict_of_types("transaction_state_type")
+        return create_selectbox_html(**kwargs)
+
+    def get_selectbox_language(self, selected=None, *args, **kwargs):
+        language_list = Language.get_all('name')
+        kwargs['id'] = 'language_id'
+        kwargs['selected'] = selected
+        kwargs['outputlist'] = [{'name': m.name, 'id': m.id} for m in language_list]
+        return create_selectbox_html(**kwargs)
+
+    @expose()
+    def get_selectbox_bank_branch(self, *args, **kwargs):
+        bank_id = kwargs.get("bank_id")
+        bank_branch_id = kwargs.get("selected")
+        branch_list = BankBranch.by_attr_all('bank_id', bank_id)
+        kwargs['id'] = 'bank_branch_id'
+        kwargs['bank_id'] = bank_id
+        kwargs['bank_branch_id'] = bank_branch_id
+        kwargs['outputlist'] = [{'name': m.branch+' ('+m.branch_code+')', 'id': m.id} for m in branch_list]
+        return create_selectbox_html(**kwargs)
+
+    def get_selectbox_entity_organisation(self, selected=None, *args, **kwargs):
+        kwargs['id'] = 'entity_organisation_type_id'
+        kwargs['selected'] = selected
+        kwargs['outputdict'] = TYPEUTIL.get_dict_of_types("entity_organisation_type")
+        return create_selectbox_html(**kwargs)
+
+    def get_selectbox_family_relationship_type(self, selected=None, *args, **kwargs):
+        relationship_list = BenefitInsuredLifeRelationshipType.get_all('name')
+        kwargs['id'] = 'relationship_type_id'
+        kwargs['selected'] = selected
+        kwargs['outputlist'] = [{'name': m.name, 'id': m.id} for m in relationship_list]
+        return create_selectbox_html(**kwargs)
+
+    def get_selectbox_rounding_rates(self, selected=None, *args, **kwargs):
+        dbase_query = DBSession.query(RoundingRate). \
+                filter(RoundingRate.bln_active == True). \
+                order_by(RoundingRate.name.asc()). \
+                all()
+        kwargs['id'] = 'rounding_rate_id'
+        kwargs['selected'] = selected
+        kwargs['outputlist'] = [{'name': m.name, 'id': m.id} for m in dbase_query]
+        return create_selectbox_html(**kwargs)
+
+######################################################################################
+# Search
+######################################################################################
+
+    def get_session_key(self, searchkey):
+        key = DBSession.query(SessionKey). \
+                filter(SessionKey.name==searchkey). \
+                first()
+        if key: return key
+        return self.set_session_key(searchkey)
+
+    def set_session_key(self, searchkey):
+        new = SessionKey()
+        new.name = searchkey
+        DBSession.add(new)
+        DBSession.flush()
+        return new
+
+    def get_session_value(self, searchkey):
+        usernow = request.identity.get('user', {})
+        key = self.get_session_key(searchkey)
+        return DBSession.query(SessionValue). \
+                filter(SessionValue.key_id==key.id). \
+                filter(SessionValue.user_id==usernow.id). \
+                first()
+
+    def set_session_value(self, searchkey, searchphrase):
+        value = self.get_session_value(searchkey)
+        if not value: return self.create_session_value(searchkey, searchphrase)
+        value.value = searchphrase
+        DBSession.flush()
+        return searchphrase
+
+    def create_session_value(self, searchkey, searchphrase):
+        usernow = request.identity.get('user', {})
+        key = self.get_session_key(searchkey)
+        new = SessionValue()
+        new.key_id = key.id
+        new.user_id = usernow.id
+        new.value = searchphrase
+        DBSession.add(new)
+        DBSession.flush()
+        return searchphrase
+
+    def delete_session_value(self, searchkey):
+        usernow = request.identity.get('user', {})
+        value = self.get_session_value(searchkey)
+        if value: DBSession.delete(value)
+        return ''
+
+    def get_searchphrase(self, *args, **kwargs):
+        searchkey = kwargs.get('searchkey', None)
+        if not searchkey: return ''
+        reset = kwargs.get('reset', False)
+        if reset: return self.delete_session_value(searchkey)
+        searchphrase = kwargs.get('searchphrase', None)
+        if not searchphrase:
+            value = self.get_session_value(searchkey)
+            return value.value if value else ''
+        return self.set_session_value(searchkey, searchphrase)
+
+######################################################################################
+# Person Form - New
+######################################################################################
+
+    def get_new_person_html(self, *args, **kwargs):
+        card_title = kwargs.get('card_title', '')
+        if card_title:
+            card_title = f"""
+            <div class="col-md-6">
+                <h4 class="card-title">{card_title}</h4>
+            </div>
+            """
+        back_button = kwargs.get('back_button', '')
+
+        new_member_form = self.get_new_person_form(**kwargs)
+
+        html = f"""
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header d-flex">
+                        {card_title}
+                        {back_button}
+                    </div>
+                    <div class="card-body">
+                        {new_member_form}
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        return html
+
+    def get_new_person_form(self, *args, **kwargs):
+        form_id = kwargs.get('form_id', 'form_new_member')
+        form_inputs = self.get_person_form_inputs(**kwargs)
+        form_class = kwargs.get('form_class', 'd-flex flex-wrap')
+        return f"""
+        <form id="{form_id}" class="{form_class}">
+            {form_inputs}
+        </form>
+        """
+
+    @expose()
+    def get_edit_person_form(self, *args, **kwargs):
+        entity_person_id = kwargs.get('entity_person_id', None)
+        if not entity_person_id:
+            log.warning('get_edit_person_form: Missing entity_person_id')
+            return ''
+
+        person = self.get_edit_person_form_data(**kwargs)
+        kwargs['person'] = person
+
+        form_id = kwargs.get('form_id', 'form_new_member')
+        form_inputs = self.get_person_form_inputs(**kwargs)
+        return f"""
+        <form id="{form_id}" class="d-flex flex-wrap">
+            {form_inputs}
+        </form>
+        """
+
+    def get_edit_person_form_data(self, *args, **kwargs):
+        entity_person_id = kwargs.get('entity_person_id', None)
+        if not entity_person_id:
+            log.warning('get_edit_person_form_data: Missing entity_person_id')
+            return {}
+
+        entity_person = EntityPerson.by_id(entity_person_id)
+        if not entity_person:
+            log.warning('get_edit_person_form_data: Missing entity_person')
+            return {}
+
+        title = EntityPersonTitle.by_id(entity_person.entity_person_title_id)
+        language = Language.by_id(entity_person.language_id)
+        person = {
+            'firstname' : entity_person.firstname,
+            'surname' : entity_person.surname,
+            'preferred_name' : entity_person.preferred_name,
+            'entity_id' : entity_person.entity_id,
+            'entity_person_gender_type_id' : entity_person.entity_person_gender_type_id,
+            'entity_person_gender_type_text' : TYPEUTIL.get_pretty_name('entity_person_gender_type', entity_person.entity_person_gender_type_id),
+            'entity_person_title_id' : entity_person.entity_person_title_id,
+            'entity_person_title_text' : title.title.title(),
+            'language_id' : entity_person.language_id,
+            'language_text' : language.name.title(),
+            'date_of_birth' : entity_person.date_of_birth,
+        }
+
+        identity = EntityPersonIdentity.by_attr_first('entity_person_id', entity_person.id)
+        if identity:
+            person['identity_number'] = identity.value
+            person['entity_person_identity_id'] = identity.id
+            person['identity_type_id'] = identity.entity_person_identity_type_id
+            person['identity_type_text'] = TYPEUTIL.get_pretty_name('entity_person_identity_type', identity.entity_person_identity_type_id)
+
+        mobile_id = TYPEUTIL.get_id_of_name('entity_contact_type', 'mobile')
+        mobile = DBSession.query(EntityContact). \
+                filter(EntityContact.entity_id == entity_person.entity_id). \
+                filter(EntityContact.entity_contact_type_id == mobile_id). \
+                first()
+        if mobile:
+            person['entity_contact_type_id'] = mobile_id
+            person['entity_contact_type_text'] = TYPEUTIL.get_pretty_name('entity_contact_type', mobile_id)
+            person['mobile'] = mobile.value
+
+        return person
+
+    def get_person_form_inputs(self, *args, **kwargs):
+        person = kwargs.get('person', None)
+
+        form_id = kwargs.get('form_id', 'form_new_member')
+        input_wrapper_class = kwargs.get('input_wrapper_class', 'col-md-6')
+        extra_form_fields = kwargs.get('extra_form_fields', '')
+        if extra_form_fields:
+            extra_form_fields = f"""
+            <div class="col-md-12">
+                {extra_form_fields}
+            </div>
+            """
+        extra_fields_dict = {
+            'input_type': 'widget',
+            'widget': extra_form_fields
+            }
+
+        default_selected = TYPEUTIL.get_id_of_name('entity_person_identity_type', 'identity_number')
+        selected = int(person.get('identity_type_id', default_selected)) if person else default_selected
+        identity_type_dict = {
+            'input_wrapper_class': input_wrapper_class,
+            'label_attrs': 'required',
+            'input_id': 'identity_type_id',
+            'label_val': _('Identity Type'),
+            'input_type': 'custom',
+            'input_field': self.get_selectbox_identity_type(**{'selected': selected, 'attributes': f'data-said-id="{selected}" data-length="{ID_NUMBER_LENGTH}"'})
+            }
+
+        identity_number = kwargs.get('identity_number', '')
+        if person:
+            identity_number = person.get('identity_number', '')
+
+        id_number_dict = {
+            'input_wrapper_class': input_wrapper_class,
+            'label_attrs': 'required',
+            'input_id': 'number',
+            'label_val': _('ID Number'),
+            'input_attrs': f'required maxlength="50" data-form-id="{form_id}"',
+            'input_val': f'value="{identity_number}"'
+            }
+
+        intermediary_role_id = kwargs.get('intermediary_role_id', None)
+        hidden_intermediary_role_dict = {
+            'input_type': 'widget',
+            'widget': get_hidden_input(**{'id': 'intermediary_role_id', 'value': intermediary_role_id}) if intermediary_role_id else ''
+            }
+
+        entity_person_id = kwargs.get('entity_person_id', None)
+        hidden_entity_person_dict = {
+            'input_type': 'widget',
+            'widget': get_hidden_input(**{'id': 'entity_person_id', 'value': entity_person_id}) if entity_person_id else ''
+            }
+
+        redirect_url = kwargs.get('redirect_url', None)
+        hidden_redirect_url_dict = {
+            'input_type': 'widget',
+            'widget': get_hidden_input(**{'id': 'redirect_url', 'value': redirect_url}) if redirect_url else ''
+            }
+
+        selected_title = person.get('entity_person_title_id', '') if person else ''
+        title_dict = {
+            'input_wrapper_class': input_wrapper_class,
+            'label_attrs': 'required',
+            'input_id': 'entity_person_title_id',
+            'label_val': _('Title'),
+            'input_attrs': 'required',
+            'input_type': 'custom',
+            'input_field': self.get_selectbox_person_title(selected_title)
+            }
+        first_name = person.get('firstname', '') if person else ''
+        first_name_dict = {
+            'input_wrapper_class': input_wrapper_class,
+            'label_attrs': 'required',
+            'input_id': 'name',
+            'label_val': _('First Name'),
+            'input_attrs': 'required maxlength="50"',
+            'input_val': f'value="{first_name}"'
+            }
+        surname = person.get('surname', '') if person else ''
+        surname_dict = {
+            'input_wrapper_class': input_wrapper_class,
+            'label_attrs': 'required',
+            'input_id': 'surname',
+            'label_val': _('Surname'),
+            'input_attrs': 'required maxlength="50"',
+            'input_val': f'value="{surname}"'
+            }
+        date_of_birth = person.get('date_of_birth', '') if person else ''
+        dob_dict = {
+            'input_wrapper_class': input_wrapper_class,
+            'label_attrs': 'required',
+            'input_id': 'date_of_birth',
+            'label_val': _('Date of Birth'),
+            'input_attrs': 'required',
+            'input_val': f'value="{date_of_birth}"'
+            }
+        selected_gender = person.get('entity_person_gender_type_id', '') if person else ''
+        gender_dict = {
+            'input_wrapper_class': input_wrapper_class,
+            'label_attrs': 'required',
+            'input_id': 'entity_person_gender_type_id',
+            'label_val': _('Gender'),
+            'input_type': 'custom',
+            'input_field': self.get_selectbox_gender_type(selected_gender)
+            }
+        selected_language = person.get('language_id', '') if person else ''
+        language_dict = {
+            'input_wrapper_class': input_wrapper_class,
+            'label_attrs': 'required',
+            'input_id': 'language_id',
+            'label_val': _('Language'),
+            'input_type': 'custom',
+            'input_field': self.get_selectbox_language(selected_language)
+            }
+        mobile = person.get('mobile', '') if person else ''
+        mobile_dict = {
+            'input_wrapper_class': input_wrapper_class,
+            'label_attrs': 'required',
+            'input_id': 'mobile',
+            'label_val': _('Mobile'),
+            'input_attrs': 'required',
+            'input_val': f'value="{mobile}"'
+            }
+        params_list = [
+            extra_fields_dict,
+            identity_type_dict,
+            id_number_dict,
+            hidden_intermediary_role_dict,
+            hidden_entity_person_dict,
+            hidden_redirect_url_dict,
+            title_dict,
+            first_name_dict,
+            surname_dict,
+            dob_dict,
+            gender_dict,
+            language_dict,
+            mobile_dict
+        ]
+        javascript = """
+        <script nonce='1234'>
+            createDatepicker('#date_of_birth');
+        </script>
+        """
+        return build_html_form_inputs(params_list) + javascript
+
+######################################################################################
+# Person Form - View
+######################################################################################
+
+    def get_member_view_items(self, *args, **kwargs):
+        entity_person_id = kwargs.get('entity_person_id', None)
+        if not entity_person_id:
+            log.warning('get_member_view_items: No entity_person_id in kwargs')
+            return ''
+
+        person = self.get_edit_person_form_data(**kwargs)
+
+        entity_person_identity_type_id = person.get('identity_type_id', None)
+        id_type = TYPEUTIL.get_pretty_name('entity_person_identity_type', entity_person_identity_type_id)
+
+        entity_person_identity_id = person.get('entity_person_identity_id', None)
+        entity_person_identity = EntityPersonIdentity.by_id(entity_person_identity_id)
+        identity_number = person.get('identity_number', '')
+
+
+        firstname = person.get('firstname', '')
+        surname = person.get('surname', '')
+        fullname = f'{firstname} {surname}'
+        title_id = person.get('entity_person_title_id', None)
+        if title_id:
+            title = EntityPersonTitle.by_id(title_id)
+            if title:
+                fullname = f'{title.title.title()} {firstname} {surname}'
+
+        date_of_birth = person.get('date_of_birth', '')
+
+        gender_id = person.get('entity_person_gender_type_id', None)
+        gender = TYPEUTIL.get_pretty_name('entity_person_gender_type', gender_id)
+
+        language_id = person.get('language_id', '')
+        language = Language.by_id(language_id)
+
+        mobile = person.get('mobile', '')
+        html = f"""
+            <h4 class="mt-3">{fullname}</h4>
+            <hr>
+            <div class="row d-flex align-items-center">
+                <label class="col-md-4 col-form-label mb-0">Date of Birth</label>
+                <div class="col-md-8">
+                    {date_of_birth}
+                </div>
+            </div>
+            <div class="row d-flex align-items-center">
+                <label class="col-md-4 col-form-label mb-0">Identity type</label>
+                <div class="col-md-8">
+                    {id_type}
+                </div>
+            </div>
+            <div class="row d-flex align-items-center">
+                <label class="col-md-4 col-form-label mb-0">Identity number</label>
+                <div class="col-md-8">
+                    {identity_number}
+                </div>
+            </div>
+            <div class="row d-flex align-items-center">
+                <label class="col-md-4 col-form-label mb-0">Gender</label>
+                <div class="col-md-8">
+                    {gender}
+                </div>
+            </div>
+            <div class="row d-flex align-items-center">
+                <label class="col-md-4 col-form-label mb-0">Language</label>
+                <div class="col-md-8">
+                    {language.name}
+                </div>
+            </div>
+        """
+        return html
+
+    def get_person_card(self, card_title=None, content=None, card_class="col-lg-6", *args, **kwargs):
+        html = f"""
+        <div class=" mb-3 {card_class}">
+            <h4 class="mt-0">{card_title}</h4>
+            {content}
+        </div>
+        """
+        return html
+
+######################################################################################
+# Person Form - Edit
+######################################################################################
+
+    def get_edit_person_html(self, *args, **kwargs):
+        entity_person_id = kwargs.get('entity_person_id', None)
+        if not entity_person_id:
+            log.warning('Missing entity_person_id')
+            return ''
+
+        person_vault = kwargs.get('person_vault', None)
+        if not person_vault:
+            log.warning('Missing person_vault')
+            return ''
+
+        form_id = kwargs.get('form_id', 'form_edit_member')
+        card_title = kwargs.get('card_title', 'Edit Member')
+        save_button_id = kwargs.get('save_button_id', 'btn_save_edit_member')
+
+        person = person_vault.get('person', {})
+        if not person:
+            log.warning('Unable to get person dict from person_vault')
+            return ''
+
+        identity_list = person_vault.get('identities', [])
+        if not identity_list:
+            log.warning('Unable to get identity list from person_vault')
+            return ''
+
+        identity_number = None
+        entity_person_identity_id = None
+        selected_identity_type_id = None
+        if len(identity_list) >= 1:
+            identity_number = identity_list[0].get('number', None)
+            entity_person_identity_id = identity_list[0].get('id', None)
+            selected_identity_type_id = identity_list[0].get('identity_type_id', None)
+        selectbox_identity_type = self.get_selectbox_identity_type(**{'selected': selected_identity_type_id})
+
+        selected_entity_person_title_id = person.get('entity_person_title_id', None)
+        selectbox_title = self.get_selectbox_person_title(**{'selected': selected_entity_person_title_id})
+
+        selected_gender_type_id = person.get('entity_person_gender_type_id', None)
+        selectbox_gender = self.get_selectbox_gender_type(**{'selected': selected_gender_type_id})
+
+        selected_language_id = person.get('language_id', None)
+        selectbox_language = self.get_selectbox_language(**{'selected': selected_language_id})
+
+        card_title = _(card_title)
+        hidden_input_entity_person = get_hidden_input(**{'id': 'entity_person_id', 'value': entity_person_id})
+        hidden_input_person_identity = get_hidden_input(**{'id': 'entity_person_identity_id', 'value': entity_person_identity_id})
+        extra_form_fields = kwargs.get('extra_form_fields', '')
+        if extra_form_fields:
+            extra_form_fields = f"""
+            <div class="col-md-12">
+                {extra_form_fields}
+            </div>
+            """
+        html = f"""
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header d-flex">
+                        <div class="col-md-6">
+                            <h4 class="card-title">{card_title}</h4>
+                        </div>
+                        <div class="col-md-6 text-right">
+                            <button id='{save_button_id}' class="btn btn-primary">{_('Save')}</button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <form id="{form_id}">
+                            {hidden_input_entity_person}
+                            {hidden_input_person_identity}
+                            <div class="row">
+                                {extra_form_fields}
+                                <div class="col-md-6">
+                                    <div class="col-md-12">
+                                        <div class="form-group row">
+                                            <label class="col-md-3 col-form-label" required>{_('Title')}</label>
+                                            <div class="col-md-9">
+                                                {selectbox_title}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-12">
+                                        <div class="form-group row">
+                                            <label class="col-md-3 col-form-label" required>{_('First Name')}</label>
+                                            <div class="col-md-9">
+                                                <input type="text" name='name' class="form-control" required="true" maxlength='50' value="{person.get('firstname', '')}">
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-12">
+                                        <div class="form-group row">
+                                            <label class="col-md-3 col-form-label" required>{_('Date of Birth')}</label>
+                                            <div class="col-md-9">
+                                                <input type="text" class="form-control" name="date_of_birth" id="date_of_birth" value="{person.get('date_of_birth', '')}">
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-12" >
+                                        <div class="form-group row">
+                                            <label class="col-md-3 col-form-label" required>{_('Identity Type')}</label>
+                                            <div class="col-md-9">
+                                                {selectbox_identity_type}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="col-md-12">
+                                        <div class="form-group row">
+                                            <label class="col-md-3 col-form-label" required>{_('Gender')}</label>
+                                            <div class="col-md-9">
+                                                {selectbox_gender}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-12">
+                                        <div class="form-group row">
+                                            <label class="col-md-3 col-form-label" required>{_('Surname')}</label>
+                                            <div class="col-md-9">
+                                                <input type="text" name='surname' class="form-control" required="true" maxlength='50' value="{person.get('surname', '')}">
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-12">
+                                        <div class="form-group row">
+                                            <label class="col-md-3 col-form-label" required>{_('Language')}</label>
+                                            <div class="col-md-9">
+                                                {selectbox_language}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-12">
+                                        <div class="form-group row">
+                                            <label class="col-md-3 col-form-label" required>{_('ID Number')}</label>
+                                            <div class="col-md-9">
+                                                <input class="form-control" type="text" id='number' name="number" required="true" maxlength='50' value='{identity_number}'/>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        return html
+
+######################################################################################
+# Person Contact Form - Edit
+######################################################################################
+
+    @expose()
+    def get_edit_member_contact_html(self, *args, **kwargs):
+        entity_person_id = kwargs.get('entity_person_id')
+        if not entity_person_id:
+            redirect('/members/index')
+
+        entity_person = EntityPerson.by_id(entity_person_id)
+        if not entity_person:
+            redirect('/members/index')
+
+        dbase_query = EntityContact.by_attr_all('entity_id', entity_person.entity_id)
+
+        outputlist = []
+        img_active = "<img src='/images/icon_check.png' />"
+        img_inactive = "<img src='/images/icon_cross.png' />"
+        for item in dbase_query:
+            item_id = item.id
+            entity_contact_type_id = item.entity_contact_type_id
+            entity_contact_type = TYPEUTIL.get_pretty_name('entity_contact_type', entity_contact_type_id)
+            contact_value = item.value
+
+            action = ""
+            if entity_contact_type_id == MOBILE:
+                action = f"""
+                <div class='edit send_message action_link' contact_id='{item_id}' entity_id='{item.entity_id}'
+                     entity_person_id='{entity_person_id}'  entity_contact_type='Sms' contact_value='{contact_value}'>Sms</div>
+
+                <div class='edit send_message action_link' contact_id='{item_id}' entity_id='{item.entity_id}'
+                     entity_person_id='{entity_person_id}' entity_contact_type='Whatsapp' contact_value='{contact_value}'>Whatsapp</div>
+                """
+
+            if entity_contact_type_id == EMAIL:
+                action = f"""<div class='edit send_email action_link' contact_id='{item_id}' entity_id='{item.entity_id}'
+                                entity_person_id='{entity_person_id}'  contact_value='{contact_value}'>Send Email</div>"""
+
+            outputlist.append({
+                'type': f"<div class='edit edit_contact' entity_id='{item.entity_id}'  entity_person_id='{entity_person_id}' contact_id='{item_id}'>{entity_contact_type}</div>",
+                'value': contact_value,
+                'preferred':  img_active if item.preferred else img_inactive,
+                'action': action
+            })
+        dbcolumnlist = [
+            'type',
+            'value',
+            'preferred',
+            'action'
+        ]
+        theadlist = [
+            'Type',
+            'Value',
+            'Preferred',
+            ''
+        ]
+        tdclasslist = [
+            'action_link',
+            '',
+            'text-center',
+            'text-center',
+        ]
+        contacttable = build_html_table(outputlist, dbcolumnlist, theadlist, "contact_details", tdclasslist)
+        html = f"""
+        <div id= "div_contact_table">
+            <div class="row">
+                <div class="col-md-12">
+                    <div class="card">
+                        <div class="card-header">
+                            <div class="row d-flex">
+                                <div class="col-md-6">
+                                    <h4 class="card-title">Contacts</h4>
+                                </div>
+                                <div class="col-md-6 text-right">
+                                    <button id="create_new_contact" entity_person_id='{entity_person_id}'
+                                            entity_id='{entity_person.entity_id}' class="btn btn-primary ml-auto">Create New Contact</button>
+                                </div>
+                            </div>
+                            <hr>
+                        </div>
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                {contacttable}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        return html
+
+######################################################################################
+# Person Contact Modal
+######################################################################################
+
+    @expose()
+    def get_modal_new_person_contact(self, *args, **kwargs):
+        entity_person_id = kwargs.get('entity_person_id')
+        entity_organisation_id = kwargs.get('entity_organisation_id', None)
+        entity_id = kwargs.get('entity_id', None)
+        selectbox_contact = self.get_selectbox_contact()
+        html = f"""
+            <div class="modal fade" id="dialog_new_contact" tabindex="-1" role="dialog" aria-labelledby="mytbl_system_documentLabel" aria-hidden="true">
+                <div class="modal-dialog modal-dialog-centered modal-lg">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <div class="col-md-6">
+                                <h4 class="card-title">New Contact</h4>
+                            </div>
+                        </div>
+                        <div class="modal-body">
+                            <form id='form_new_contact'>
+                                <div style='display: none' class="col-md-12">
+                                    <div class="form-group row">
+                                        <label class="col-md-3 col-form-label" required for="entity_person_id">ID</label>
+                                        <div class="col-md-9">
+                                            <input id="entity_person_id" type="text" name="entity_person_id" value="{entity_person_id}" class="form-control" required='true'>
+                                            <input id="entity_organisation_id" type="text" name="entity_organisation_id" value="{entity_organisation_id}" class="form-control" required='true'>
+                                            <input id="entity_id" type="text" name="entity_id" value="{entity_id}" class="form-control" required='true'>
+                                        </div>
+                                    </div>
+                                </div>
+                                 <div class="col-md-12">
+                                    <div class="form-group row">
+                                        <label class="col-md-4 col-form-label" required for="code">{_('Contact Type ')}</label>
+                                        <div class="col-md-8">
+                                            {selectbox_contact}
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-12">
+                                    <div class="form-group row">
+                                        <label class="col-md-4 col-form-label" required for="value">{_('Value')}</label>
+                                        <div class="col-md-8">
+                                            <input id="value" type="text" name="value" class="form-control" required='true'>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-12">
+                                    <div class="form-group row">
+                                        <label class="col-4 col-form-label" for="active" required>Preferred</label>
+                                        <div class="col-8">
+                                            <div class="form-check">
+                                                <label class="form-check-label">
+                                                    <input class="form-check-input" type="checkbox" name="preferred" id="preferred" >
+                                                    <span class="form-check-sign"></span>
+                                                </label>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </form>
+                        </div>
+                        <div class="modal-footer">
+                            <button id='save_new_contact' class="btn btn-primary">Save</button>
+                            <button class="btn btn-outline-primary contact_back">Cancel</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            """
+        javascript = """
+            <script nonce='1234'>
+            $('.contact_back').click(function(){
+                $('#dialog_new_contact').modal('hide');
+            });
+            $('#dialog_new_contact').modal();
+            </script>
+            """
+        return html + javascript
+
+
+    @expose()
+    def get_modal_edit_person_contact(self, *args, **kwargs):
+        entity_person_id = kwargs.get('entity_person_id')
+        entity_id = kwargs.get('entity_id')
+        contact_id = kwargs.get('contact_id')
+
+        this = EntityContact.by_id(contact_id)
+        if not this: return ''
+
+        active = this.bln_active
+        preferred = this.preferred
+        contact_name = this.name
+        contact_value = this.value
+        entity_contact_type_id = this.entity_contact_type_id
+
+        checked = 'checked' if active else ''
+        preferred = 'checked' if preferred else ''
+        dropdown_contact = self.get_selectbox_contact(entity_contact_type_id)
+        html = f"""
+        <div class="modal fade" id="dialog_edit_contact" tabindex="-1" role="dialog" aria-labelledby="mytbl_system_documentLabel" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <div class="col-md-6">
+                            <h4 class="card-title">Edit Contact</h4>
+                        </div>
+                    </div>
+                    <div class="modal-body">
+                        <form id='form_edit_contact'>
+                            <div style='display: none' class="col-md-12">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label" required for="organisation_id">ID</label>
+                                    <div class="col-md-9">
+                                        <input id="entity_person_id" type="text" name="entity_person_id" value="{entity_person_id}" class="form-control" required='true'>
+                                        <input id="entity_id" type="text" name="entity_id" value="{entity_id}" class="form-control" required='true'>
+                                        <input id="contact_id" type="text" name="contact_id" value="{contact_id}" class="form-control" required='true'>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-12">
+                                <div class="form-group row">
+                                    <label class="col-md-4 col-form-label" required for="code">{_('Contact Type ')}</label>
+                                    <div class="col-md-8">
+                                        {dropdown_contact}
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-12">
+                                <div class="form-group row">
+                                    <label class="col-md-4 col-form-label" required for="value">{_('Value')}</label>
+                                    <div class="col-md-8">
+                                        <input id="value" type="text" name="value" value="{contact_value}" class="form-control" required='true'>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-12">
+                                <div class="form-group row">
+                                    <label class="col-4 col-form-label" for="active" required>{_('Preferred')}</label>
+                                    <div class="col-8">
+                                        <div class="form-check">
+                                            <label class="form-check-label">
+                                                <input class="form-check-input" type="checkbox" name="preferred" id="preferred" {preferred}/>
+                                                <span class="form-check-sign"></span>
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div><div class="col-md-12">
+                                <div class="form-group row">
+                                    <label class="col-4 col-form-label" for="active" required>Active</label>
+                                    <div class="col-8">
+                                        <div class="form-check">
+                                            <label class="form-check-label">
+                                                <input class="form-check-input" type="checkbox" name="active" id="active" {checked}/>
+                                                <span class="form-check-sign"></span>
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                    <div class="modal-footer">
+                        <button id='save_edit_contact' class="btn btn-primary">Save</button>
+                        <button class="btn btn-outline-primary contact_edit_back">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        return html
+
+
+######################################################################################
+# Person Contact Save
+######################################################################################
+
+    @expose()
+    def save_new_member_contact(self, *args, **kwargs):
+        entity_person_id = kwargs.get('entity_person_id')
+        entity_contact_type_id = kwargs.get('entity_contact_type_id')
+        entity_person = EntityPerson.by_id(entity_person_id)
+        value = kwargs.get('value')
+
+        usernow = request.identity['user']
+
+        contact = EntityContact()
+        contact.entity_id = entity_person.entity_id
+        contact.entity_contact_type_id = entity_contact_type_id
+        contact.name = entity_person.firstname
+        contact.value = value
+        contact.preferred = True
+        DBSession.add(contact)
+        DBSession.flush()
+
+        redirect_url = '/members/edit_member'
+        return json.dumps({'success': True, 'entity_id' : entity_person.entity_id, 'entity_person_id': entity_person_id, 'redirect': redirect_url})
+
+    @expose()
+    def save_edit_member_contact(self, *args, **kwargs):
+        entity_contact_type_id = kwargs.get('entity_contact_type_id')
+        contact_id = kwargs.get('contact_id')
+        value = kwargs.get('value')
+        usernow = request.identity['user']
+
+        contact = EntityContact.by_id(contact_id)
+        if not contact:
+            return json.dumps({'success': False})
+
+        contact.value = value
+        DBSession.flush()
+        return json.dumps({'success': True})
+
+######################################################################################
+# Person Bank Form - Edit
+######################################################################################
+
+    @expose()
+    def get_edit_member_bank_html(self, *args, **kwargs):
+        entity_person_id = kwargs.get('entity_person_id', None)
+        if not entity_person_id:
+            log.warning('get_edit_member_bank_html: No entity_person_id in kwargs')
+            return ''
+
+        entity_person = EntityPerson.by_id(entity_person_id)
+        if not entity_person:
+            return ''
+
+        bank_account = {}
+        exists = EntityBankAccount.by_attr_first('entity_id', entity_person.entity_id)
+        if exists:
+            bank_account = exists.__dict__
+
+        bank_account['form_id'] = 'form_member_bank'
+        bank_account['entity_person_id'] = entity_person_id
+        bank_account_form = self.get_bank_account_form(**bank_account)
+        html = f"""
+            <div id="div_bank_table">
+                <div class="row">
+                    <div class="col-md-12">
+                        <div class="card ">
+                            <div class="card-header d-flex">
+                                <div class="col-md-6">
+                                    <h4 class="card-title">{_('Bank Details')}</h4>
+                                </div>
+                                <div class="col-md-6 text-right">
+                                    <button id='save_edit_bank' class="btn btn-primary">{_('Save')}</button>
+                                </div>
+                            </div>
+                            <div class="card-body ">
+                                {bank_account_form}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            """
+        javascript = """
+         <script nonce='1234'>
+            $('#save_edit_bank').click(function(){
+                var valid = FormIsValid("#form_member_bank");
+                if(valid){
+                  var formserial = $('#form_member_bank').serialize();
+                  $.post('/common/save_person_bank_account?', formserial, function(data){
+                      console.log('save_person_bank_account', data)
+                      var result = JSON.parse(data);
+                      console.log(result);
+                      if(result.success === true){
+                          $.redirect('/members/edit_member', result);
+                      };
+                      return false;
+                  });
+                }
+            });
+         </script>
+         """
+        return html + javascript
+
+    @expose()
+    def get_bank_account_form(self, *args, **kwargs):
+        entity_id = kwargs.get('entity_id', None)
+        entity_person_id = kwargs.get('entity_person_id', None)
+        if entity_person_id:
+            entity_person = EntityPerson.by_id(entity_person_id)
+            if entity_person:
+                entity_id = entity_person.entity_id
+        if not entity_id:
+            log.warning('get_bank_account_form: No entity_id in kwargs')
+            return ''
+
+        form_id = kwargs.get('form_id', 'bank_account_form')
+        bank_id = kwargs.get('bank_id', None)
+        currency_id = kwargs.get('currency_id', None)
+        bank_account_id = kwargs.get('id', None)
+
+        branch_code = kwargs.get('branch_code', '')
+        bank_branch_id = self.get_branch_id_by_branch_code(branch_code)
+
+        account_number = kwargs.get('account_number', '')
+        bank_account_type_id = kwargs.get('bank_account_type_id', None)
+        iban = kwargs.get('iban', '')
+        account_holder = kwargs.get('account_holder', '')
+        swift_code = kwargs.get('swift_code', '')
+
+        selectbox_bank = self.get_selectbox_bank(**{'selected': bank_id})
+        selectbox_currency = self.get_selectbox_currency(**{'selected': currency_id})
+        selectbox_code = self.get_selectbox_bank_branch(**{
+            'bank_id': bank_id,
+            'selected': bank_branch_id
+        })
+        html = f"""
+            <form id="{form_id}">
+                <input type="hidden" id="entity_id" name="entity_id" class="form-control" value="{entity_id}"/>
+                <input type="hidden" id="bank_account_id" name="bank_account_id" class="form-control" value="{bank_account_id}"/>
+                <input type="hidden" id="bank_account_type_id" name="bank_account_type_id" class="form-control" value="{bank_account_type_id}"/>
+                <div  class="row">
+                    <div class="col-md-6">
+                        <div class="col-md-12">
+                            <div class="form-group row">
+                                <label class="col-md-3 col-form-label">Bank</label>
+                                <div class="col-md-9">
+                                    {selectbox_bank}
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-12">
+                            <div class="form-group row">
+                                <label class="col-md-3 col-form-label">Account number</label>
+                                <div class="col-md-9">
+                                    <input type="text" class="form-control" maxlength='255' name="account_number"  id="account_number" value='{account_number}'>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-12">
+                            <div class="form-group row">
+                                <label class="col-md-3 col-form-label">Currency</label>
+                                <div class="col-md-9">
+                                    {selectbox_currency}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="col-md-12">
+                            <div class="form-group row">
+                                <label class="col-md-3 col-form-label">Branch</label>
+                                <div class="col-md-9">
+                                    <div id="div_bank_branch">{selectbox_code}</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="col-md-12">
+                            <div class="form-group row">
+                                <label class="col-md-3 col-form-label">Account Holder</label>
+                                <div class="col-md-9">
+                                    <input type="text" class="form-control" maxlength='255' name="account_holder" id="account_holder" value='{account_holder}'>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-12">
+                            <div class="form-group row">
+                                <label class="col-md-3 col-form-label">IBAN</label>
+                                <div class="col-md-9">
+                                    <input type="text" class="form-control" maxlength='255' name="iban"  id="iban" value='{iban}'>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </form>
+        """
+        javascript = """
+        <script nonce='1234'>
+            $("#bank_id").change(function () {
+                var bank_id = $('#bank_id option:selected').val();
+                var kwargs = {'bank_id': bank_id, };
+                $('#div_bank_branch').load('/common/get_selectbox_bank_branch', kwargs, function(data){
+                    return false;
+                });
+            });
+            //$("#bank_id").trigger('change');
+        </script>
+        """
+        return html + javascript
+
+    def get_branch_id_by_branch_code(self, branch_code=None, *args, **kwargs):
+        if not branch_code:
+            log.warning('get_branch_id_by_branch_code: No branch_code in args')
+            return None
+        bank_branch = BankBranch.by_attr_first('branch_code', branch_code)
+        if bank_branch:
+            return bank_branch.id
+        return None
+
+    @expose()
+    def save_person_bank_account(self, *args, **kwargs):
+        usernow = request.identity.get('user', None)
+        entity_id = str_to_int(kwargs.get('entity_id', None))
+        entity_person_id = kwargs.get('entity_person_id', None)
+        commercial = TYPEUTIL.get_id_of_name('entity_bank_account_type', 'commercial')
+
+        if entity_id:
+            entity_person = EntityPerson.by_attr_first('entity_id', entity_id)
+        if entity_person_id:
+            entity_person = EntityPerson.by_id(entity_person_id)
+            entity_id = entity_person.entity_id
+        if not entity_person:
+            log.warning('save_person_bank_account: No entity person found')
+            return json.dumps({'success': False, 'message': 'No entity person found'})
+
+        bank_account_id = str_to_int(kwargs.get('bank_account_id', None))
+        bank_id = str_to_int(kwargs.get('bank_id', None))
+        swift_code = '000000000000000'
+
+        account_number = kwargs.get('account_number', None)
+        if not account_number:
+            log.warning('save_person_bank_account: No account_number in kwargs')
+            return json.dumps({'success': False, 'message': 'No account_number in kwargs'})
+
+        account_holder = kwargs.get('account_holder', None)
+        if not account_holder:
+            log.warning('save_person_bank_account: No account_holder in kwargs')
+            return json.dumps({'success': False, 'message': 'No account_holder in kwargs'})
+
+        bank_branch_id = kwargs.get('bank_branch_id', None)
+        if not bank_branch_id:
+            branch = BankBranch.by_attr_first('bank_id', bank_id)
+            if branch:
+                bank_branch_id = branch.id
+        if not bank_branch_id:
+            log.warning('save_person_bank_account: No bank_branch_id in kwargs')
+
+        branch_code = ''
+        if bank_branch_id:
+            bank_branch = BankBranch.by_id(bank_branch_id)
+            branch_code = bank_branch.branch_code
+
+        iban = kwargs.get('iban', None)
+        if not iban:
+            log.warning('save_person_bank_account: No iban in kwargs')
+            return json.dumps({'success': False, 'message': 'No iban in kwargs'})
+
+        currency_id = kwargs.get('currency_id', None)
+        if not currency_id:
+            log.warning('save_person_bank_account: No currency_id in kwargs')
+            return json.dumps({'success': False, 'message': 'No currency_id in kwargs'})
+
+        if bank_account_id or bank_account_id <= 0:
+            bank_account_id = None
+
+        if bank_account_id:
+            bank = EntityBankAccount.by_id(bank_account_id)
+            bank.bank_account_type_id = commercial
+            bank.bank_id = bank_id
+            bank.swift_code = swift_code
+            bank.account_number = account_number
+            bank.account_holder = account_holder
+            bank.branch_code = branch_code
+            bank.currency_id = currency_id
+            bank.iban = iban
+            DBSession.flush()
+
+        else:
+            bank = EntityBankAccount()
+            bank.entity_id = entity_person.entity_id
+            bank.bank_account_type_id = commercial
+            bank.bank_id = bank_id
+            bank.swift_code = swift_code
+            bank.account_number = account_number
+            bank.account_holder = account_holder
+            bank.branch_code = branch_code
+            bank.currency_id = currency_id
+            bank.entity_id = entity_id
+            bank.iban = iban
+            DBSession.add(bank)
+            DBSession.flush()
+
+        return json.dumps({'success': True, 'entity_id' : entity_id, 'entity_person_id' : entity_person.id})
+
+######################################################################################
+# Organisation - New
+######################################################################################
+
+    @expose()
+    def new_organisation_html(self, *args, **kwargs):
+        form_id = kwargs.get('form_id', '')
+        extra_form_fields = kwargs.get('extra_form_fields', '')
+        if extra_form_fields:
+            extra_form_fields = f"""
+            <div class="col-md-12">
+                {extra_form_fields}
+            </div>
+            """
+        selectbox_entity_organisation = self.get_selectbox_entity_organisation()
+        entity_type_id = TYPEUTIL.get_id_of_name('entity_type', 'organisation')
+
+        card_title = kwargs.get('card_title', '')
+        if card_title:
+            card_title = f"""
+            <div class="col-md-6">
+                <h4 class="card-title">{card_title}</h4>
+            </div>
+            """
+
+        code = kwargs.get('code', '')
+        back_button = kwargs.get('back_button', '')
+        html = f"""
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header d-flex">
+                        {card_title}
+                        {back_button}
+                    </div>
+                    <div class="card-body">
+                        <form id="{form_id}">
+                            {extra_form_fields}
+                            <div class="row">
+                                <div class="col-md-12 hidden">
+                                    <div class="form-group row">
+                                        <label class="col-md-3 col-form-label" required for="">Entity Type Default to Organisation</label>
+                                        <div class="col-md-9">
+                                            <input id="entity_type_id" type="text" name="entity_type_id" value="{entity_type_id}" class="form-control" required='true'>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class ="col-md-6">
+                                    <div class="col-md-12">
+                                        <div class="form-group row">
+                                            <label class="col-md-3 col-form-label" required for="code">Code</label>
+                                            <div class="col-md-9">
+                                                <input id="code" value='{code}' type="text" name="code" class="form-control" required='true'>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-12">
+                                        <div class="form-group row">
+                                            <label class="col-md-3 col-form-label" required for="code">Tax Number</label>
+                                            <div class="col-md-9">
+                                                <input id="tax_number" type="text" name="tax_number" class="form-control" required='true'>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-12">
+                                        <div class="form-group row">
+                                            <label class="col-md-3 col-form-label" for="financial_regulatory_number">Financial Reg</label>
+                                            <div class="col-md-9">
+                                                <input id="financial_regulatory_number" type="text" name="financial_regulatory_number" class="form-control">
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class='col-md-6'>
+                                    <div class="col-md-12">
+                                        <div class="form-group row">
+                                            <label class="col-md-3 col-form-label" required
+                                                   for="name">Name</label>
+                                            <div class="col-md-9">
+                                                <input id="name" type="text" name="name" class="form-control" required='true'>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-12">
+                                        <div class="form-group row">
+                                            <label class="col-md-3 col-form-label" required for="registration_number">Reg Number</label>
+                                            <div class="col-md-9">
+                                                <input id="registration_number" type="text" name="registration_number" class="form-control" required='true'>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-12">
+                                        <div class="form-group row">
+                                            <label class="col-md-3 col-form-label" for="">Organisation Type</label>
+                                            <div class="col-md-9">
+                                                {selectbox_entity_organisation}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        return html
+
+    @expose()
+    def save_new_entity(self, *args, **kwargs):
+        usernow = request.identity.get('user', None)
+        this = Entity()
+        this.entity_type_id = kwargs.get('entity_type_id', None)
+        this.added_by = usernow.id
+        DBSession.add(this)
+        DBSession.flush()
+        return this.id
+
+    @expose()
+    def save_new_entity_organisation(self, *args, **kwargs):
+        usernow = request.identity.get('user', None)
+        this = EntityOrganisation()
+        this.entity_id = kwargs.get('entity_id', None)
+        this.entity_organisation_type_id = kwargs.get('entity_organisation_type_id', None)
+        this.code = kwargs.get('code', None)
+        this.name = kwargs.get('name', None)
+        this.tax_number = kwargs.get('tax_number', None)
+        this.registration_number = kwargs.get('registration_number', None)
+        this.financial_regulatory_number = kwargs.get('financial_regulatory_number', '')
+        this.added_by = usernow.id
+        DBSession.add(this)
+        DBSession.flush()
+        return this.id
+
+######################################################################################
+# Organisation - Edit
+######################################################################################
+
+    @expose()
+    def edit_organisation_html(self, *args, **kwargs):
+        entity_organisation = kwargs.get('entity_organisation', None)
+        if not entity_organisation: return ''
+        intermediary_role_id = kwargs.get('intermediary_role_id', None)
+        extra_form_fields = kwargs.get('extra_form_fields', '')
+        if extra_form_fields:
+            extra_form_fields = f"""
+            <div class="col-md-12">
+                {extra_form_fields}
+            </div>
+            """
+
+        form_id = kwargs.get('form_id', 'form_entity_organisation')
+        card_title = kwargs.get('card_title', 'Organisation Details')
+        save_button_id = kwargs.get('save_button_id', 'save_organisation')
+
+        selected_organisation_type = entity_organisation.entity_organisation_type_id
+        selectbox_entity_organisation = self.get_selectbox_entity_organisation(selected_organisation_type)
+        hidden_intermediary_role_id = get_hidden_input(**{'id': 'intermediary_role_id', 'value': intermediary_role_id}) if intermediary_role_id else ''
+
+        html = f"""
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header"> <div class="row d-flex">
+                            <div class="col-md-6">
+                                <h4 class="card-title">{card_title}</h4>
+                            </div>
+                            <div class="col-md-6  text-right">
+                                <button id='{save_button_id}' class="btn btn-primary">Save</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <form id="{form_id}" class="row">
+                            {hidden_intermediary_role_id}
+                            <input type="hidden" id="entity_id" name="entity_id" class="form-control" value="{entity_organisation.entity_id}"/>
+                            <input  type="hidden" id="entity_organisation_id" name="entity_organisation_id" class="form-control" value="{entity_organisation.id}"/>
+                            {extra_form_fields}
+                            <div class="col-md-6">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label"  for="code">{_('Code')}</label>
+                                    <div class="col-md-9">
+                                        <input id="code" type="text" name="code" class="form-control" value="{entity_organisation.code}" >
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label" for="">Organisation Type</label>
+                                    <div class="col-md-9">
+                                        {selectbox_entity_organisation}
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label" required for="code">{_('Organisation Name')}</label>
+                                    <div class="col-md-9">
+                                        <input id="name" type="text" name="name" class="form-control" value="{entity_organisation.name}"required='true'>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label" required for="code">{_('Tax Number')}</label>
+                                    <div class="col-md-9">
+                                        <input id="tax_number" type="text" name="tax_number" class="form-control" value="{entity_organisation.tax_number}"required='true'>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label" required for="code">{_('Registration Number')}</label>
+                                    <div class="col-md-9">
+                                        <input id="registration_number" type="text" name="registration_number" class="form-control" value="{entity_organisation.registration_number}"required='true'>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label" required for="code">{_('Regulatory Number')}</label>
+                                    <div class="col-md-9">
+                                        <input id="financial_regulatory_number" type="text" name="financial_regulatory_number" class="form-control" value="{entity_organisation.financial_regulatory_number}"required='true'>
+                                    </div>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        return html
+
+    @expose()
+    def save_edit_entity_organisation(self, *args, **kwargs):
+        entity_organisation_id = kwargs.get('entity_organisation_id', None)
+        if not entity_organisation_id: return False
+
+        this = EntityOrganisation.by_id(entity_organisation_id)
+        if not this: return False
+
+        this.code = kwargs.get('code', None)
+        this.name = kwargs.get('name', None)
+        this.tax_number = kwargs.get('tax_number', None)
+        this.registration_number = kwargs.get('registration_number', None)
+        this.financial_regulatory_number = kwargs.get('financial_regulatory_number', None)
+        this.entity_organisation_type_id = kwargs.get('entity_organisation_type_id', None)
+        DBSession.flush()
+        return True
+
+    def save_new_entity_organisation_client(self, *args, **kwargs):
+        usernow = request.identity.get('user', None)
+        monthly = TYPEUTIL.get_id_of_name('billing_frequency_type', 'monthly')
+        this = EntityOrganisationClient()
+        this.entity_organisation_id = kwargs.get('entity_organisation_id', None)
+        this.billing_frequency_type_id = kwargs.get('billing_frequency_type_id', monthly)
+        this.added_by = usernow.id
+        DBSession.add(this)
+        DBSession.flush()
+        return this.id
+
+    @expose()
+    def get_edit_organisation_address_html(self, *args, **kwargs):
+        entity_organisation = kwargs.get('entity_organisation', None)
+        if not entity_organisation:
+            log.warning('Unable to get EntityOrganisation')
+            return ''
+
+        entity_id = kwargs.get('entity_id', None)
+        if not entity_id:
+            entity_id = entity_organisation.entity_id
+
+        postal_address = DBSession.query(EntityAddress). \
+                filter(EntityAddress.entity_id == entity_id). \
+                filter(EntityAddress.entity_address_type_id == POSTAL). \
+                first()
+
+        street_address = DBSession.query(EntityAddress). \
+                filter(EntityAddress.entity_id == entity_id). \
+                filter(EntityAddress.entity_address_type_id == STREET). \
+                first()
+
+        dropdown_country_postal = self.get_selectbox_country(**{'selected': 207})
+        dropdown_region_postal = self.get_selectbox_region(**{'selected': postal_address.region_id if postal_address else None})
+
+        dropdown_country_street = self.get_selectbox_country(**{'selected': 207})
+        dropdown_region_street = self.get_selectbox_region(**{'selected': street_address.region_id if street_address else None})
+
+        postal_address_line = ''
+        postal_city = ''
+        postal_code = ''
+        if postal_address:
+            postal_address_line = postal_address.address_line
+            postal_city = postal_address.city
+            postal_code = postal_address.postal_code
+
+        street_address_line = ''
+        street_city = ''
+        street_code = ''
+        if street_address:
+            street_address_line = street_address.address_line
+            street_city = street_address.city
+            street_code = street_address.postal_code
+
+        html = f"""
+        <div class="row">
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="row d-flex">
+                            <div class="col-md-6">
+                                <h4 class="card-title">{_('Postal Address')}</h4>
+                            </div>
+                            <div class="col-md-6 text-right">
+                                <button id='save_postal_address' class="btn btn-primary">Save</button>
+                            </div>
+                        </div>
+                        <hr>
+                    </div>
+                    <div class="card-body">
+                        <form id="form_postal_address">
+                            <div class="row">
+                                <input type="hidden" id="address_type_id" name="address_type_id" class="form-control" value="{POSTAL}"/>
+                                <input type="hidden" id="entity_organisation_id" name="entity_organisation_id" class="form-control" value="{entity_organisation.id}"/>
+                                <input type="hidden" id="entity_id" name="entity_id" class="form-control" value="{entity_organisation.entity_id}"/>
+                                <div class="col-md-12">
+                                    <div class="form-group row">
+                                        <label class="col-md-3 col-form-label">Address Line</label>
+                                        <div class="col-md-9">
+                                            <input type="text" id= "address_line" class="form-control" maxlength='255' name="address_line" value='{postal_address_line}'>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-md-12">
+                                    <div class="form-group row">
+                                        <label class="col-md-3 col-form-label">{_('City')}</label>
+                                        <div class="col-md-9">
+                                            <input type="text" class="form-control" maxlength='255' name="city"  id="city" value='{postal_city}'>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-md-12">
+                                    <div class="form-group row">
+                                        <label class="col-md-3 col-form-label">{_('Postal Code')}</label>
+                                        <div class="col-md-9">
+                                            <input type="text" class="form-control" maxlength='255' id="postal_code" name="postal_code" value='{postal_code}'>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-md-12">
+                                    <div class="form-group row">
+                                        <label class="col-md-3 col-form-label">{_('Country')}</label>
+                                        <div class="col-md-9">
+                                            {dropdown_country_postal}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-md-12">
+                                    <div class="form-group row">
+                                        <label class="col-md-3 col-form-label">{_('Region')}</label>
+                                        <div class="col-md-9">
+                                            {dropdown_region_postal}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div id="div_district"></div>
+                            <div id="div_centre"></div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="row d-flex">
+                            <div class="col-md-6">
+                                <h4 class="card-title">{_('Street Address')}</h4>
+                            </div>
+                            <div class="col-md-6 text-right">
+                                <button id='save_street_address' class="btn btn-primary">Save</button>
+                            </div>
+                        </div>
+                        <hr>
+                    </div>
+                    <div class="card-body">
+                        <form id="form_street_address">
+                            <div class="row">
+                                <input type="hidden" id="address_type_id" name="address_type_id" class="form-control" value="{STREET}"/>
+                                <input type="hidden" id="entity_organisation_id" name="entity_organisation_id" class="form-control" value="{entity_organisation.id}"/>
+                                <input type="hidden" id="organisation_id" name="organisation_id" class="form-control" value="{entity_organisation.id}"/>
+                                <input type="hidden" id="entity_id" name="entity_id" class="form-control" value="{entity_organisation.entity_id}"/>
+                                <div class="col-md-12">
+                                    <div class="form-group row">
+                                        <label class="col-md-3 col-form-label">Address Line</label>
+                                        <div class="col-md-9">
+                                            <input type="text" id= "address_line" class="form-control" maxlength='255' name="address_line" value='{street_address_line}'>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-md-12">
+                                    <div class="form-group row">
+                                        <label class="col-md-3 col-form-label">{_('City')}</label>
+                                        <div class="col-md-9">
+                                            <input type="text" class="form-control" maxlength='255' name="city"  id="city" value='{street_city}'>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-md-12">
+                                    <div class="form-group row">
+                                        <label class="col-md-3 col-form-label">{_('Postal Code')}</label>
+                                        <div class="col-md-9">
+                                            <input type="text" class="form-control" maxlength='255' id="postal_code" name="postal_code" value='{street_code}'>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-md-12">
+                                    <div class="form-group row">
+                                        <label class="col-md-3 col-form-label">{_('Country')}</label>
+                                        <div class="col-md-9">
+                                            {dropdown_country_street}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-md-12">
+                                    <div class="form-group row">
+                                        <label class="col-md-3 col-form-label">{_('Region')}</label>
+                                        <div class="col-md-9">
+                                            {dropdown_region_street}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div id="div_district"></div>
+                            <div id="div_centre"></div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        return html
+
+    @expose()
+    def get_edit_organisation_contact_html(self, *args, **kwargs):
+        entity_organisation = kwargs.get('entity_organisation')
+        dbase_query = EntityContact.by_attr_all('entity_id', entity_organisation.entity_id)
+        outputlist = []
+        img_active = "<img src='/images/icon_check.png' />"
+        img_inactive = "<img src='/images/icon_cross.png' />"
+        for item in dbase_query:
+            entity_contact_type = EntityContactType.by_attr_first("id", item.entity_contact_type_id)
+            outputlist.append({
+                'name': f"<div class='edit edit_contact' entity_id='{entity_organisation.entity_id}' entity_organisation_id='{entity_organisation.id}' contact_id='{item.id}'>{item.name}</div>",
+                'value': item.value,
+                'type': entity_contact_type.name,
+                'prefeered':  img_active if item.preferred else img_inactive,
+            })
+        dbcolumnlist = [
+            'name',
+            'type',
+            'value',
+            'prefeered'
+        ]
+        theadlist = [
+            'Name',
+            'Type',
+            'Value',
+            'Preferred'
+        ]
+        tdclasslist = [
+            'action_link',
+            'text-center',
+            'text-center',
+            'text-right',
+        ]
+        contacttable = build_html_table(outputlist, dbcolumnlist, theadlist, "contact_details", tdclasslist)
+        html = f"""
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="row d-flex">
+                            <div class="col-md-6">
+                                <h4 class="card-title">Contacts</h4>
+                            </div>
+                            <div class="col-md-6 text-right">
+                                <button id="create_new_contact" entity_organisation_id="{entity_organisation.id}"
+                                    entity_id='{entity_organisation.entity_id}' class="btn btn-primary ml-auto">Create New Contact</button>
+                            </div>
+                        </div>
+                        <hr>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            {contacttable}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        return html
+
+    @expose()
+    def get_modal_new_contact(self, *args, **kwargs):
+        entity_organisation_id = kwargs.get('entity_organisation_id', None)
+        entity_id = kwargs.get('entity_id', None)
+
+        dropdown_contact = self.get_selectbox_contact()
+        html = f"""
+        <div class="modal fade" id="dialog_new_contact" tabindex="-1" role="dialog" aria-labelledby="mytbl_system_documentLabel" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <div class="col-md-6">
+                            <h4 class="card-title">New Contact</h4>
+                        </div>
+                    </div>
+                    <div class="modal-body">
+                        <form id='form_new_contact'>
+                            <div style='display: none' class="col-md-12">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label" required for="organisation_id">ID</label>
+                                    <div class="col-md-9">
+                                        <input id="entity_organisation_id" type="text" name="entity_organisation_id" value="{entity_organisation_id}" class="form-control" required='true'>
+                                        <input id="entity_id" type="text" name="entity_id" value="{entity_id}" class="form-control" required='true'>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-12">
+                                <div class="form-group row">
+                                    <label class="col-md-4 col-form-label" required for="code">{_('Contact Type ')}</label>
+                                    <div class="col-md-8">
+                                        {dropdown_contact}
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-12">
+                                <div class="form-group row">
+                                    <label class="col-md-4 col-form-label" required for="value">{_('Name')}</label>
+                                    <div class="col-md-8">
+                                        <input id="name" type="text" name="name" class="form-control" required='true'>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-12">
+                                <div class="form-group row">
+                                    <label class="col-md-4 col-form-label" required for="value">{_('Number')}</label>
+                                    <div class="col-md-8">
+                                        <input id="value" type="text" name="value" class="form-control" required='true'>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-12">
+                                <div class="form-group row">
+                                    <label class="col-4 col-form-label" for="active" required>Use By Default</label>
+                                    <div class="col-8">
+                                        <div class="form-check">
+                                            <label class="form-check-label">
+                                                <input class="form-check-input" type="checkbox" name="preferred" id="preferred" >
+                                                <span class="form-check-sign"></span>
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                    <div class="modal-footer">
+                        <button id='save_new_contact' class="btn btn-primary">Save</button>
+                        <button class="btn btn-outline-primary contact_back">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        return html
+
+    @expose()
+    def get_modal_edit_contact(self, *args, **kwargs):
+        entity_organisation_id = kwargs.get('entity_organisation_id')
+        entity_id = kwargs.get('entity_id')
+        contact_id = kwargs.get('contact_id')
+        this = EntityContact.by_id(contact_id)
+        if not this: return ''
+        checked = 'checked' if this.bln_active else ''
+        preferred = 'checked' if this.preferred else ''
+        dropdown_contact = self.get_selectbox_contact(this.entity_contact_type_id)
+        html = f"""
+        <div class="modal fade" id="dialog_edit_contact" tabindex="-1" role="dialog" aria-labelledby="mytbl_system_documentLabel" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <div class="col-md-6">
+                            <h4 class="card-title">Edit Contact</h4>
+                        </div>
+                    </div>
+                    <div class="modal-body">
+                        <form id='form_edit_contact'>
+                            <div style='display: none' class="col-md-12">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label" required for="organisation_id">ID</label>
+                                    <div class="col-md-9">
+                                        <input id="entity_organisation_id" type="text" name="entity_organisation_id" value="{entity_organisation_id}" class="form-control" required='true'>
+                                        <input id="entity_id" type="text" name="entity_id" value="{entity_id}" class="form-control" required='true'>
+                                        <input id="contact_id" type="text" name="contact_id" value="{contact_id}" class="form-control" required='true'>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-12">
+                                <div class="form-group row">
+                                    <label class="col-md-4 col-form-label" required for="code">{_('Contact Type ')}</label>
+                                    <div class="col-md-8">
+                                        {dropdown_contact}
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-12">
+                                <div class="form-group row">
+                                    <label class="col-md-4 col-form-label" required for="value">{_('Name')}</label>
+                                    <div class="col-md-8">
+                                        <input id="value" type="text" name="name" value="{this.name}" class="form-control" required='true'>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-12">
+                                <div class="form-group row">
+                                    <label class="col-md-4 col-form-label" required for="value">{_('Value')}</label>
+                                    <div class="col-md-8">
+                                        <input id="value" type="text" name="value" value="{this.value}" class="form-control" required='true'>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-12">
+                                <div class="form-group row">
+                                    <label class="col-4 col-form-label" for="active" required>{_('Preferred')}</label>
+                                    <div class="col-8">
+                                        <div class="form-check">
+                                            <label class="form-check-label">
+                                                <input class="form-check-input" type="checkbox" name="preferred" id="preferred" {preferred}/>
+                                                <span class="form-check-sign"></span>
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div><div class="col-md-12">
+                                <div class="form-group row">
+                                    <label class="col-4 col-form-label" for="active" required>Active</label>
+                                    <div class="col-8">
+                                        <div class="form-check">
+                                            <label class="form-check-label">
+                                                <input class="form-check-input" type="checkbox" name="active" id="active" {checked}/>
+                                                <span class="form-check-sign"></span>
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                    <div class="modal-footer">
+                        <button id='save_edit_contact' class="btn btn-primary">Save</button>
+                        <button class="btn btn-outline-primary contact_edit_back">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        return html
+
+    @expose()
+    def save_new_organisation_contact(self, *args, **kwargs):
+        entity_id = kwargs.get('entity_id')
+
+        entity_organisation = EntityOrganisation.by_attr_first("entity_id", entity_id)
+
+        usernow = request.identity.get('user', None)
+        this = EntityContact()
+        this.entity_id = entity_organisation.entity_id
+        this.entity_contact_type_id = kwargs.get('entity_contact_type_id', None)
+        this.value = kwargs.get('value', None)
+        this.name = kwargs.get('name', None)
+        if kwargs.get('preferred', None): this.preferred = True
+        this.added_by = usernow.id
+        DBSession.add(this)
+        DBSession.flush()
+        return True
+
+    @expose()
+    def save_edit_organisation_contact(self, *args, **kwargs):
+        entity_id = kwargs.get('entity_id')
+        usernow = request.identity.get('user', None)
+        this = EntityContact.by_id(kwargs.get('contact_id'))
+        if not this: return False
+
+        this.name = kwargs.get('name', None)
+        this.value = kwargs.get('value', None)
+        this.entity_contact_type_id = kwargs.get('entity_contact_type_id', None)
+        if not kwargs.get('active', None): this.bln_active = False
+        if kwargs.get('preferred', None): this.preferred = True
+        DBSession.flush()
+        return True
+
+    @expose()
+    def get_edit_organisation_bank_html(self, *args, **kwargs):
+        entity_organisation = kwargs.get('entity_organisation')
+        entity = kwargs.get('entity')
+
+        bank_id = 0
+        currency_id= 0
+        bank_branch_id = 0
+        bank_account_id = 0
+        account_holder = ''
+        account_number = ''
+        iban = ''
+
+        entity_bank = EntityBankAccount.by_attr_first("entity_id", entity_organisation.entity_id)
+        if entity_bank:
+            bank_id = entity_bank.bank_id
+            currency_id = entity_bank.currency_id
+            bank_account_id = entity_bank.id
+            account_number = entity_bank.account_number
+            account_holder = entity_bank.account_holder
+            iban = entity_bank.iban
+
+            branch = BankBranch.by_attr_first('bank_id', bank_id)
+            if branch:
+                bank_branch_id = branch.id
+
+        dropdown_bank = self.get_selectbox_bank(**{'selected': bank_id})
+        dropdown_currency = self.get_selectbox_currency(**{'selected': currency_id})
+        selectbox_code = self.get_selectbox_bank_branch(**{
+            'bank_id': bank_id,
+            'selected': bank_branch_id
+        })
+
+        html = f"""
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="row d-flex">
+                            <div class="col-md-6">
+                                <h4 class="card-title">{_('Bank Details')}</h4>
+                            </div>
+                            <div class="col-md-6  text-right">
+                                <button id='save_bank' class="btn btn-primary">Save</button>
+                            </div>
+                        </div>
+                        <hr>
+                    </div>
+                    <div class="card-body">
+                        <form id="form_organisation_bank">
+                            <input type="hidden" id="bank_account_id" name="bank_account_id" class="form-control" value="{bank_account_id}"/>
+                            <input type="hidden" id="entity_organisation_id" name="entity_organisation_id" class="form-control" value="{entity_organisation.id}"/>
+                            <input type="hidden" id="entity_id" name="entity_id" class="form-control" value="{entity_organisation.entity_id}"/>
+                            <div  class="row">
+                                <div class="col-md-6">
+                                    <div class="col-md-12">
+                                        <div class="form-group row">
+                                            <label class="col-md-3 col-form-label">Bank</label>
+                                            <div class="col-md-9">
+                                                {dropdown_bank}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-12">
+                                        <div class="form-group row">
+                                            <label class="col-md-3 col-form-label">Account number</label>
+                                            <div class="col-md-9">
+                                                <input type="text" class="form-control" maxlength='255' name="account_number"  id="account_number" value='{account_number}'>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-12">
+                                        <div class="form-group row">
+                                            <label class="col-md-3 col-form-label">Currency</label>
+                                            <div class="col-md-9">
+                                                {dropdown_currency}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="col-md-12">
+                                        <div class="form-group row">
+                                            <label class="col-md-3 col-form-label">Branch</label>
+                                            <div class="col-md-9" id="div_bank_branch">
+                                                {selectbox_code}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-12">
+                                        <div class="form-group row">
+                                            <label class="col-md-3 col-form-label">Account Holder</label>
+                                            <div class="col-md-9">
+                                                <input type="text" class="form-control" maxlength='255' name="account_holder" id="account_holder" value='{account_holder}'>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-12">
+                                        <div class="form-group row">
+                                            <label class="col-md-3 col-form-label">IBAN</label>
+                                            <div class="col-md-9">
+                                                <input type="text" class="form-control" maxlength='255' name="iban"  id="iban" value='{iban}'>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        javascript = """
+        <script nonce='1234'>
+            $("#bank_id").change(function () {
+                var bank_id = $('#bank_id option:selected').val();
+                var kwargs = {'bank_id': bank_id, };
+                $('#div_bank_branch').load('/common/get_selectbox_bank_branch', kwargs, function(data){
+                    return false;
+                });
+            });
+        </script>
+        """
+        return html+javascript
+
+    @expose()
+    def save_or_edit_address(self, *args, **kwargs):
+        address_type_id = kwargs.get('address_type_id', 0)
+        usernow = request.identity.get('user', None)
+        entity_organisation_id = kwargs.get('entity_organisation_id', None)
+
+        org = EntityOrganisation.by_id(entity_organisation_id)
+        if not org:
+            return False
+
+        address_line = kwargs.get('address_line', '')
+        city = kwargs.get('city', '')
+        postal_code = kwargs.get('postal_code', '')
+        country_id = kwargs.get('country_id', 0)
+        region_id = kwargs.get('region_id', 0)
+        district_id = kwargs.get('district_id', 0)
+        centre_id = kwargs.get('centre_id', 0)
+        country_id = kwargs.get('country_id', 0)
+        latitude = 0
+        longitude = 0
+
+        address = DBSession.query(EntityAddress).\
+            filter(EntityAddress.entity_id==org.entity_id).\
+            filter(EntityAddress.entity_address_type_id==address_type_id).\
+            filter(EntityAddress.bln_active==True).\
+            first()
+        if address:
+            address.address_line = address_line
+            address.city = city
+            address.postal_code = postal_code
+            address.region_id = region_id
+            address.district_id = district_id
+            address.centre_id = centre_id
+            address.country_id = country_id
+            address.latitude = latitude
+            address.longitude = longitude
+            DBSession.flush()
+
+        else:
+            address = EntityAddress()
+            address.entity_id = org.entity_id
+            address.entity_address_type_id = address_type_id
+            address.address_line = address_line
+            address.city = city
+            address.postal_code = postal_code
+            address.region_id = region_id
+            address.district_id = district_id
+            address.centre_id = centre_id
+            address.country_id = country_id
+            address.latitude = latitude
+            address.longitude = longitude
+            DBSession.add(address)
+            DBSession.flush()
+        return True
+
+    @expose()
+    def save_or_edit_bank(self, *args, **kwargs):
+        usernow = request.identity.get('user', None)
+        entity_organisation_id = kwargs.get('entity_organisation_id')
+        commercial = TYPEUTIL.get_id_of_name('entity_bank_account_type', 'commercial')
+
+        org = EntityOrganisation.by_id(entity_organisation_id)
+        if not org:
+            return False
+
+        bank_id = kwargs.get('bank_id', None)
+        swift_code = '000000000000000'
+        account_number = kwargs.get('account_number', None)
+        account_holder = kwargs.get('account_holder', None)
+        bank_branch_id = kwargs.get('bank_branch_id', None)
+        branch_code = ''
+
+        if bank_branch_id:
+            bank_branch = BankBranch.by_id(bank_branch_id)
+            branch_code = bank_branch.branch_code
+
+        iban = kwargs.get('iban', None)
+        currency_id = kwargs.get('currency_id', None)
+
+        bank = EntityBankAccount.by_attr_first('entity_id', org.entity_id)
+        if bank:
+            bank.bank_account_type_id = commercial
+            bank.bank_id = bank_id
+            bank.swift_code = swift_code
+            bank.account_number = account_number
+            bank.account_holder = account_holder
+            bank.branch_code = branch_code
+            bank.currency_id = currency_id
+            bank.iban = iban
+            DBSession.flush()
+
+        else:
+            bank = EntityBankAccount()
+            bank.entity_id = org.entity_id
+            bank.bank_id = bank_id
+            bank.bank_account_type_id = commercial
+            bank.swift_code = swift_code
+            bank.account_number = account_number
+            bank.account_holder = account_holder
+            bank.branch_code = branch_code
+            bank.currency_id = currency_id
+            bank.iban = iban
+            DBSession.add(bank)
+            DBSession.flush()
+        return True
+
+    @expose()
+    def search_family_member(self, *args, **kwargs):
+
+        searchphrase = self.get_searchphrase(**kwargs).lower()
+
+        outputdict = {'success': False}
+        outputdict['status'] = 'danger'
+        outputdict['data'] = 'Nothing to search.'
+        outputdict['redirect_url'] = '/members/edit_member'
+        outputdict['family_member'] = True
+        if not searchphrase:
+            return json.dumps(outputdict)
+        outputdict['identity_number'] = searchphrase
+
+        identity = EntityPersonIdentity.by_attr_first('value', searchphrase)
+        if not identity:
+            return json.dumps(outputdict)
+
+        entity_person = EntityPerson.by_id(identity.entity_person_id)
+
+        if not entity_person:
+            return json.dumps(outputdict)
+
+        outputdict = {
+            'success' : True,
+            'surname' : entity_person.surname,
+            'entity_person_id' : entity_person.id,
+            'firstname' : entity_person.firstname,
+        }
+        return json.dumps(outputdict)
+
+    @expose()
+    def save_new_organisation_bankaccount(self, *args, **kwargs):
+        usernow = request.identity.get('user', None)
+        this = EntityBankAccount()
+        this.bank_account_id = kwargs.get('bank_account_id', None)
+        this.entity_organisation_id = kwargs.get('entity_organisation_id', None)
+        this.added_by = usernow.id
+        DBSession.add(this)
+        DBSession.flush()
+        return this.id
+
+    @expose()
+    def send_email(self, *args, **kwargs):
+        e = RocketEmailCreator()
+
+        email_address = kwargs.get('email_address', None)
+        subject = kwargs.get('subject', None)
+        message = kwargs.get('message', None)
+
+        e.add_subject(subject)
+        e.add_to_address(email_address)
+        plain_text = f"""
+
+        """
+        e.add_plain_text(plain_text)
+        rich_text = f"""
+        <br/>
+        {message}
+        """
+        e.add_rich_text(rich_text)
+        e.send(False)
+        if not e:
+            return 'false'
+        return 'true'
+
+    def audit_visitor(self, *args, **kwargs):
+        http_user_agent = request.environ.get('HTTP_USER_AGENT', None)
+        query_string = request.environ.get('QUERY_STRING', None)
+
+        url = 'https://api.ipify.org'
+        external_ip_address = get_text_from_url(url)
+        if not external_ip_address:
+            external_ip_address = 'Not Found'
+
+        if len(query_string) > 200:
+            query_string = query_string[:200]
+
+        visitor = Visitor()
+        visitor.http_user_agent = http_user_agent
+        visitor.query_string = query_string
+        visitor.external_ip_address = external_ip_address
+        DBSession.add(visitor)
+        DBSession.flush()
+        return True
+
+    def audit_login(self, *args, **kwargs):
+        if not request.identity:
+            return False
+        usernow = request.identity.get('user', {})
+        login = Login()
+        login.user_id = usernow.id
+        login.logged_in = datetime.now()
+        DBSession.add(login)
+        DBSession.flush()
+        return True
+
+    def audit_logout(self, *args, **kwargs):
+        if not request.identity:
+            return False
+        usernow = request.identity.get('user', {})
+        dbase_query = DBSession.query(Login). \
+                filter(Login.user_id == usernow.id). \
+                filter(Login.bln_logged_out == False). \
+                order_by(Login.added.desc()). \
+                all()
+        for login in dbase_query:
+            login.bln_logged_out = True
+            login.logged_out = datetime.now()
+            DBSession.flush()
+        return True
+
+    def get_forgot_password_html(self, *args, **kwargs):
+        html = f"""
+        <div class="logo">
+            <div class="logo-text">R<span class="orange-o">O</span>CKET</div>
+            <div class="logo-banner"> Insurtech </div>
+        </div>
+        <div class="login-box">
+            <div class="container">
+                <div class="d-flex justify-content-center h-100">
+                    <div class="card">
+                        <div class="card-header"> <h3>Forgot your password?</h3> </div>
+                        <div class="card-body">
+                            <div class="input-group form-group">
+                                <div class="input-group-prepend">
+                                    <span class="input-group-text"><i class="fas fa-envelope"></i></span>
+                                </div>
+                                <input id="email" class="form-control" type="text" name="email" placeholder="your email address" autofocus="autofocus">
+                            </div>
+                            <div class="alert alert-success hidden">
+                                <button type="button" aria-hidden="true" class="close">
+                                    <i class="now-ui-icons ui-1_simple-remove"></i>
+                                </button>
+                                <span><b> Success!</b><br/>Please check your email for further instructions.</span>
+                                <br/><a href="/">Click here to return to log in</a>
+                            </div>
+                            <div class="alert alert-danger hidden">
+                                <button type="button" aria-hidden="true" class="close">
+                                    <i class="now-ui-icons ui-1_simple-remove"></i>
+                                </button>
+                                <span><b> Oops!</b><br/>We did not recognise the address you typed, please retype carefully.</span>
+                                <br/><a href="/">Click here to return to log in</a>
+                            </div>
+                            <div class="form-group">
+                                <button id="reset_password" type="submit" class="btn float-right action_btn">Reset Password</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        return html
+
+    def get_forgot_password_javascript(self, *args, **kwargs):
+        javascript = """
+        $('#reset_password').click(function(){
+            var kwargs = 'email='+$('#email').val();
+            $.post('/useraccess/forgot_password?', kwargs, function(data){
+                if(data === 'true'){
+                    $('.alert-success').removeClass('hidden');
+                    $('.alert-danger').addClass('hidden');
+
+                } else {
+                    $('.alert-danger').removeClass('hidden');
+                    $('.alert-success').addClass('hidden');
+                }
+                return false;
+            })
+        });
+        """
+        return javascript
+
+    @expose()
+    def get_dashboard_html(self):
+        usernow = request.identity.get('user', {})
+
+        role_list = [{'id' : r.id, 'name' : r.name} for r in usernow.roles]
+        role_list = sort_dict_list(role_list, 'name')
+
+        inner_html = '<div class="row">'
+        for role in role_list:
+            id = role.get('id', None)
+            name = role.get('name', None)
+
+            url_name = name.lower().replace(' ', '_')
+            url = f'/common/get_{url_name}_content?role_id={id}'
+
+            inner_html += f"""
+            <div class="col-xl-2 col-lg-3 col-6">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class='ellipsis'>
+                            {name}
+                        </h5>
+                        <hr>
+                    </div>
+                    <div class="card-body dashboard_body ellipsis" url="{url}">
+                    </div>
+                </div>
+            </div>
+            """
+        inner_html += '</div>'
+
+        html = f"""
+        <div class="card">
+            <div class="card-header">
+                <h4 class="card-title">{_('Welcome to Rocket!')}</h4>
+                <hr>
+            </div>
+            <div class="card-content mb-4">
+            </div>
+        </div>
+        {inner_html}
+        """
+        javascript = """
+        <script nonce='1234'>
+            $('.dashboard_body').each(function(){
+                var url = $(this).attr('url');
+                $(this).load(url, function(data){
+                    return false;
+                });
+            });
+        </script>
+        """
+        return html + javascript
+
+    @expose()
+    def get_privacy_html(self):
+        html = """
+        <div class="row">
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header card-header-primary card-header-icon">
+                        <div class="row">
+                            <div class="col-md-4">
+                                <div class="card-icon">
+                                </div>
+                                <h4 class="card-title">Privacy Statement</h4>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-body pt-0">
+                        <div class="material-datatables mt-3">
+                            <h6>
+                                <b>
+                                    Rocket’s commitment to information privacy
+                                </b>
+                            </h6>
+
+                            <br/>
+
+                            <h6>
+                                <b>
+                                    At Rocket, we treat your personal information responsibly
+                                </b>
+                            </h6>
+
+                            <ol>
+                                <li>
+                                    Rocket promises to treat all your personal information carefully and responsibly.
+                                </li>
+                                <li>
+                                    Personal information includes any information that lets Rocket identify you as a unique
+                                    individual, such as your name/s and surname combined with your physical address,
+                                    contact details and/or passport/identity number.
+
+                                </li>
+                                <li>
+
+                                    Personal information (in South Africa) also refers to the personal information that
+                                    uniquely identifies a legal entity, such as the trading name of a company combined with
+                                    the company registration number.
+                                </li>
+                                <li>
+
+                                    Special personal information includes that which details your race or ethnic origin,
+                                    religious and philosophical beliefs, political persuasion, trade union membership, health
+                                    or sex life, biometric information or any criminal behaviour which relates to alleged
+                                    criminal offences or proceedings.
+                                </li>
+                                <li>
+
+                                    Personal information may be given to or collected by Rocket in writing as part of a
+                                    written application form, electronically (email), telephonically, online or via mobile
+                                    applications.
+                                </li>
+                                <li>
+                                    Processing of personal information includes any initial processing that Rocket does
+                                    when we first collect your personal information. It also includes any further and ongoing
+                                    processing that Rocket is allowed to carry out legitimately in terms of the reasons listed
+                                    in paragraph 8 (below). The term ‘processing’ includes collecting, using, altering,
+                                    merging, linking, organising, disseminating, storing, retrieving, disclosing, erasing,
+                                    archiving, destroying or disposing of personal information.
+
+                                </li>
+                            </ol>
+
+                            <h6>
+                                <b>
+                                    Your personal information is an important part of Rocket’s relationship with you.
+                                </b>
+                            </h6>
+
+                            <ol start='7'>
+                                <li>
+                                    Rocket will only collect and process your personal information for the reason you
+                                    provided it to us, or to enable us to comply with the requirements of specific laws that
+                                    we are governed by.
+
+                                </li>
+                                <li>
+                                    Rocket may process your personal information to protect your or our legitimate
+                                    interests. Rocket will not collect and process personal information about you that we do
+                                    not need for this purpose. The general purposes for which Rocket collects and
+                                    processes your personal information include, but are not limited to:
+                                    <ol>
+                                        <li>
+                                            Creating a record of you on our system to verify your identity, provide you with the
+                                            products and/or services you have applied for and then communicate with and keep
+                                            you informed about these products and/or services;
+                                        </li>
+                                        <li>
+                                            Identifying you and verifying your physical address, source of income and similar
+                                            information;
+                                        </li>
+                                        <li>
+                                            Any purpose related to the prevention of crime and/or terrorist activities;
+                                        </li>
+                                        <li>
+                                            Further processing for historical, statistical or research purposes where the
+                                            outcomes will not be published in an identifiable format;
+
+                                        </li>
+                                        <li>
+                                            Providing income tax-related information to tax authorities;
+                                        </li>
+                                        <li>
+                                            For purposes relating to the sale or transfer of any of our businesses, legal entities
+                                            or assets as part of corporate transactions;
+
+                                        </li>
+                                        <li>
+                                            Where you have applied for employment at Rocket, we perform applicant screening
+                                            and background checks;
+                                        </li>
+                                        <li>
+                                            Where you are an Rocket employee (including contractors), we create an
+                                            employment record of you on our system to facilitate continuous monitoring during
+                                            your employment with us;
+                                        </li>
+                                        <li>
+                                            Where you are an Rocket director, we create a record of you as a director on our
+                                            system;
+                                        </li>
+                                        <li>
+                                            Where you’ve been identified as a next of kin by an employee or customer, we
+                                            create a record of you on our system; and
+                                        </li>
+                                        <li>
+                                            Where you are a supplier to Rocket, we process your personal information for due
+                                            diligence, risk assessment, administrative and payment purposes.
+                                        </li>
+                                    </ol>
+                                </li>
+                                <li>
+                                    Furthermore, Rocket will not process your special personal information unless:
+                                    <ol>
+                                        <li>
+                                            You have consented to Rocket processing it;
+                                        </li>
+                                        <li>
+                                            It is necessary to exercise or defend a right or obligation in law;
+                                        </li>
+                                        <li>
+                                            It is necessary to comply with local and/or international legal obligations of public interest;
+                                        </li>
+                                        <li>
+                                            It is for certain historical, research or statistical purposes that would not adversely
+                                            affect your privacy; or
+                                        </li>
+                                        <li>
+                                            You have deliberately made your information public.
+                                        </li>
+                                    </ol>
+                                </li>
+                                <li>
+                                    There are some personal information fields that you have to fill in if you want Rocket to
+                                    provide you with your chosen product and/or service or on-board you as an employee,
+                                    supplier, director or job applicant. This information can be provided in writing,
+                                    electronically or telephonically, but it must be accurate and complete. These fields are
+                                    indicated by an asterisk (or as otherwise indicated) on the respective forms/websites. If
+                                    Rocket does not receive the necessary personal information, we will not be able to
+                                    continue with your application. If you are already a(n)
+                                    customer/employee/supplier/director and Rocket asks you for this information and you
+                                    do not provide it, Rocket will have to suspend the provision of the product and/or services for a period of time,
+                                    or as the case may be, even terminate our relationship with you.
+                                </li>
+                                <li>
+                                    In most cases, personal information will be collected directly from you, but there may be
+                                    other instances when Rocket will collect personal information from other sources. These
+                                    may include public records, places where you may already have made your personal
+                                    information public (for example, on social media), credit bureaus, or individuals/directors
+                                    whom you have appointed as your representative, where you are a corporate entity.
+                                    Rocket will only collect your personal information from other sources where we are
+                                    legally entitled or obliged to do so, and you are entitled to ask Rocket which sources
+                                    they used to collect your personal information.
+                                </li>
+                                <li>
+                                    For the purposes outlined in paragraph 8 (above), Rocket will, in most instances, collect
+                                    and process your personal information internally. However, there are times when
+                                    Rocket needs to outsource these functions to third parties, either within Rocket or
+                                    external to Rocket, including parties in other countries. Where your personal information
+                                    is shared internally within Rocket, such sharing will be carried out only for the purposes
+                                    outlined in paragraph 8 (above). Rocket may also need to share your personal
+                                    information with external organisations, such as credit bureaus, tax authorities or other
+                                    regulatory or industry bodies, so that we can meet our due diligence or regulatory
+                                    requirements. We may need to share your personal information with our business
+                                    partners or counter-parties, where we are involved in corporate transactions relating to
+                                    the sale or transfer of any of our businesses, legal entities or assets. Rocket will not
+                                    share your personal information with third parties who do not need your personal
+                                    information, or where Rocket is not legally permitted to do so. When Rocket decides to
+                                    transfer your personal information to third parties, we will only provide it to organisations
+                                    that have the same data privacy policies as Rocket or those who are subject to laws
+                                    relating to the processing of personal information that are similar to those that apply to
+                                    Rocket.
+                                </li>
+                                <li>
+                                    There may be instances where Rocket will process your personal information through a
+                                    secure automated tool, or perform profiling resulting in a decision that may affect you
+                                    significantly. If you are unhappy about the outcome of such a decision, please contact:
+                                    <ol>
+                                        <li>
+                                            your Local Customer Service centre (for customers);
+                                        </li>
+                                        <li>
+                                            your resourcing consultant (for job applicants and employees);
+                                        </li>
+                                        <li>
+                                            your supplier relationship manager (for suppliers); or
+                                        </li>
+                                        <li>
+                                            Rocket’s head office (for directors of Rocket-owned companies).
+                                        </li>
+                                    </ol>
+                                </li>
+                            </ol>
+
+                            <h6>
+                                <b>
+                                    Rocket respects your rights
+                                </b>
+                            </h6>
+
+                            <ol start='14'>
+                                <li>
+                                    As a customer, if you have opted out of receiving electronic communications (on media
+                                    such as SMS, email or automated calling machines), Rocket will not contact you using
+                                    electronic media. However, if you are receiving marketing via electronic media, you have
+                                    the right to opt out at any time by following the instructions on the marketing
+                                    material received. Rocket will continue to market to you using electronic means until
+                                    such time you have opted out.
+                                </li>
+                                <li>
+                                    As a non-customer, if you would like to receive information from Rocket through
+                                    electronic media, please submit your details to Rocket via our website.
+                                </li>
+                                <li>
+                                    If you have a complaint relating to the protection of your personal information, including
+                                    the way in which it has been collected or processed by Rocket, please contact us using
+                                    the contact details as listed below. If you have not had your complaint dealt with
+                                    satisfactorily, you may lodge a complaint with your local privacy regulator in terms of
+                                    applicable privacy laws.
+                                </li>
+                            </ol>
+
+                            <h6>
+                                <b>
+                                    Right to amend this privacy statement
+                                </b>
+                            </h6>
+
+                            <p>
+                            Rocket reserves the right to change this statement at any time. All changes to this
+                            statement will be posted online. Unless otherwise stated, the current version
+                            shall supersede and replace all previous versions of this statement.
+                            </p>
+
+                            <h6>
+                                <b>
+                                    Contact details
+                                </b>
+                            </h6>
+
+                            <p>
+                            <b>
+                                Email
+                            </b>
+                            support@rocketinsurtech.com
+                            <p>
+
+                            <p>
+                                <b>
+                                    Website
+                                </b>
+                                <a href='http://www.rocketinsurtech.com' target='_blank'>
+                                    www.rocketinsurtech.com
+                                </a>
+                            <p>
+
+                            <h6>
+                                <b>
+                                    Cookie Policy
+                                </b>
+                            </h6>
+
+                            <p>
+                            By using this website, you agree to our use of cookies.
+                            These are in turn used to provide you with a great experience and to help our website run effectively.
+                            </p>
+
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        return html
+
+    @expose()
+    def get_terms_html(self):
+        html = f"""
+        """
+        return html
+
+    @expose()
+    def get_developer_content(self, *args, **kwargs):
+        role_id = kwargs.get('role_id', None)
+        role = Role.by_id(role_id)
+        return str(role.description)
+
+    @expose()
+    def get_batch_import_content(self, *args, **kwargs):
+        role_id = kwargs.get('role_id', None)
+        role = Role.by_id(role_id)
+        return str(role.description)
+
+    @expose()
+    def get_administrator_content(self, *args, **kwargs):
+        role_id = kwargs.get('role_id', None)
+        role = Role.by_id(role_id)
+        return str(role.description)
+
+    @expose()
+    def get_agent_content(self, *args, **kwargs):
+        role_id = kwargs.get('role_id', None)
+        role = Role.by_id(role_id)
+        return str(role.description)
+
+    @expose()
+    def get_business_process_content(self, *args, **kwargs):
+        role_id = kwargs.get('role_id', None)
+        role = Role.by_id(role_id)
+        return str(role.description)
+
+    @expose()
+    def get_catalog_maintenance_content(self, *args, **kwargs):
+        role_id = kwargs.get('role_id', None)
+        role = Role.by_id(role_id)
+        return str(role.description)
+
+    @expose()
+    def get_claim_approval_content(self, *args, **kwargs):
+        role_id = kwargs.get('role_id', None)
+        role = Role.by_id(role_id)
+        return str(role.description)
+
+    @expose()
+    def get_claim_registration_content(self, *args, **kwargs):
+        role_id = kwargs.get('role_id', None)
+        role = Role.by_id(role_id)
+        return str(role.description)
+
+    @expose()
+    def get_claim_management_content(self, *args, **kwargs):
+        role_id = kwargs.get('role_id', None)
+        role = Role.by_id(role_id)
+        return str(role.description)
+
+    @expose()
+    def get_contact_centre_content(self, *args, **kwargs):
+        role_id = kwargs.get('role_id', None)
+        role = Role.by_id(role_id)
+        return str(role.description)
+
+    @expose()
+    def get_dms_administrator_content(self, *args, **kwargs):
+        role_id = kwargs.get('role_id', None)
+        role = Role.by_id(role_id)
+        return str(role.description)
+
+    @expose()
+    def get_dms_user_content(self, *args, **kwargs):
+        role_id = kwargs.get('role_id', None)
+        role = Role.by_id(role_id)
+        return str(role.description)
+
+    @expose()
+    def get_financial_reports_content(self, *args, **kwargs):
+        role_id = kwargs.get('role_id', None)
+        role = Role.by_id(role_id)
+        return str(role.description)
+
+    @expose()
+    def get_membership_content(self, *args, **kwargs):
+        role_id = kwargs.get('role_id', None)
+        role = Role.by_id(role_id)
+        return str(role.description)
+
+    @expose()
+    def get_policy_management_content(self, *args, **kwargs):
+        role_id = kwargs.get('role_id', None)
+        role = Role.by_id(role_id)
+        return str(role.description)
+
+    @expose()
+    def get_policy_registration_content(self, *args, **kwargs):
+        role_id = kwargs.get('role_id', None)
+        role = Role.by_id(role_id)
+        return str(role.description)
+
+    @expose()
+    def get_product_setup_content(self, *args, **kwargs):
+        role_id = kwargs.get('role_id', None)
+        role = Role.by_id(role_id)
+        return str(role.description)
+
+    @expose()
+    def get_sales_content(self, *args, **kwargs):
+        role_id = kwargs.get('role_id', None)
+        role = Role.by_id(role_id)
+        return str(role.description)
+
+    @expose()
+    def get_statistical_reports_content(self, *args, **kwargs):
+        role_id = kwargs.get('role_id', None)
+        role = Role.by_id(role_id)
+        return str(role.description)
+
+    @expose()
+    def get_users_and_access_content(self, *args, **kwargs):
+        role_id = kwargs.get('role_id', None)
+        role = Role.by_id(role_id)
+        return str(role.description)
+
+    @expose()
+    def get_appointments_content(self, *args, **kwargs):
+        role_id = kwargs.get('role_id', None)
+        role = Role.by_id(role_id)
+        return str(role.description)
+
+    @expose()
+    def get_call_center_content(self, *args, **kwargs):
+        role_id = kwargs.get('role_id', None)
+        role = Role.by_id(role_id)
+        return str(role.description)
+
+    @expose()
+    def get_call_center_admin_content(self, *args, **kwargs):
+        role_id = kwargs.get('role_id', None)
+        role = Role.by_id(role_id)
+        return str(role.description)
+
+    @expose()
+    def get_collections_content(self, *args, **kwargs):
+        role_id = kwargs.get('role_id', None)
+        role = Role.by_id(role_id)
+        return str(role.description)
+
+    @expose()
+    def get_campaign_content(self, *args, **kwargs):
+        role_id = kwargs.get('role_id', None)
+        role = Role.by_id(role_id)
+        return str(role.description)
+
+    @expose()
+    def get_footer(self, *args, **kwargs):
+        now = datetime.now()
+        current_year = now.strftime('%Y')
+        html = f"""
+        <div class="copyright text-white" id="copyright">
+            <a class="text-white" href="/privacy" target="_blank">Privacy policy</a>
+            &copy; {current_year} Powered by
+            <a class="text-white" href="http://www.rocketinsurtech.com" target="_blank">rocket insurtech</a>.
+        </div>
+        """
+        return html
+
+    def get_checkbox_active_boolean(self, active=True, *args, **kwargs):
+        checked = 'checked' if active else ''
+        html = f"""
+        <div class="col-md-12">
+            <div class="form-group row">
+                <label class="col-3 col-form-label" for="active" required>Active</label>
+                <div class="col-9">
+                    <div class="form-check">
+                        <label class="form-check-label">
+                            <input class="form-check-input" type="checkbox" name="active" id="active" {checked}/>
+                            <span class="form-check-sign"></span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        return html

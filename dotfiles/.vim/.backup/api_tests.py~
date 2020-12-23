@@ -1,0 +1,1248 @@
+#!/bin/python
+
+import base64
+import requests
+
+#THIS_URL = 'http://localhost:9090/'
+THIS_URL = 'https://gateway.calabashpay.co.za/'
+
+def post_to_url(url=None, request=None):
+    if not url:
+        return False
+
+    print(url)
+    headers = {
+        #'GUID' : '85dcac9157c5403599b90bbe60fcb2fc', # Calabash Mobile
+        'GUID' : '1e95e6e426974386a7494a4a7681b098',  # Some other dono what it is
+    }
+    #print(request)
+    print(headers)
+    r = requests.post(url, request, headers=headers)
+    return r.json()
+
+def preregister_student():
+    url = THIS_URL + 'preregister_student'
+    request = {
+        'title': 'Mx.',
+        'name': 'Jude',
+        'surname': 'Kara',
+        'email': 'jude@dude.com',
+
+        # EITHER NOT BOTH
+        'student_number': 'fake_student1',
+        #'employee_number': 'fake_emp1',
+
+        # EITHER NOT BOTH
+        #'identity_number': '8710015160084',
+        'passport_number': 'identifiier',
+    }
+    return post_to_url(url, request)
+
+def register_user():
+    encoding = None
+    image_path = '/home/camilla/Pictures/heavy.jpg'
+    with open(image_path, 'rb') as imgfile:
+        encoding = base64.b64encode(imgfile.read())
+    if not encoding:
+        return False
+
+    url = THIS_URL + 'register_user'
+    request = {
+        # User data
+        'username': 'ken',
+        'password': '1234',
+        'mobile_number': '0737034769',
+        'student_number': 'asdf', # must match what was used in preregister_student
+
+        # Address data
+        'address_line1': 'de beers avenue',
+        'address_line2': 'this is optional', # optional
+        'address_suburb': 'somerset west',
+        'address_city': 'cape town',
+        'address_province': 'western cape',
+        'address_postal_code': '7130',
+
+        # Image data
+        'photo_b64' : encoding,
+        'photo_filename' : 'heavy.jpg',
+
+        'document_b64' : encoding,
+        'document_filename' : 'heavy.jpg',
+
+        #'document2_b64' : encoding, # optional
+        #'document2_filename' : 'heavy.jpg',
+
+        # ID number data
+        #'identity_number': '8710015160084', # if supplied must match what was used in preregister_student
+
+        # Passport data
+        'passport_number': 'identifiier',
+        'age': '30',
+        'gender': 'female',
+        'citizenship': 'South Africa',
+        'expiry_date': '2006-11-30', # YYYY-MM-DD format required, any other format will break
+        'date_of_issue': '2006-11-30', # YYYY-MM-DD format required, any other format will break
+        'date_of_birth': '1989-11-30', # YYYY-MM-DD format required, any other format will break
+    }
+    return post_to_url(url, request)
+
+def register_standalone_saharvest():
+
+    encoding = None
+    image_path = '/home/camilla/Pictures/heavy.jpg'
+    with open(image_path, 'rb') as imgfile:
+        encoding = base64.b64encode(imgfile.read())
+    if not encoding:
+        return False
+
+    url = THIS_URL + 'register_standalone_user'
+    outputlist = [
+        #('Sheryl', 'Ozinsky',  '6001010145086',       '0836283426',  'sheryl@ozinsky.co.za'),
+        #('Rejeanne', 'Vlietman',   '7501030071088',      ' 0828594078',  'denanker@mweb.co.za'),
+        #('Ian', 'Dommisse',    '8609215145087',      ' 0846888554',  'igdommisse@gmail.com'),
+        #('Alistair', 'Conn',  '5909260047086',      '0789396131',  'ali@saharvest.org'),
+        #('Renee Margolite', 'Williams',   '8906265087080',       '0794954433',  'margolite@saharvest.org'),
+        #('Manu', 'Wegmershaus',   '8001265938084',       '0799808936',  'manu@saharvest.org'),
+        ('Ozzy', 'Nel',   '7606215007086',       '0721281166',  'ozzyn@saharvest.org'),
+    ]
+    for name, surname, identity_number, mobile_number, email in outputlist:
+        request = {
+            # User data
+            'title': 'Mx.',
+            'name': name,
+            'surname': surname,
+            'email': email,
+            'username': f'{surname.lower()}01',
+            'password': '1234',
+            'mobile_number': mobile_number,
+
+            # Address data
+            'address_line1': 'line1',
+            'address_line2': 'this is optional', # optional
+            'address_suburb': 'somerset west',
+            'address_city': 'cape town',
+            'address_province': 'western cape',
+            'address_postal_code': '7130',
+
+            # Image data
+            'photo_b64' : encoding,
+            'photo_filename' : 'heavy.jpg',
+
+            'document_b64' : encoding,
+            'document_filename' : 'heavy.jpg',
+
+            # ID number data
+            'identity_number': identity_number, # if supplied must match what was used in preregister_student
+        }
+        result = post_to_url(url, request)
+        print(result)
+    return True
+
+
+def register_standalone_user():
+
+    encoding = None
+    image_path = '/home/camilla/Pictures/heavy.jpg'
+    with open(image_path, 'rb') as imgfile:
+        encoding = base64.b64encode(imgfile.read())
+    if not encoding:
+        return False
+
+    url = THIS_URL + 'register_standalone_user'
+    request = {
+        # User data
+        # ('Ozzy', 'Nel',   '7606215007086',       '0721281166',  'ozzyn@saharvest.org'),
+        'title': 'Mx.',
+        'name': 'Ozzy',
+        'surname': 'Nel',
+        'email': 'ozzyn@saharvest.org',
+        'username': 'nel01',
+        'password': '1234',
+        'mobile_number': '0721281166',
+
+        # Address data
+        'address_line1': 'de beers avenue',
+        'address_line2': 'this is optional', # optional
+        'address_suburb': 'somerset west',
+        'address_city': 'cape town',
+        'address_province': 'western cape',
+        'address_postal_code': '7130',
+
+        # Image data
+        #'photo_b64' : encoding,
+        #'photo_filename' : 'heavy.jpg',
+
+        #'document_b64' : encoding,
+        #'document_filename' : 'heavy.jpg',
+
+        #'document2_b64' : encoding, # optional
+        #'document2_filename' : 'heavy.jpg',
+
+        # ID number data
+        #'identity_number': '7606215007086', # if supplied must match what was used in preregister_student
+
+        # Passport data
+        'passport_number': 'identifiier',
+        #'age': '30',
+        #'gender': 'female',
+        #'citizenship': 'South Africa',
+        #'expiry_date': '2006-11-30', # YYYY-MM-DD format required, any other format will break
+        #'date_of_issue': '2006-11-30', # YYYY-MM-DD format required, any other format will break
+        #'date_of_birth': '1989-11-30', # YYYY-MM-DD format required, any other format will break
+    }
+    return post_to_url(url, request)
+
+
+def update_eiffel_student():
+    url = THIS_URL + 'update_eiffel_student'
+    request = {
+        'mobile': '0737034769',
+        'preferred_name' : 'camilla007',
+        'email': 'camilla@dotxmltech.com',
+        #'entity_id': 4,
+        'username': 'camilla',
+    }
+    return post_to_url(url, request)
+
+def update_about_me():
+    url = THIS_URL + 'registration/update_about_me'
+    request = {
+        'mobile': '0737034769',
+        'preferred_name' : 'msfaceless',
+        'email': 'anotheremail@fakemail.com',
+        #'entity_id': 4,
+        'username': 'camilla',
+    }
+    return post_to_url(url, request)
+
+def confirm_update_profile_otp():
+    url = THIS_URL + 'registration/confirm_update_profile_otp'
+    request = {
+        'otp': '6732',
+        'username': 'camilla',
+    }
+    return post_to_url(url, request)
+
+def get_name_from_reference():
+    url = THIS_URL + 'get_name_from_reference'
+    request = {
+        'reference': '5266373223',
+    }
+    return post_to_url(url, request)
+
+def get_citizenship_list():
+    url = THIS_URL + 'get_citizenship_list'
+    return post_to_url(url)
+
+def suspend_user():
+    url = THIS_URL + 'suspend_user'
+    request = {
+        'username': 'camilla',
+        #'entity_id': 4,
+    }
+    return post_to_url(url, request)
+
+def check_preregistered_student_number():
+    url = THIS_URL + 'check_preregistered_student_number'
+    request = {
+        'student_number': 'student_john20',
+    }
+    return post_to_url(url, request)
+
+def check_preregistered_identity_student_number_match():
+    url = THIS_URL + 'check_preregistered_identity_student_number_match'
+    request = {
+        'student_number': 'student_john20',
+        'identity_number': 'idnumber_john20',
+        #'passport_number': 'passport_john20',
+    }
+    return post_to_url(url, request)
+
+def get_user_profile_small():
+    url = THIS_URL + 'get_user_profile'
+    #request = {'entity_id': '6', 'passthrough' : True}
+    request = {'username': 'nel01'}
+    return post_to_url(url, request)
+
+def get_user_profile():
+    url = THIS_URL + 'get_user_profile'
+    request = {'username': 'calabash pay'}
+    r = post_to_url(url, request)
+
+    request = {'username': 'camilla'}
+    r = post_to_url(url, request)
+
+    request = {'entity_id': 1, }
+    r = post_to_url(url, request)
+
+    request = {'entity_id': 666,  'passthrough' : True}
+    r = post_to_url(url, request)
+
+    request = {'entity_id': 666, }
+    r = post_to_url(url, request)
+
+    request = {'username': 'jpbez', }
+    r = post_to_url(url, request)
+
+    request = {'username': 'camillajam', }
+    r = post_to_url(url, request)
+
+    request = {'username': 'tmutero', }
+    r = post_to_url(url, request)
+
+    request = {'username': 'john20', }
+    r = post_to_url(url, request)
+
+    request = {'username': 'vuyofoodtruck',  'passthrough' : True}
+    r = post_to_url(url, request)
+
+    request = {'username': 'vuyofoodtruck', }
+    r = post_to_url(url, request)
+    return r
+
+def register_merchant():
+    url = THIS_URL + 'register_merchant'
+    request = {
+        'username': 'youreusername',
+        'password': 'some long hash string',
+        'email': 'username@testmail.com',
+        'mobile': '0745656566',
+        'name': 'Maddy',
+        'surname': 'Crum',
+        'preferred_name': 'thisisthecompanyname',
+
+        # EITHER NOT BOTH
+        #'identity_number': '8710015160084',
+        'passport_number': 'someotheridentifiier',
+    }
+    return post_to_url(url, request)
+
+def register_salesrole():
+    url = THIS_URL + 'register_salesrole'
+    request = {
+        'merchant': 'marioscornershop',
+        'username': 'garystarfish',
+        'password': 'test1234',
+        'email': 'salesstar@testmail.com',
+        'mobile': '0820394789',
+        'first_name': 'Gary',
+        'surname': 'Starfish',
+        'sendMail': False,
+    }
+    return post_to_url(url, request)
+
+def delete_salesrole():
+    url = THIS_URL + 'delete_salesrole'
+    request = {
+        'merchant': 'marioscornershop',
+        'username': 'garystarfish',
+    }
+    return post_to_url(url, request)
+
+def add_beneficiary():
+    url = THIS_URL + 'add_beneficiary'
+    request = {
+        'username': 'marioscornershop',
+        'reference': '8835246557',
+
+        'beneficiary_username': 'camilla',
+        'beneficiary_name': 'newname',
+    }
+    return post_to_url(url, request)
+
+def delete_beneficiary():
+    url = THIS_URL + 'delete_beneficiary'
+    request = {
+        'username': 'jpbez',
+        'beneficiary_name': 'Calabash One',
+    }
+    return post_to_url(url, request)
+
+def get_user_beneficiaries():
+    url = THIS_URL + 'get_user_beneficiaries'
+    request = {
+        'username': 'jpbez',
+    }
+    return post_to_url(url, request)
+
+def get_merchant_salesroles():
+    url = THIS_URL + 'get_merchant_salesroles'
+    request = {
+        'MerchantUsername': 'calabash pay',
+    }
+    return post_to_url(url, request)
+
+def get_transaction_refund_options():
+    url = THIS_URL + 'get_transaction_refund_options'
+    request = {
+        'trxId': '1462634401',
+    }
+    return post_to_url(url, request)
+
+def get_loyalty_transaction_history():
+    url = THIS_URL + 'get_loyalty_transaction_history'
+    request = {
+        'username': 'camilla',
+    }
+    return post_to_url(url, request)
+
+def get_savings_transaction_history():
+    url = THIS_URL + 'get_savings_transaction_history'
+    request = {
+        'username': 'camilla',
+    }
+    return post_to_url(url, request)
+
+def get_transaction_type_list():
+    url = THIS_URL + 'wallet/get_transaction_type_list'
+    request = {
+        #'username': 'camilla',
+    }
+    return post_to_url(url, request)
+
+def get_paginated_transaction_history():
+    url = THIS_URL + 'get_paginated_transaction_history'
+    request = {
+        'username': 'camilla',
+        'from_date': '2020-10-07',
+        'to_date': '2020-10-07',
+        'transaction_type' : 'purchase',
+
+        # TO SEARCH
+        # to_date = kwargs.get('to_date', None)
+        # username = kwargs.get('username', None)
+        # from_date = kwargs.get('from_date', None)
+        # search_phrase = kwargs.get('search_phrase', '')
+        # transaction_type = kwargs.get('transaction_type', 'iMali')
+
+        # TO PAGINATE
+        # page = kwargs.get('page', 1)
+        # page_size = kwargs.get('page_size', 10)
+    }
+    return post_to_url(url, request)
+
+def get_transaction_history():
+    url = THIS_URL + 'get_transaction_history'
+    request = {
+        'limit' : 10,
+        'username': 'camilla',
+    }
+    return post_to_url(url, request)
+
+def make_merchant_sale():
+    url = THIS_URL + 'make_merchant_sale'
+    request = {
+        'merchant_reference': '7725242569',
+        'username': 'camilla',
+        'token': 'iMali',
+        'amount': '100', # in cents
+        'reference': 'Bought a really cheap chappie',
+    }
+    return post_to_url(url, request)
+
+def save_merchant_reward():
+    url = THIS_URL + 'save_merchant_reward'
+    request = {
+        'merchant_username': 'vuyofoodtruck',
+        'percentage': '3',
+    }
+    return post_to_url(url, request)
+
+def make_mobile_transfer():
+    url = THIS_URL + 'make_mobile_transfer'
+    request = {
+        'from_username': 'john20',
+        'to_mobile_number': '0737034769',  # mobile number for camilla pay user
+        'amount': '2',  # in cents
+        'reference': 'gimme the money',  # in cents
+    }
+    return post_to_url(url, request)
+
+def make_user_transfer():
+    url = THIS_URL + 'make_user_transfer'
+    request = {
+        'from_username': 'alexawilliams',
+        'to_reference': '8758238441',
+        'amount': '2',  # in cents
+        'reference': 'from python code',  # in cents
+    }
+    return post_to_url(url, request)
+
+def get_balance():
+    url = THIS_URL + 'get_balance'
+    request = {
+        'username': 'calabash pay',
+    }
+    return post_to_url(url, request)
+
+def refund_user_from_merchant():
+    url = THIS_URL + 'refund_user_from_merchant'
+    request = {
+        'amount': '20',  # IN CENTS
+        'merchant_username': 'calabash pay',
+        'refund_username': 'camilla',
+        'couponType': 'iMali',
+        'trxId': '1422073302',
+        'reference': 'refund ref',
+    }
+    return post_to_url(url, request)
+
+def login():
+    url = THIS_URL + 'login'
+    request = {
+        'username': 'alexawilliams',
+        'password': '1234',
+    }
+    return post_to_url(url, request)
+
+def reset_password():
+    url = THIS_URL + 'reset_password'
+    request = {
+        'username': 'camilla',
+        'password': 'camilla',
+        'new_password': 'thisispwd',
+    }
+    return post_to_url(url, request)
+
+def forgot_password_send_otp():
+    url = THIS_URL + 'forgot_password_send_otp'
+    request = {
+        'username': 'camilla',
+    }
+    return post_to_url(url, request)
+
+def forgot_password_confirm_otp():
+    url = THIS_URL + 'forgot_password_confirm_otp'
+    request = {
+        'username': 'camilla',
+        'otp': '3262',
+    }
+    return post_to_url(url, request)
+
+def create_mobile_otp():
+    url = THIS_URL + 'create_mobile_otp'
+    request = {
+        'mobile_number': '0737034769',
+    }
+    return post_to_url(url, request)
+
+def confirm_mobile_otp():
+    url = THIS_URL + 'confirm_mobile_otp'
+    request = {
+        'mobile_number': '0737034769',
+        'otp': '1234',
+    }
+    return post_to_url(url, request)
+
+def forgot_password():
+    url = THIS_URL + 'forgot_password'
+    request = {
+        'username': 'camilla',
+        'password': 'camilla123',
+    }
+    return post_to_url(url, request)
+
+def get_person_identity_types():
+    url = THIS_URL + 'get_person_identity_types'
+    return post_to_url(url)
+
+def get_merchant_ownership_types():
+    url = THIS_URL + 'get_merchant_ownership_types'
+    return post_to_url(url)
+
+def get_merchant_industry_list():
+    url = THIS_URL + 'get_merchant_industry_list'
+    return post_to_url(url)
+
+def send_sms():
+    url = THIS_URL + 'message/sms'
+    request = {
+        'message': 'new from gateway',
+        'mobile_number': '0737034769',
+    }
+    return post_to_url(url, request)
+
+def send_whatsapp():
+    url = THIS_URL + 'message/whatsapp'
+    request = {
+        'message': 'some whatsapp message',
+        'mobile_number': '0737034769',
+    }
+    return post_to_url(url, request)
+
+def create_eiffel_corp_premium_ad_payment_notification():
+    url = THIS_URL + 'notification/create_eiffel_corp_premium_ad_payment_notification'
+    request = {'entity_id' : '1',
+              'amount' : 10000000,
+              'message' : 'Digikamva 10.00 pending payment: Pending receipt for title of amount from formal_name.'
+              }
+    r = post_to_url(url, request)
+    url = THIS_URL + 'notification/accept_calabash_campus_premium_ad_payment_notification'
+    request = {'notification_id' : '11',
+              }
+    r = post_to_url(url, request)
+    #url = THIS_URL + 'notification/reject_calabash_campus_premium_ad_payment_notification'
+    request = {'notification_id' : '1',
+              }
+    return post_to_url(url, request)
+
+def check_has_notifications():
+    url = THIS_URL + 'notification/eiffel_corp_check_has_notifications'
+    request = {'entity_id' : '1',
+              }
+    r = post_to_url(url, request)
+    url = THIS_URL + 'notification/calabash_campus_check_has_notifications'
+    request = {'username' : 'john20',
+              }
+    return post_to_url(url, request)
+
+def get_notifications_list():
+    url = THIS_URL + 'notification/get_calabash_campus_notifications_list'
+    request = {'username' : 'tmutero', }
+    r = post_to_url(url, request)
+    url = THIS_URL + 'notification/get_calabash_campus_notifications_list'
+    request = {'username' : 'john20', }
+    return post_to_url(url, request)
+
+def accept_group_invite_notification():
+    url = THIS_URL + 'groups/accept_group_invite_notification'
+    request = {'notification_id' : '2', }
+    return post_to_url(url, request)
+
+def delete_notification():
+    url = THIS_URL + 'notification/delete_notification'
+    request = {'notification_id' : '1', }
+    return post_to_url(url, request)
+
+def get_airtime_list():
+    url = THIS_URL + 'vas/get_airtime_list?'
+    return post_to_url(url)
+
+def get_data_list():
+    url = THIS_URL + 'vas/get_data_list?'
+    return post_to_url(url)
+
+def purchase_mobile():
+    url = THIS_URL + 'vas/purchase_mobile?'
+    request = {'username' : 'alexawilliams',
+            'product_code' : '43', # cell c data 100mb
+            'mobile_number' : '0737034769',
+            'amount' : '2900', # in cents
+            }
+    return post_to_url(url, request)
+
+def kyc_merchant():
+
+    encoding = None
+    image_path = '/home/camilla/Pictures/heavy.jpg'
+    with open(image_path, 'rb') as imgfile:
+        encoding = base64.b64encode(imgfile.read())
+    if not encoding:
+        return False
+
+    url = THIS_URL + 'kyc_merchant'
+    request = {
+        # required
+        'username': 'calabash',
+        'email': 'cornershop@testmail.com',
+        'address_line1': 'de beers avenue',
+        'address_line2': 'this is optional',
+        'address_city': 'cape town',
+        'address_suburb': 'somerset west',
+        'address_province': 'western cape',
+        'address_postal_code': '7130',
+
+        # EITHER
+        #'identity_number': '8710015160084',
+
+        # OR
+        'passport_number': 'asdf',
+        'name' : 'name',
+        'surname' : 'surname',
+        'gender': 'female',
+        'age': '30',
+        'date_of_issue': '2006-11-30', # YYYY-MM-DD format required, any other format will break
+        'expiry_date': '2006-11-30', # YYYY-MM-DD format required, any other format will break
+        'date_of_birth': '1989-11-30', # YYYY-MM-DD format required, any other format will break
+        'citizenship': 'South Africa',
+
+        # BINARIES
+        'photo_b64' : encoding,
+        'photo_filename' : 'photo.jpg',
+        'address_b64' : encoding,
+        'address_filename' : 'address.jpg',
+        'document_b64' : encoding,
+        'document_filename' : 'document.jpg',
+
+        # optional
+        'vat_b64' : encoding,
+        'vat_filename' : 'vat.jpg',
+        'account_b64' : encoding,
+        'account_filename' : 'account.jpg',
+        'registration_b64' : encoding,
+        'registration_filename' : 'register.jpg',
+    }
+    return post_to_url(url, request)
+
+def receive_callback():
+    url = THIS_URL + 'receive_callback'
+    request = {
+        "result": "ACCEPTED",
+        "reference": 5748754908971008,
+        "kyc_type": "FULL",
+        "id_type": "ID",
+        "id": "7005255125082",
+        "message": "KYC Status is now Active",
+        "username": "HDWKKWKVLQEBUFQN"
+    }
+    return post_to_url(url, request)
+
+def create_group():
+    url = THIS_URL + 'groups/create_group'
+    request = {
+        'username': 'camilla',
+        'groupname': 'family',
+    }
+    return post_to_url(url, request)
+
+def remove_group():
+    url = THIS_URL + 'groups/remove_group'
+    request = {
+        'username': 'john20',
+        'group_id': '2',
+    }
+    return post_to_url(url, request)
+
+def leave_group():
+    url = THIS_URL + 'groups/leave_group'
+    request = {
+        'username': 'john20',
+        'group_id': '3',
+    }
+    return post_to_url(url, request)
+
+def invite_user():
+    url = THIS_URL + 'groups/invite_user'
+    request = {
+        'username': 'camilla',
+        'group_id': '1',
+        'to_mobile_number': '0640605016',
+        'admin': False,
+    }
+    return post_to_url(url, request)
+
+def remove_user():
+    url = THIS_URL + 'groups/remove_user'
+    request = {
+        'username': 'camilla',
+        'group_id': '1',
+        'remove_username': 'tmutero',
+    }
+    return post_to_url(url, request)
+
+def update_user():
+    url = THIS_URL + 'groups/update_user'
+    request = {
+        'username': 'alexawilliams',
+        'group_id': '1',
+        'to_username': 'john20',
+        'admin': True,
+    }
+    return post_to_url(url, request)
+
+def user_deposit():
+    url = THIS_URL + 'groups/user_deposit'
+    request = {
+        'username': 'camilla',
+        'group_id': '1',
+        'amount': 1,
+    }
+    return post_to_url(url, request)
+
+def user_transfer():
+    url = THIS_URL + 'groups/user_transfer'
+    request = {
+        'username': 'camilla',
+        'group_id': '1',
+        'to_username': 'tmutero',
+        'amount': 100,
+    }
+    return post_to_url(url, request)
+
+def user_mobile_transfer():
+    url = THIS_URL + 'groups/user_mobile_transfer'
+    request = {
+        'username': 'camilla',
+        'group_id': '1',
+        'to_mobile_number': '0737034769',  # mobile number for camilla pay user
+        'amount': 1,
+    }
+    return post_to_url(url, request)
+
+def user_withdraw():
+    url = THIS_URL + 'groups/user_withdraw'
+    request = {
+        'username': 'camilla',
+        'group_id': '1',
+        'amount': 100,
+    }
+    return post_to_url(url, request)
+
+def user_sale():
+    url = THIS_URL + 'groups/user_sale'
+    request = {
+        'username': 'camilla',
+        'group_id': '1',
+        'merchant_reference': '8643748158',
+        'amount': 10,
+    }
+    return post_to_url(url, request)
+
+def get_group_statement():
+    url = THIS_URL + 'groups/get_group_statement'
+    request = {
+        'username': 'camilla',
+        'group_id': '1',
+    }
+    return post_to_url(url, request)
+
+def get_group_user_statement():
+    url = THIS_URL + 'groups/get_group_user_statement'
+    request = {
+        'username': 'camilla',
+        'group_id': '1',
+        'group_username': 'camilla',
+    }
+    return post_to_url(url, request)
+
+def get_group_detail():
+    url = THIS_URL + 'groups/get_group_detail'
+    request = {
+        'username': 'jpbez',
+        'group_id': '1',
+    }
+    return post_to_url(url, request)
+
+def get_user_groups():
+    url = THIS_URL + 'groups/get_user_groups'
+    request = {
+        'username': 'john20',
+    }
+    return post_to_url(url, request)
+
+def upload_group_picture():
+    encoding = None
+    filename = 'heavy.jpg'
+    image_path = f'/home/camilla/Pictures/{filename}'
+    with open(image_path, 'rb') as imgfile:
+        encoding = base64.b64encode(imgfile.read())
+    if not encoding:
+        return False
+
+    url = THIS_URL + 'groups/upload_group_picture'
+    request = {
+        'username': 'camilla',
+        'group_id': '1',
+        'filename': filename,
+        'image': encoding,
+    }
+    return post_to_url(url, request)
+
+def upload_user_picture():
+    encoding = None
+    image_path = '/home/camilla/Pictures/heavy.jpg'
+    with open(image_path, 'rb') as imgfile:
+        encoding = base64.b64encode(imgfile.read())
+    if not encoding:
+        return False
+
+    url = THIS_URL + 'upload_user_picture'
+    request = {
+        'username': 'camilla',
+        'filename': 'heavy.jpg',
+        'image': encoding,
+    }
+    return post_to_url(url, request)
+
+def get_group_picture():
+    url = THIS_URL + 'groups/get_group_picture'
+    request = {
+        'username': 'john20',
+        'group_id': '1',
+    }
+    return post_to_url(url, request)
+
+def delete_group_picture():
+    url = THIS_URL + 'groups/delete_group_picture'
+    request = {
+        'username': 'john20',
+        'group_id': '1',
+    }
+    return post_to_url(url, request)
+
+def get_user_picture():
+    url = THIS_URL + 'get_user_picture'
+    request = {
+        'username': 'camilla',
+    }
+    return post_to_url(url, request)
+
+def get_banking_config():
+    url = THIS_URL + 'wallet/get_banking_config'
+    return post_to_url(url)
+
+def add_banking_details():
+    url = THIS_URL + 'wallet/add_banking_details'
+    request = {
+        'username': 'calabash pay',
+        'display_name': 'Johan-Pierre Bezuidenhout',
+        'bank_type_id': 4, # from banks list in get_banking_config
+        'account_type_id': 1, # from accounts list in get_banking_config
+        'branch_code': '632005', # from banks list in get_banking_config
+        'account_number': '1234567890',
+        'initials': 'TNS',
+    }
+    return post_to_url(url, request)
+
+def delete_banking_details():
+    url = THIS_URL + 'wallet/delete_banking_details'
+    request = {
+        'username': 'calabash pay',
+        'account_id': '28599',
+    }
+    return post_to_url(url, request)
+
+def payout_to_account():
+    url = THIS_URL + 'wallet/payout_to_account'
+    request = {
+        'username': 'calabash pay',
+        'amount' : '10', # in cents
+    }
+    return post_to_url(url, request)
+
+def payout_to_multiple_accounts():
+    url = THIS_URL + 'wallet/payout_to_multiple_accounts'
+    request = {
+        'username': 'calabash pay',
+        'data' : [
+            {'account_id' : '28598', 'amount' : '10'},
+            {'account_id' : '28599', 'amount' : '10'},
+        ],
+    }
+    return post_to_url(url, request)
+
+def get_banking_details():
+    url = THIS_URL + 'wallet/get_banking_details'
+    request = {
+        'username': 'calabash pay',
+    }
+    return post_to_url(url, request)
+
+def transfer_main_to_savings():
+    url = THIS_URL + 'wallet/transfer_main_to_savings'
+    request = {
+        'username': 'camilla',
+        'amount': '2',  # in cents
+        'reference': 'transferred some monies',  # in cents
+    }
+    return post_to_url(url, request)
+
+def transfer_savings_to_main():
+    url = THIS_URL + 'wallet/transfer_savings_to_main'
+    request = {
+        'username': 'camilla',
+        'amount': '2',  # in cents
+        'reference': 'transferred some monies',  # in cents
+    }
+    return post_to_url(url, request)
+
+def transfer_loyalty_to_main():
+    url = THIS_URL + 'wallet/transfer_loyalty_to_main'
+    request = {
+        'username': 'camilla',
+        'amount': '2',  # in cents
+        'reference': 'transferred some monies',  # in cents
+    }
+    return post_to_url(url, request)
+
+def transfer_loyalty_to_savings():
+    url = THIS_URL + 'wallet/transfer_loyalty_to_savings'
+    request = {
+        'username': 'camilla',
+        'amount': '2',  # in cents
+        'reference': 'transferred some monies',  # in cents
+    }
+    return post_to_url(url, request)
+
+def get_qrcode_url_with_amount():
+    url = THIS_URL + 'wallet/get_qrcode_url_with_amount'
+    request = {
+        'username': 'vuyofoodtruck',
+        'amount_in_cents': 500,
+    }
+    return post_to_url(url, request)
+
+def get_qrcode_url_without_amount():
+    url = THIS_URL + 'wallet/get_qrcode_url_without_amount'
+    request = {
+        'username': 'vuyofoodtruck',
+    }
+    return post_to_url(url, request)
+
+def get_qrcode_url_static():
+    url = THIS_URL + 'wallet/get_qrcode_url_static'
+    request = {
+        'username': 'vuyofoodtruck',
+    }
+    return post_to_url(url, request)
+
+def unlink_loyalty_program():
+    url = THIS_URL + 'wallet/unlink_loyalty_program'
+    request = {
+        'username': 'vuyofoodtruck',
+    }
+    return post_to_url(url, request)
+
+def get_transaction_by_id():
+    url = THIS_URL + 'wallet/get_transaction_by_id'
+    request = {
+        'transaction_id': '6660',
+    }
+    return post_to_url(url, request)
+
+def add_card():
+    url = THIS_URL + 'card/add_card'
+    request = {
+        'username': 'camilla',
+        'card_name': 'camilla',
+        'card_serial': 'camilla',
+    }
+    return post_to_url(url, request)
+
+def get_card_details():
+    url = THIS_URL + 'card/get_card_details'
+    request = {
+        'username': 'camilla',
+    }
+    return post_to_url(url, request)
+
+def get_card_transactions():
+    url = THIS_URL + 'card/get_card_transactions'
+    request = {
+        'card_serial': 'camilla',
+    }
+    return post_to_url(url, request)
+
+def replace_card():
+    url = THIS_URL + 'card/replace_card'
+    request = {
+        'username': 'camilla',
+        'old_card_serial': 'camilla',
+        'new_card_serial': 'camilla',
+    }
+    return post_to_url(url, request)
+
+def update_card_status():
+    url = THIS_URL + 'card/update_card_status'
+    request = {
+        'username': 'camilla',
+        'card_serial': 'camilla',
+        'card_status': 'camilla', # closed, lost, stolen, expired, restricted, locked
+    }
+    return post_to_url(url, request)
+
+def payout_to_card():
+    url = THIS_URL + 'card/payout_to_card'
+    request = {
+        'username': 'camilla',
+        'card_serial': 'camilla',
+        'amount': '100', # amount in cents
+        'voucher_type': 'iMali',
+    }
+    return post_to_url(url, request)
+
+def get_payment_wicode():
+    url = THIS_URL + 'wallet/get_payment_wicode'
+    request = {
+        'username': 'camilla',
+    }
+    return post_to_url(url, request)
+
+def get_withdrawal_wicode():
+    url = THIS_URL + 'wallet/get_withdrawal_wicode'
+    request = {
+        'username': 'camilla',
+        'amount': 2000000, # amount in cents
+    }
+    return post_to_url(url, request)
+
+def get_user_wicodes():
+    url = THIS_URL + 'wallet/get_user_wicodes'
+    request = {
+        'username': 'john20',
+
+        # OPTIONAL WITH DEFAULTS
+        'state' : 'pending', # expire, pending, reverse, finalise (defaults to pending)
+        'type' : 'withdraw', # withdraw, payment, all (defaults to all)
+    }
+    return post_to_url(url, request)
+
+def expire_payment_wicode():
+    url = THIS_URL + 'wallet/expire_payment_wicode'
+    request = {
+        'username': 'camilla',
+        'wicode': '12345',
+        'reason': 'i done fucked up',
+    }
+    return post_to_url(url, request)
+
+def expire_withdrawal_wicode():
+    url = THIS_URL + 'wallet/expire_withdrawal_wicode'
+    request = {
+        'username': 'camilla',
+        'wicode': '12345',
+        'reason': 'i done fucked up',
+    }
+    return post_to_url(url, request)
+
+def update_merchant_featured_ad_link():
+    url = THIS_URL + 'update_merchant_featured_ad_link'
+    request = {
+        'merchant_username': 'calabash pay',
+    }
+    return post_to_url(url, request)
+
+def transfer_api_key():
+    url = THIS_URL + 'registration/transfer_api_key'
+    request = {
+        'username': 'camilla',
+        'guid' : '85dcac9157c5403599b90bbe60fcb2fc', # Calabash Mobile
+    }
+    return post_to_url(url, request)
+
+if __name__ == "__main__":
+
+    # USERS (Students / Employees)
+    # print(unlink_loyalty_program())
+    # print(preregister_student())
+    # print(check_preregistered_student_number())
+    # print(check_preregistered_identity_student_number_match())
+    # print(register_user())
+    #print(register_standalone_user())
+    # print(register_standalone_saharvest())
+    # print(get_name_from_reference())
+
+    # MERCHANTS
+    # print(register_merchant())
+    # print(kyc_merchant())
+    # print(receive_callback())
+
+    # OTHER
+    # print(get_transaction_by_id())
+    # print(get_user_profile())
+    # print(get_user_profile_small())
+    # print(get_citizenship_list())
+    print(login())
+    # print(suspend_user())
+    # print(upload_user_picture())
+    # print(get_user_picture())
+    # print(add_beneficiary())
+    # print(delete_beneficiary())
+    # print(get_user_beneficiaries())
+    # print(make_user_transfer())
+    # print(make_mobile_transfer())
+    # print(refund_user_from_merchant())
+    # print(get_transaction_history()) # coupon_type: iMali
+    # print(get_loyalty_transaction_history()) # coupon_type: iMali-Loyalty
+    # print(get_savings_transaction_history()) # coupon_type: iMali-Savings
+    # print(get_paginated_transaction_history()) # coupon_type: iMali
+    # print(get_transaction_type_list())
+    # print(get_balance()) # includes savings and loyalty balance
+    # print(transfer_main_to_savings())
+    # print(transfer_savings_to_main())
+    # print(transfer_loyalty_to_main())
+    # print(transfer_loyalty_to_savings())
+    # print(get_transaction_refund_options())
+    # print(reset_password())
+    # print(get_person_identity_types())
+    # print(forgot_password_send_otp())
+    # print(forgot_password_confirm_otp())
+    # print(forgot_password())
+    # print(save_merchant_reward())
+    # print(make_merchant_sale())
+    # print(create_mobile_otp())
+    # print(confirm_mobile_otp())
+    # print(register_salesrole())
+    # print(delete_salesrole())
+    # print(get_merchant_salesroles())
+    # print(update_eiffel_student())
+    # print(update_merchant_featured_ad_link())
+    # print(update_about_me())
+    # print(confirm_update_profile_otp())
+
+    # MERCHANT CASH OUT
+    # print(get_banking_config())
+    # print(add_banking_details())
+    # print(get_banking_details())
+    # print(delete_banking_details())
+    # print(payout_to_account())
+    # print(payout_to_multiple_accounts())
+
+    # MESSAGING
+    # print(send_sms())
+    # print(send_whatsapp())
+
+    # NOTIFICATIONS
+    # print(create_eiffel_corp_premium_ad_payment_notification())
+    # print(check_has_notifications())
+    # print(delete_notification())
+    # print(get_notifications_list())
+
+    # VAS
+    # print(get_airtime_list())
+    # print(get_data_list())
+    # print(purchase_mobile())
+
+    # GROUPS
+    # print(create_group())
+    # print(remove_group())
+    # print(leave_group()) # test with more users and positive balance
+    # print(invite_user())
+    # print(accept_group_invite_notification())
+    # print(remove_user())
+    # print(update_user())
+    # print(user_deposit())
+    # print(user_transfer())
+    # print(user_mobile_transfer())
+    # print(user_withdraw())
+    # print(user_sale())
+    # print(get_group_statement())
+    # print(get_group_user_statement())
+    # print(get_group_detail())
+    # print(upload_group_picture())
+    # print(get_user_groups())
+    # print(get_group_picture())
+    # print(delete_group_picture())
+
+    # QR CODES
+    # print(get_qrcode_url_with_amount())
+    # print(get_qrcode_url_without_amount())
+    # print(get_qrcode_url_static())
+
+    # WICODE
+    # print(get_user_wicodes())
+    # print(get_payment_wicode())
+    # print(get_withdrawal_wicode())
+    # print(expire_payment_wicode())
+    # print(expire_withdrawal_wicode())
+
+    # CARDS
+    # print(add_card())
+    # print(get_card_details())
+    # print(get_card_transactions())
+    # print(replace_card())
+    # print(update_card_status())
+    # print(payout_to_card())
+
+    # print(transfer_api_key())
+    pass

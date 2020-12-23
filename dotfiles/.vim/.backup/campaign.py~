@@ -1,0 +1,1003 @@
+# -*- coding: utf-8 -*-
+"""Setup controller module"""
+
+from tg import predicates, require, response, use_wsgi_app
+from tg import expose, redirect, validate, url, request
+
+from tg.i18n import ugettext as _
+from tg.i18n import lazy_ugettext as l_
+
+from rocket.model import *
+
+from sqlalchemy import func, desc, asc, or_
+
+from rocket.lib.tg_utils import *
+from rocket.lib.base import BaseController
+
+from rocket.controllers.media import MediaController
+
+from rocket.lib.type_utils import TypeDictionary
+from rocket.controllers.common import CommonController
+
+LIMIT = 20
+FILENAME = os.path.abspath(resource_filename('rocket', 'public'))
+PUBLIC_DIRNAME = os.path.join(FILENAME)
+PDF_DIRNAME = os.path.join(PUBLIC_DIRNAME, 'pdf')
+
+SEARCHKEY_CAMPAIGN_TYPE =  'CampaignType_SearchKeyword'
+SEARCHKEY_CAMPAIGN =  'Campaign_SearchKeyword'
+
+MEDIA = MediaController()
+COMMON = CommonController()
+TYPEUTIL = TypeDictionary()
+
+ACTIVE = TYPEUTIL.get_id_of_name('campaign_state_type', 'active')
+SUSPENDED = TYPEUTIL.get_id_of_name('campaign_state_type', 'suspended')
+TERMINATED = TYPEUTIL.get_id_of_name('campaign_state_type', 'terminated')
+
+class CampaignController(BaseController):
+
+    @expose()
+    def _default(self, *args, **kwargs):
+        return 'This page is not available.'
+
+########################################################################
+# Campaigns
+#######################################################################
+
+    @require(predicates.not_anonymous())
+    @expose('rocket.templates.generic')
+    def index(self, *args, **kwargs):
+        kwargs['searchkey'] = SEARCHKEY_CAMPAIGN
+        searchphrase = COMMON.get_searchphrase(**kwargs)
+        title = "Campaigns"
+        html = self.get_active_campaign_html(*args, **kwargs)
+        javascript = self.get_javascript_campaign_onload()
+        return dict(title=title, html=html, javascript=javascript)
+
+    @expose()
+    def get_active_campaign_html(self, *args, **kwargs):
+        searchphrase = kwargs.get('searchphrase', '')
+        campaign_table = self.get_campaign_table()
+        html = f"""
+            <div class="row">
+                <div class="col-md-12">
+                    <div class="card">
+                        <div class="card-header">
+                            <div class="row d-flex">
+                                <div class="col-md-6">
+                                    <h4 class="card-title">{_('Campaigns')}</h4>
+                                </div>
+                                <div class="col-md-6 text-right">
+                                    <button id="create_new_campaign" class="btn btn-primary ml-auto">Create New Campaign</button>
+                                </div>
+                            </div>
+                            <div class="row d-flex align-items-center">
+                                <div class="col-md-4">
+                                    <input type="text" class="form-control search" name="searchphrase"  id='searchphrase' value='{searchphrase}' placeholder="Search">
+                                </div>
+                                <div class="col-md-8">
+                                    <button class="btn btn-primary" id="action_search">Search</button>
+                                    <button class="btn btn-primary" id="action_Reset">Reset</button>
+                                </div>
+                            </div>
+                            <hr>
+                        </div>
+                        <div class="card-body">
+                            <div class="table-responsive" id='div_campaign_table'>
+                                {campaign_table}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        """
+        return html
+
+    @expose()
+    def get_javascript_campaign_onload(self, *args, **kwargs):
+        javascript = """
+            $("#create_new_campaign").click(function(){
+                $('#dialogdiv').load('/campaign/get_new_modal_campaign?', function(data){
+                    return false;
+                });
+            });
+            $(".campaign_edit").click(function(){
+                var data = {campaign_id : $(this).attr('campaign_id')};
+                $.redirect('/campaign/edit_campaign', data);
+            });
+            $('#action_search').click(function(){
+                var kwargs = 'searchphrase='+$('#searchphrase').val();
+                $('#div_campaign_table').load('/campaign/get_campaign_table', kwargs, function(data){
+                    return false;
+                });
+            })
+            $('#action_Reset').click(function(){
+                $('#searchphrase').val('').focus();
+                $('#div_campaign_table').load('/campaign/get_campaign_table', 'reset=true', function(data){
+                    return false;
+                 });
+             })
+        """
+        return javascript
+
+    @expose()
+    def get_campaign_table(self, *args, **kwargs):
+        searchphrase = kwargs.get('searchphrase', '')
+        if searchphrase:
+            searchphrase = '%'+searchphrase+'%'
+            dbase_query = DBSession.query(Campaign). \
+                filter(or_(Campaign.code.like(searchphrase),  \
+                           Campaign.name.like(searchphrase))). \
+                filter(Campaign.bln_active == 1). \
+                order_by(asc(Campaign.name)).\
+                limit(LIMIT)
+        else:
+            dbase_query = DBSession.query(Campaign). \
+                filter(Campaign.bln_active == 1). \
+                order_by(asc(Campaign.name)).\
+                limit(LIMIT)
+
+        outputlist = []
+        for item in dbase_query:
+            campaign_type = CampaignType.by_id(item.campaign_type_id)
+            campaign_state_name = TYPEUTIL.get_pretty_name("campaign_state_type", item.campaign_state_type_id)
+            outputlist.append({
+                'code' : "<div class='edit action_link campaign_edit action_link' campaign_id='{1}'>{0}</div>".format(item.code, item.id),
+                'name' : item.name,
+                'campaign_type' : campaign_type.name if campaign_type else 'Unknown',
+                'campaign_state' : campaign_state_name,
+                'start_date' : item.start_date,
+                'end_date' : item.end_date,
+                             })
+        dbcolumnlist=[
+                'code',
+                'name',
+                'campaign_type',
+                'campaign_state',
+                'start_date',
+                'end_date',
+                    ]
+        theadlist=[
+                'Code',
+                'Name',
+                'Campaign Type',
+                'Campaign State',
+                'Start Date',
+                'End Date ',
+                ]
+        return build_html_table(outputlist, dbcolumnlist, theadlist, "campaign_table")
+
+    @expose()
+    def get_new_modal_campaign(self, *args, **kwargs):
+        campaign_id = kwargs.get('campaign_id', None)
+        campaign = None
+        hidden_input = ''
+        selectbox_campaign_type = self.get_campaign_type_list()
+        card_title = _('New Campaign')
+        if campaign_id:
+            card_title = _('Edit Campaign')
+            campaign = Campaign.by_id(campaign_id)
+            hidden_input = get_hidden_input(**{'id': 'campaign_id', 'value': campaign_id})
+            selectbox_campaign_type = self.get_campaign_type_list(**{'selected': campaign.campaign_type_id, })
+        code = campaign.code if campaign else ''
+        name = campaign.name if campaign else ''
+        campaign_type_id = campaign.campaign_type_id if campaign else ''
+        start_date = campaign.start_date if campaign else ''
+        end_date = campaign.end_date if campaign else ''
+        checkbox_active = COMMON.get_checkbox_active_boolean(campaign.bln_active) if campaign else ''
+        html = f"""
+            <div class="modal fade" id="dialog_campaign" tabindex="-1" role="dialog" aria-labelledby="mycampaignLabel" aria-hidden="true">
+                <div class="modal-dialog modal-dialog-centered modal-lg">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <div class="col-md-6">
+                                <h4 class="card-title">{card_title}</h4>
+                            </div>
+                        </div>
+                        <div class="modal-body">
+                            <form id='form_campaign'>
+                               {hidden_input}
+                                <div class="col-md-12">
+                                    <div class="form-group row">
+                                        <label class="col-md-3 col-form-label" required for="code">Code</label>
+                                        <div class="col-md-9">
+                                            <input id="code" value="{code}" type="text" name="code" class="form-control" required='true'>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-12">
+                                    <div class="form-group row">
+                                        <label class="col-md-3 col-form-label" required for="name">Name</label>
+                                        <div class="col-md-9">
+                                            <input id="name" value="{name}" type="text" name="name" class="form-control" required='true'>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-12">
+                                    <div class="form-group row">
+                                        <label class="col-md-3 col-form-label" required for="campaign_type_id">Campaign Type</label>
+                                        <div class="col-md-9">
+                                            {selectbox_campaign_type}
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-12">
+                                    <div class="form-group row">
+                                        <label class="col-md-3 col-form-label" required for="start_date">Start Date</label>
+                                        <div class="col-md-9">
+                                            <input id="start_date" value="{start_date}" type="text" name="start_date" class="form-control" required='true'>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-12">
+                                    <div class="form-group row">
+                                        <label class="col-md-3 col-form-label" required for="end_date">End Date</label>
+                                        <div class="col-md-9">
+                                            <input id="end_date" value="{end_date}" type="text" name="end_date" class="form-control" required='true'>
+                                        </div>
+                                    </div>
+                                </div>
+                                {checkbox_active}
+                            </form>
+                        </div>
+                        <div class="modal-footer">
+                            <button id='save_campaign' class="btn btn-primary">Save</button>
+                            <button class="btn btn-outline-primary campaign_back">Cancel</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        """
+        javascript = """
+            <script src=''>
+                var form_id = '#form_campaign'
+                setFormValidation(form_id);
+                $("#start_date").datetimepicker({ format: 'DD-MM-YYYY' });
+                $("#end_date").datetimepicker({ format: 'DD-MM-YYYY' });
+                $('#save_campaign').click(function(){
+                    var valid = FormIsValid(form_id);
+                    console.log('THIS SCRIPT')
+                    if(valid){
+                        console.log('SAVE CAMPAIGN')
+                        var formserial = $(form_id).serialize();
+                        $.post('/campaign/save_new_campaign?', formserial, function(data){
+                            var result = JSON.parse(data);
+                            if(result.success === true){
+                                $.redirect(result.redirect, {'campaign_id' : result.campaign_id});
+                            };
+                            showNotification(result.status, result.message);
+                            return false;
+                        });
+                    }
+                });
+                $('.campaign_back').click(function(){
+                    $('#dialog_campaign').modal('hide');
+                });
+                $('#dialog_campaign').modal();
+            </script>
+     	"""
+        return html + javascript
+
+    @expose()
+    def save_new_campaign(self, *args, **kwargs):
+        usernow = request.identity.get('user', None)
+        code = kwargs.get('code', None)
+
+        exists = DBSession.query(Campaign).\
+            filter(Campaign.code==code).\
+            filter(Campaign.bln_active==True).\
+            first()
+
+        if exists:
+            return json.dumps({'success': False, 'message': 'Cannot duplicate codes.', 'status': 'danger'})
+
+        name = kwargs.get('name', None)
+        campaign_id = kwargs.get('campaign_id', None)
+        campaign_type_id = kwargs.get('campaign_type_id', None)
+        start_date = kwargs.get('start_date', None)
+        end_date = kwargs.get('end_date', None)
+        start_date = str_to_date(start_date).date().isoformat()
+        end_date = str_to_date(end_date).date().isoformat()
+
+        test_string = code.strip()+ ' ' + name.strip()
+        result = MEDIA.confirm_string_passes_stop_words(test_string)
+        success = json.loads(result).get('success')
+        if not success:
+            return result
+
+        this = Campaign()
+        this.code = code
+        this.name = name
+        this.campaign_type_id = campaign_type_id
+        this.campaign_state_type_id = ACTIVE
+        this.start_date = start_date
+        this.end_date = end_date
+        this.added_by = usernow.id
+        this.drawer_id = self.ensure_campaign_document_link(**{'campaign': this})
+        DBSession.add(this)
+        DBSession.flush()
+        return json.dumps({
+            'success': True,
+            'campaign_id': this.id,
+            'redirect': '/campaign/edit_campaign',
+            'message': 'Campaign created successfully.',
+            'status': 'danger'})
+
+    def get_campaign_type_list(self, selected=None, *args, **kwargs):
+        kwargs['id'] = 'campaign_type_id'
+        kwargs['selected'] = selected
+        kwargs['case_sensitive'] = True
+        dbase_query = DBSession.query(CampaignType).filter(CampaignType.bln_active == True).order_by(asc(CampaignType.name)).all()
+        kwargs['outputlist'] = [{'id': x.id, 'name': x.name} for x in dbase_query]
+        return create_selectbox_html(**kwargs)
+
+    def get_campaign_state_type_list(self, selected=None, *args, **kwargs):
+        kwargs['id'] = 'campaign_state_type_id'
+        kwargs['selected'] = selected
+        kwargs['case_sensitive'] = True
+        dbase_query = DBSession.query(CampaignStateType).filter(CampaignStateType.bln_active == True).order_by(asc(CampaignStateType.name)).all()
+        kwargs['outputlist'] = [{'id': x.id, 'name': x.name} for x in dbase_query]
+        return create_selectbox_html(**kwargs)
+
+    @expose('rocket.templates.generic')
+    def edit_campaign(self, *args, **kwargs):
+        campaign_id = kwargs.get('campaign_id', None)
+        if not campaign_id: return redirect('/campaign/index')
+        title = self.get_campaign_title_html(campaign_id)
+        html = self.get_edit_campaign_html(campaign_id)
+        javascript = self.get_javascript_edit_campaign_onload()
+        return dict(title=title, html=html, javascript=javascript)
+
+    def get_campaign_title_html(self, campaign_id=None, *args, **kwargs):
+        if not campaign_id: return ''
+        campaign = Campaign.by_id(campaign_id)
+        if not campaign: return ''
+        return f"Edit: {campaign.code} - {campaign.name}"
+
+
+    def ensure_campaign_document_link(self, *args, **kwargs):
+        campaign = kwargs.get('campaign', None)
+        if not campaign: return None
+        cabinet = MEDIA.ensure_cabinet_by_name('Campaigns DMS Holdall', 'This is the Hold All Cabinet for all campaigns. Created by default.')
+        if not cabinet:
+            return None
+        drawer = MEDIA.ensure_drawer_by_name(cabinet.id, campaign.code, campaign.name)
+        if not drawer:
+            return None
+        return drawer.id
+
+    def get_edit_campaign_html(self, campaign_id=None, *args, **kwargs):
+        if not campaign_id: return ''
+
+        campaign = Campaign.by_id(campaign_id)
+        if not campaign: return ''
+        if not campaign.drawer_id:
+            campaign.drawer_id = self.ensure_campaign_document_link(**{'campaign': campaign})
+            DBSession.flush()
+
+        added_date = campaign.added
+        code = campaign.code
+        name = campaign.name
+        start_date = campaign.start_date
+        end_date = campaign.end_date
+        campaign_type_id = campaign.campaign_type_id
+        campaign_state_type_id = campaign.campaign_state_type_id
+        campaign_state_name = TYPEUTIL.get_pretty_name("campaign_state_type", campaign_state_type_id)
+
+        if campaign_state_type_id == ACTIVE:
+            activate_btn = ''
+            suspend_btn = f"<button id='suspend_btn' class='btn btn-secondary ml2'>{_('Suspend Campaign')}</button>"
+            terminate_btn = f"<button id='terminate_btn' class='btn btn-secondary ml2'>{_('Terminate Campaign')}</button>"
+
+        elif campaign_state_type_id == SUSPENDED:
+            activate_btn = f"<button id='activate_btn' class='btn btn-secondary ml2'>{_('Activate Campaign')}</button>"
+            suspend_btn = ''
+            terminate_btn = f"<button id='terminate_btn' class='btn btn-secondary ml2'>{_('Terminate Campaign')}</button>"
+
+        else:
+            activate_btn = """
+            <input id="nothing" value="Campaign has been Terminated. This is a final state and cannot be changed." type="text" name="nothing" class="form-control" disabled='true'>
+            """
+            suspend_btn = ''
+            terminate_btn = ''
+
+        selectbox_campaign_type = self.get_campaign_type_list(**{'selected': campaign_type_id})
+        campaign_document_table_html = self.get_campaign_document_html(**{'campaign_id': campaign_id, 'drawer_id': campaign.drawer_id})
+        html = f"""
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header d-flex">
+                        <div class="col-md-6">
+                            <h4 class="card-title">{_('Edit Campaign')}</h4>
+                        </div>
+                        <div class="col-md-6 text-right">
+                            <button id="save_edit_campaign" class="btn btn-primary">{_('Save')}</button>
+                            <button id="back_campaign" class="btn btn-secondary ml-auto">{_('Back to Campaign List')}</button>
+                        </div>
+                    </div>
+                    <hr>
+                    <div class="card-body">
+                        <form id="edit_campaign">
+                            <input type="hidden" id="campaign_id" name="campaign_id" class="form-control" value="{campaign_id}"/>
+                            <input type="hidden" id="code" name="code" class="form-control" value="{code}"/>
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="col-md-12">
+                                        <div class="form-group row">
+                                            <label class="col-md-3 col-form-label" required for="code">Code</label>
+                                            <div class="col-md-9">
+                                                <input id="code" value="{code}" type="text" name="code" class="form-control" disabled='true'>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-12">
+                                        <div class="form-group row">
+                                            <label class="col-md-3 col-form-label" required for="name">Name</label>
+                                            <div class="col-md-9">
+                                                <input id="name" value="{name}" type="text" name="name" class="form-control" required='true'>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-12">
+                                        <div class="form-group row">
+                                            <label class="col-md-3 col-form-label" required for="campaign_type_id">Campaign Type</label>
+                                            <div class="col-md-9">
+                                                {selectbox_campaign_type}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-12">
+                                        <div class="form-group row">
+                                            <label class="col-md-3 col-form-label" required for="state">Campaign State</label>
+                                            <div class="col-md-9">
+                                                <input type="text" name='campaign_state_name' id='campaign_state_name' class="form-control" value="{campaign_state_name}" disabled="true">
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-12">
+                                        <div class="form-group row">
+                                            <label class="col-md-3 col-form-label" >Change State</label>
+                                            <div class="col-md-9">
+                                                {activate_btn}
+                                                {suspend_btn}
+                                                {terminate_btn}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="col-md-12">
+                                        <div class="form-group row">
+                                            <label class="col-md-3 col-form-label" required for="start_date">Start Date</label>
+                                            <div class="col-md-9">
+                                                <input id="start_date" value="{start_date}" type="text" name="start_date" class="form-control" required='true'>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-12">
+                                        <div class="form-group row">
+                                            <label class="col-md-3 col-form-label" required for="end_date">End Date</label>
+                                            <div class="col-md-9">
+                                                <input id="end_date" value="{end_date}" type="text" name="end_date" class="form-control" required='true'>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-12">
+                                        <div class="form-group row">
+                                            <label class="col-md-3 col-form-label required">{_('Register Date')}</label>
+                                            <div class="col-md-9">
+                                                <input type="text" name='register_date' id='register_date' class="form-control" value="{added_date}" disabled="true">
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {campaign_document_table_html}
+        """
+        return html
+
+    def get_campaign_document_table_dbase_query(self, drawer_id, *args, **kwargs):
+        return MEDIA.get_files_for_drawer(drawer_id, LIMIT)
+
+    def get_campaign_document_table(self, campaign_id, drawer_id, *args, **kwargs):
+        dbase_query = self.get_campaign_document_table_dbase_query(drawer_id)
+
+        img_active = "<img src='/images/icon_check.png' />"
+        img_inactive = "<img src='/images/icon_cross.png' />"
+
+        outputlist = []
+        for this_file in dbase_query:
+            active = img_active
+            disable_text = 'Remove'
+            if not item.bln_active:
+                active = img_inactive
+                disable_text = 'Recover'
+
+            outputlist.append({
+                'name': this_file.name,
+                'description': this_file.description,
+                'disable' : f"<div class='campaign_media_active' active='{item.bln_active}' campaign_id='{campaign_id}' drawer_id='{drawer_id}'>{disable_text}</div>",
+            })
+        dbcolumnlist = [
+            'name',
+            'description',
+            'disable',
+        ]
+        theadlist = [
+            'File Name',
+            'File Description',
+            'Remove',
+        ]
+        tdclasslist = [
+            '',
+            '',
+            'action_link text-right',
+        ]
+
+        return build_html_table(outputlist, dbcolumnlist, theadlist, "campaign_document_table", tdclasslist)
+
+    def get_campaign_document_html(self, *args, **kwargs):
+        campaign_id = kwargs.get('campaign_id', None)
+        drawer_id = kwargs.get('drawer_id', None)
+        if not drawer_id: return ''
+
+        campaign_document_table = self.get_campaign_document_table(campaign_id, drawer_id)
+        html = f"""
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="row d-flex">
+                            <div class="col-md-6">
+                                <h4 class="card-title">{_('Campaign Media')}</h4>
+                            </div>
+                            <div class="col-md-6 text-right">
+                                <button id="create_new_campaign_media" class="btn btn-primary ml-auto" campaign_id="{campaign_id}">{_('New Media')}</button>
+                            </div>
+                        </div>
+                        <hr>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            {campaign_document_table}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        return html
+
+    @expose()
+    def get_javascript_edit_campaign_onload(self, *args, **kwargs):
+        javascript = """
+        $("#start_date").datetimepicker({ format: 'DD-MM-YYYY' });
+        $("#end_date").datetimepicker({ format: 'DD-MM-YYYY' });
+        $('#save_edit_campaign').click(function(){
+            var valid = FormIsValid('#edit_campaign');
+            if(valid){
+                var formserial = $('#edit_campaign').serialize();
+                $.post('/campaign/save_edit_campaign?', formserial, function(data){
+                    $.redirect('/campaign/index');
+                    return false;
+                });
+            }
+        });
+        $('#back_campaign').click(function(){
+            $.redirect('/campaign/index');
+        });
+        $("#create_new_campaign_media").click(function(){
+            var data = {campaign_id : $(this).attr('campaign_id'), };
+            $('#dialogdiv').load('/campaign/get_new_modal_campaign_media?', data, function(data){
+                return false;
+            });
+        });
+        $(".campaign_media_active").click(function(){
+            var text = $(this).html();
+            var data = {campaign_media_id : $(this).attr('campaign_media_id')};
+            var kwargs = {'campaign_id': $('#campaign_id').attr('value')};
+            $.post('/campaign/toggle_campaign_media_active?', data, function(data){
+                location.reload();
+                return false;
+            });
+        });
+        $(".campaign_state_active").click(function(){
+            var data = {campaign_state_id : $(this).attr('campaign_state_id')};
+            var kwargs = {'campaign_id': $('#campaign_id').attr('value')};
+            console.log(data)
+            $.post('/campaign/toggle_campaign_state_active?', data, function(data){
+                location.reload();
+                return false;
+            });
+        });
+        $("#terminate_btn").click(function(){
+            var kwargs = {'campaign_id': $('#campaign_id').attr('value')};
+            $.post('/campaign/terminate_campaign?', kwargs, function(data){
+                location.reload();
+                return false;
+            });
+        });
+        $("#activate_btn").click(function(){
+            var kwargs = {'campaign_id': $('#campaign_id').attr('value')};
+            $.post('/campaign/activate_campaign?', kwargs, function(data){
+                location.reload();
+                return false;
+            });
+        });
+        $("#suspend_btn").click(function(){
+            var kwargs = {'campaign_id': $('#campaign_id').attr('value')};
+            $.post('/campaign/suspend_campaign?', kwargs, function(data){
+                location.reload();
+                return false;
+            });
+        });
+        """
+        return javascript
+
+    @expose()
+    def terminate_campaign(self, *args, **kwargs):
+        campaign_id = kwargs.get('campaign_id', None)
+        if not campaign_id:
+            return 'false'
+        this = Campaign.by_id(campaign_id)
+        if not this:
+            return 'false'
+        this.campaign_state_type_id = TERMINATED
+        DBSession.flush()
+        return 'true'
+
+    @expose()
+    def activate_campaign(self, *args, **kwargs):
+        campaign_id = kwargs.get('campaign_id', None)
+        if not campaign_id:
+            return 'false'
+        this = Campaign.by_id(campaign_id)
+        if not this:
+            return 'false'
+        this.campaign_state_type_id = ACTIVE
+        DBSession.flush()
+        return 'true'
+
+    @expose()
+    def suspend_campaign(self, *args, **kwargs):
+        campaign_id = kwargs.get('campaign_id', None)
+        if not campaign_id:
+            return 'false'
+        this = Campaign.by_id(campaign_id)
+        if not this:
+            return 'false'
+        this.campaign_state_type_id = SUSPENDED
+        DBSession.flush()
+        return 'true'
+
+    @expose()
+    def save_edit_campaign(self, *args, **kwargs):
+
+        campaign_id = kwargs.get('campaign_id', None)
+        if not campaign_id: return json.dumps({'success': False, 'data': 'No Campaign Id Found', 'status': 'danger'})
+        this = Campaign.by_id(campaign_id)
+        if not this: return json.dumps({'success': False, 'data': 'No Campaign Found', 'status': 'danger'})
+
+        usernow = request.identity.get('user', None)
+        start_date = kwargs.get('start_date', None)
+        end_date = kwargs.get('end_date', None)
+        start_date = str_to_date(start_date)
+        end_date = str_to_date(end_date)
+        start_date = start_date.date()
+        end_date = end_date.date()
+        start_date = start_date.isoformat()
+        end_date = end_date.isoformat()
+
+        this.code = kwargs.get('code', None)
+        this.name = kwargs.get('name', None)
+        this.campaign_type_id = kwargs.get('campaign_type_id', None)
+        this.start_date = start_date
+        this.end_date = end_date
+        DBSession.flush()
+        return json.dumps({'success': True, 'campaign_id': this.id, 'status': 'success'})
+
+    @expose()
+    def toggle_campaign_state_active(self, *args, **kwargs):
+        campaign_id = kwargs.get('campaign_id', None)
+        campaign_state_id = kwargs.get('campaign_state_id', None)
+        if not campaign_state_id: return 'true'
+        this = CampaignState.by_id(campaign_state_id)
+        # this = DBSession.query(CampaignState).\
+        #     filter(CampaignState.id == campaign_state_id).\
+        #     first()
+        if not this: return 'true'
+
+        if this.bln_active:
+            this.bln_active = False
+        else:
+            this.bln_active = True
+        DBSession.flush()
+        return 'true'
+
+    @expose()
+    def toggle_campaign_media_active(self, *args, **kwargs):
+        # campaign_id = kwargs.get('campaign_id', None)
+        # campaign_media_id = kwargs.get('campaign_media_id', None)
+        # if not campaign_media_id: return 'true'
+
+        # this = CampaignMedia.by_id(campaign_media_id)
+        # # this = DBSession.query(CampaignMedia).\
+        # #     filter(CampaignMedia.id == campaign_media_id).\
+        # #     first()
+        # if not this: return 'true'
+
+        # if this.bln_active:
+        #     this.bln_active = False
+        # else:
+        #     this.bln_active = True
+        # DBSession.flush()
+        return 'true'
+
+    @expose()
+    def get_new_modal_campaign_media(self, *args, **kwargs):
+        campaign_id = kwargs.get('campaign_id', None)
+        if not campaign_id: return ''
+        card_title = _('New Campaign Media')
+        campaign = Campaign.by_id(campaign_id)
+        hidden_input = get_hidden_input(**{'id': 'campaign_id', 'value': campaign_id})
+        html = f"""
+            <div class="modal fade" id="dialog_campaign_media" tabindex="-1" role="dialog" aria-labelledby="mycampaignLabel" aria-hidden="true">
+                <div class="modal-dialog modal-dialog-centered modal-lg">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <div class="col-md-6">
+                                <h4 class="card-title">{card_title}</h4>
+                            </div>
+                        </div>
+                        <div class="modal-body">
+                            <form id='form_campaign_media'>
+                               {hidden_input}
+                            </form>
+                        </div>
+                        <div class="modal-footer">
+                            <button id='save_campaign_media' class="btn btn-primary">Save</button>
+                            <button id="campaign_media_back" class="btn btn-outline-primary">Cancel</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        """
+        javascript = """
+            <script src=''>
+                setFormValidation('#form_campaign_media');
+                var form_id = '#form_campaign_media'
+                $('#save_campaign_media').click(function(){
+                    var valid = FormIsValid('#form_campaign_media');
+                    if(valid){
+                        var formserial = $(form_id).serialize();
+                    }
+                    $('#dialog_campaign_media').modal('hide');
+                });
+                $('#campaign_media_back').click(function(){
+                    $('#dialog_campaign_media').modal('hide');
+                });
+                $('#dialog_campaign_media').modal();
+            </script>
+     	"""
+        return html + javascript
+
+
+########################################################################
+# Campaign Types
+#######################################################################
+
+    @require(predicates.not_anonymous())
+    @expose('rocket.templates.generic')
+    def campaign_types(self, *args, **kwargs):
+        kwargs['searchkey'] = SEARCHKEY_CAMPAIGN_TYPE
+        searchphrase = COMMON.get_searchphrase(**kwargs)
+        title = "Campaign Types"
+        html = self.get_active_campaign_type_html(*args, **kwargs)
+        javascript = self.get_javascript_campaign_type_onload()
+        return dict(title=title, html=html, javascript=javascript)
+
+    @expose()
+    def get_active_campaign_type_html(self, *args, **kwargs):
+        searchphrase = kwargs.get('searchphrase', '')
+        campaign_type_table = self.get_campaign_type_table()
+        html = f"""
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                <div class="card-header">
+                    <div class="row d-flex">
+                        <div class="col-md-6">
+                            <h4 class="card-title">{_('Campaign Types')}</h4>
+                        </div>
+                        <div class="col-md-6 text-right">
+                            <button id="create_new_campaign_type" class="btn btn-primary ml-auto">Create New Campaign Type</button>
+                        </div>
+                    </div>
+                    <div class="row d-flex align-items-center">
+                        <div class="col-md-4">
+                            <input type="text" class="form-control search" name="searchphrase"  id='searchphrase'  value='{searchphrase}' placeholder="Search">
+                        </div>
+                        <div class="col-md-8">
+                            <button class="btn btn-primary" id="action_search">Search</button>
+                            <button class="btn btn-primary" id="action_reset">Reset</button>
+                        </div>
+                    </div>
+                    <hr>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive" id='div_campaign_type_table'>
+                        {campaign_type_table}
+                    </div>
+                </div>
+                </div>
+            </div>
+        </div>
+        """
+        return html
+
+    @expose()
+    def get_javascript_campaign_type_onload(self, *args, **kwargs):
+        javascript = """
+        $("#create_new_campaign_type").click(function(){
+            $('#dialogdiv').load('/campaign/get_modal_campaign_type?', function(data){
+                return false;
+            });
+        });
+        $(".campaign_type_edit").click(function(){
+            var kwargs = 'campaign_type_id='+$(this).attr('campaign_type_id');
+            $('#dialogdiv').load('/campaign/get_modal_campaign_type?', kwargs, function(data){
+                return false;
+            });
+        });
+        $('#action_search').click(function(){
+            var kwargs = 'searchphrase='+$('#searchphrase').val();
+            $('#div_campaign_type_table').load('/campaign/get_campaign_type_table', kwargs, function(data){
+                return false;
+            });
+        })
+        $('#action_reset').click(function(){
+            $('#searchphrase').val('').focus();
+            $('#div_campaign_type_table').load('/campaign/get_campaign_type_table', 'reset=true', function(data){
+                return false;
+             });
+         })
+        """
+        return javascript
+
+    @expose()
+    def get_campaign_type_table(self, *args, **kwargs):
+        searchphrase = kwargs.get('searchphrase', '')
+        if searchphrase:
+            searchphrase = '%'+searchphrase+'%'
+            dbase_query = DBSession.query(CampaignType). \
+                filter(CampaignType.name.like(searchphrase)). \
+                filter(CampaignType.bln_active == 1). \
+                order_by(asc(CampaignType.name)).\
+                limit(LIMIT)
+        else:
+            dbase_query = DBSession.query(CampaignType). \
+                filter(CampaignType.bln_active == 1). \
+                order_by(asc(CampaignType.name)).\
+                limit(LIMIT)
+
+        outputlist = []
+        for item in dbase_query:
+            outputlist.append({
+                'name' : "<div class='edit action_link campaign_type_edit' campaign_type_id='{1}'>{0}</div>".format(item.name, item.id), })
+        dbcolumnlist=[
+                'name',
+                    ]
+        theadlist=[
+                'Name',
+                ]
+        return build_html_table(outputlist, dbcolumnlist, theadlist, "campaign_type_table")
+
+    @expose()
+    def get_modal_campaign_type(self, *args, **kwargs):
+        campaign_type_id = kwargs.get('campaign_type_id', None)
+        campaign_type = None
+        hidden_input = ''
+        card_title = _('New Campaign Type')
+        if campaign_type_id:
+            card_title = _('Edit Campaign Type')
+            campaign_type = CampaignType.by_id(campaign_type_id)
+            hidden_input = get_hidden_input(**{'id': 'campaign_type_id', 'value': campaign_type_id})
+        name = campaign_type.name if campaign_type else ''
+        checkbox_active = COMMON.get_checkbox_active_boolean(campaign_type.bln_active) if campaign_type else ''
+        html = f"""
+        <div class="modal fade" id="dialog_campaign_type" tabindex="-1" role="dialog" aria-labelledby="mycampaign_typeLabel" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <div class="col-md-6">
+                            <h4 class="card-title">{card_title}</h4>
+                        </div>
+                    </div>
+                    <div class="modal-body">
+                        <form id='form_campaign_type'>
+                            {hidden_input}
+                            <div class="col-md-12">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label" required for="name">Name</label>
+                                    <div class="col-md-9">
+                                        <input id="name" value="{name}" type="text" name="name" class="form-control" required='true'>
+                                    </div>
+                                </div>
+                            </div>
+                            {checkbox_active}
+                        </form>
+                    </div>
+                    <div class="modal-footer">
+                        <button id='save_campaign_type' class="btn btn-primary">Save</button>
+                        <button id='campaign_type_back' class="btn btn-outline-primary">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        javascript = """
+        <script src=''>
+            var form_id = '#form_campaign_type'
+            setFormValidation(form_id);
+            $('#save_campaign_type').click(function(){
+                var valid = FormIsValid(form_id);
+                if(valid){
+                    var formserial = $(form_id).serialize();
+                    $.post('/campaign/save_campaign_type?', formserial, function(data){
+                        var result = JSON.parse(data);
+                        if(result.success === true){
+                            $.redirect('/campaign/campaign_types');
+                        };
+                        showNotification(result.status, result.data);
+                        return false;
+                    });
+                }
+            });
+            $('#campaign_type_back').click(function(){
+                $('#dialog_campaign_type').modal('hide');
+            });
+            $('#dialog_campaign_type').modal();
+        </script>
+     	"""
+        return html + javascript
+
+    @expose()
+    def save_campaign_type(self, *args, **kwargs):
+        usernow = request.identity.get('user', None)
+        name = kwargs.get('name', None)
+        campaign_type_id = kwargs.get('campaign_type_id', None)
+        if not campaign_type_id:
+            exists = CampaignType.by_attr_first('name', name)
+        else:
+            exists = DBSession.query(CampaignType).\
+                filter(CampaignType.id!=campaign_type_id).\
+                filter(CampaignType.name==name).\
+                first()
+        if exists:
+            return json.dumps({'success': False, 'data': 'May not create duplicate.', 'status': 'danger'})
+
+        if not campaign_type_id:
+            this = CampaignType()
+            this.name = name
+            this.added_by = usernow.id
+            DBSession.add(this)
+        else:
+            this = CampaignType.by_id(campaign_type_id)
+            if not this:
+                return json.dumps({'success': False, 'data': 'Unable to find Campaign Type.', 'status': 'danger'})
+
+            active = kwargs.get('active', False)
+            if active:
+                active = True
+            this.bln_active = active
+
+            this.name = name
+            DBSession.flush()
+        return json.dumps({'success': True, 'data': this.id})

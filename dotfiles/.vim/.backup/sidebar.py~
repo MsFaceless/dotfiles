@@ -1,0 +1,378 @@
+#!/bin/python
+# -*- coding: utf-8 -*-
+
+from tg import expose, request
+
+from tg.i18n import ugettext as _
+from tg.i18n import lazy_ugettext as l_
+
+from rocket.lib.base import BaseController
+
+class SidebarController(BaseController):
+
+    @expose()
+    def get_html(self, *args, **kwargs):
+        if not request.identity:
+            return ''
+
+        home = self.get_sidebar_home()
+        profile = self.get_sidebar_profile()
+        people = self.get_sidebar_people()
+
+        product = ''
+        product = self.get_sidebar_product()
+
+        policy = ''
+        policy = self.get_sidebar_policy()
+
+        claim = ''
+        claim = self.get_sidebar_claim()
+
+        telephony = ''
+        #telephony = self.get_sidebar_telephony()
+
+        appointments = ''
+        #appointments = self.get_sidebar_appointments()
+
+        setup = self.get_sidebar_setup()
+
+        reports = ''
+        #reports = self.get_sidebar_reports()
+
+        in_progress = ''
+        #in_progress = self.get_sidebar_in_progress()
+
+        html = f"""
+        <div class="sidebar-wrapper" id="sidebar-wrapper">
+            {home}
+            <ul class="nav">
+                {profile}
+                {people}
+                {product}
+                {policy}
+                {claim}
+                {telephony}
+                {appointments}
+                {reports}
+                {setup}
+                {in_progress}
+            </ul>
+        </div>
+        """
+        javascript = """
+        <script src=''>
+            $(document).ready(function(){
+                var origin = window.location.origin;
+                var url = window.location.href.replace(origin, '');
+                $('.sidebar-wrapper a').each(function(){
+                    var href = $(this).attr('href');
+                    if(href === url){
+                        $(this).closest('li').addClass('active');
+                        $(this).closest('li').parent().closest('div').addClass('show');
+                        $(this).closest('li').parent().closest('li').addClass('active');
+                        $(this).closest('li').parent().closest('a').attr('aria-expanded', true);
+                    };
+                });
+            });
+        </script>
+        """
+        return html + javascript
+
+    def get_sidebar_home(self, *args, **kwargs):
+        if not request.identity:
+            return ''
+
+        html = """
+        <div class="logo">
+            <a href="/" class="simple-text logo-mini">
+                <i class="now-ui-icons objects_spaceship"></i>
+            </a>
+            <a href="/" class="simple-text logo-normal">
+                Rocket
+            </a>
+        </div>
+        """
+        return html
+
+    def get_sidebar_profile(self, *args, **kwargs):
+        if not request.identity:
+            return ''
+
+        usernow = request.identity.get('user')
+
+        kwargs['div_id'] = 'profileCollapse'
+        kwargs['name'] = f'Hi, {usernow.name}'
+        kwargs['now_ui_icon'] = 'users_single-02'
+
+        profile = self.create_nav_li(**{'icon_text': 'MP', 'name': 'My Profile', 'link': '/profile/index'})
+        dms = self.create_nav_li(**{'icon_text': 'DMS', 'name': 'Documents', 'link': '/media/manage', 'role_list' : ['DMS User']})
+        privacy = self.create_nav_li(**{'icon_text': 'PR', 'name': 'Privacy', 'link': '/privacy'})
+        logout = self.create_nav_li(**{'icon_text': 'L', 'name': 'Logout', 'link': '/logout'})
+
+        kwargs['ul_list'] = [
+            profile,
+            dms,
+            privacy,
+            logout
+        ]
+        return self.create_accord_li(**kwargs)
+
+    def get_sidebar_people(self, *args, **kwargs):
+        if not request.identity:
+            return ''
+
+        kwargs['div_id'] = 'peopleCollapse'
+        kwargs['name'] = 'People'
+        kwargs['now_ui_icon'] = 'clothes_tie-bow'
+
+        members = self.create_nav_li(**{'icon_text': 'M', 'name': 'Members', 'link': '/members/index', 'role_list' : ['Administrator', 'Membership']})
+        organisation = self.create_nav_li(**{'icon_text': 'OG', 'name': 'Organisation', 'link': '/entity/index', 'role_list' : ['Administrator', 'Catalog Maintenance']})
+        #intermediaries = self.create_nav_li(**{'icon_text': 'IN', 'name': 'Intermediaries', 'link': '/intermediary/index', 'role_list' : ['Administrator', 'Catalog Maintenance']})
+
+        kwargs['ul_list'] = [
+            members,
+            organisation,
+            #intermediaries,
+        ]
+        return self.create_accord_li(**kwargs)
+
+    def get_sidebar_product(self, *args, **kwargs):
+        if not request.identity:
+            return ''
+
+        kwargs['div_id'] = 'productCollapse'
+        kwargs['name'] = 'Product'
+        kwargs['now_ui_icon'] = 'design_app'
+
+        product = self.create_nav_li(**{'icon_text': 'P', 'name': 'Products', 'link': '/product/index', 'role_list' : ['Administrator', 'Product Setup']})
+        loaders = self.create_nav_li(**{'icon_text': 'BL', 'name': 'Benefit Loaders', 'link': '/setup/loaders', 'role_list' : ['Administrator', 'Product Setup']})
+        excess = self.create_nav_li(**{'icon_text': 'E', 'name': 'Excess', 'link': '/product/excess', 'role_list' : ['Administrator', 'Product Setup']})
+        rate_tables = self.create_nav_li(**{'icon_text': 'RT', 'name': 'Rate Tables', 'link': '/product/premium_rates', 'role_list' : ['Administrator', 'Product Setup']})
+        rounding_rates = self.create_nav_li(**{'icon_text': 'RR', 'name': 'Rounding Rates', 'link': '/setup/rounding_rates', 'role_list' : ['Administrator', 'Product Setup']})
+        claim_question = self.create_nav_li(**{'icon_text': 'CQ', 'name': 'Claim Questions', 'link': '/setup/claim_questions', 'role_list' : ['Administrator', 'Product Setup']})
+        cover_and_exclusion = self.create_nav_li(**{'icon_text': 'CE', 'name': 'Cover & Exclusions', 'link': '/setup/cover_exclusions', 'role_list' : ['Administrator', 'Product Setup']})
+        vehicle_category = self.create_nav_li(**{'icon_text': 'VC', 'name': 'Vehicle Category', 'link': '/setup/vehicle_category', 'role_list' : ['Administrator', 'Catalog Maintenance']})
+        alloc = self.create_nav_li(**{'icon_text': 'A', 'name': 'Allocations', 'link': '/product/allocations', 'role_list' : ['Administrator', 'Product Setup']})
+        gl_accounts = self.create_nav_li(**{'icon_text': 'GL', 'name': 'GL Accounts', 'link': '/product/gl_accounts', 'role_list' : ['Administrator', 'Product Setup']})
+
+        kwargs['ul_list'] = [
+            product,
+            loaders,
+            excess,
+            rate_tables,
+            rounding_rates,
+            claim_question,
+            cover_and_exclusion,
+            vehicle_category,
+            alloc,
+            gl_accounts,
+        ]
+        return self.create_accord_li(**kwargs)
+
+    def get_sidebar_telephony(self, *args, **kwargs):
+        if not request.identity:
+            return ''
+
+        kwargs['div_id'] = 'telephonyCollapse'
+        kwargs['name'] = 'Telephony'
+        kwargs['now_ui_icon'] = 'tech_headphones'
+
+        #call_center = self.create_nav_li(**{'icon_text': 'CC', 'name': 'Call Center', 'link': '/call_center/view', 'role_list' : ['Call Center']})
+        #call_center_admin = self.create_nav_li(**{'icon_text': 'CA', 'name': 'Call Center Admin', 'link': '/call_center/admin', 'role_list' : ['Call Center Admin']})
+        call_center_workflow = self.create_nav_li(**{'icon_text': 'CW', 'name': 'Call Center Admin', 'link': '/call_center/index', 'role_list' : ['Call Center Admin']})
+
+        kwargs['ul_list'] = [
+            #call_center,
+            #call_center_admin,
+            call_center_workflow,
+        ]
+        return self.create_accord_li(**kwargs)
+
+    def get_sidebar_appointments(self, *args, **kwargs):
+        if not request.identity:
+            return ''
+
+        kwargs['div_id'] = 'appointmentsCollapse'
+        kwargs['name'] = 'Appointments'
+        kwargs['now_ui_icon'] = 'ui-1_calendar-60'
+
+        reception = self.create_nav_li(**{'icon_text': 'AR', 'name': 'Reception', 'link': '/appointment/reception', 'role_list' : ['Appointments']})
+        appointments = self.create_nav_li(**{'icon_text': 'AP', 'name': 'Appointments', 'link': '/appointment/index', 'role_list' : ['Appointments']})
+        roles = self.create_nav_li(**{'icon_text': 'AR', 'name': 'Roles', 'link': '/appointment/roles', 'role_list' : ['Appointments']})
+        branches = self.create_nav_li(**{'icon_text': 'AB', 'name': 'Branches', 'link': '/appointment/branches', 'role_list' : ['Appointments']})
+        defaults = self.create_nav_li(**{'icon_text': 'AA', 'name': 'Defaults', 'link': '/appointment/admin', 'role_list' : ['Appointments']})
+
+        kwargs['ul_list'] = [
+            reception,
+            appointments,
+            roles,
+            branches,
+            defaults,
+        ]
+        return self.create_accord_li(**kwargs)
+
+    def get_sidebar_policy(self, *args, **kwargs):
+        if not request.identity:
+            return ''
+
+        kwargs['div_id'] = 'policyCollapse'
+        kwargs['name'] = 'Policy'
+        kwargs['now_ui_icon'] = 'design_bullet-list-67'
+
+        policy_mgmt = self.create_nav_li(**{'icon_text': 'PN', 'name': 'Policy Management', 'link': '/policy/index', 'role_list' : ['Administrator', 'Catalog Maintenance']})
+        policy_new = self.create_nav_li(**{'icon_text': 'NP', 'name': 'New Policy', 'link': '/policy/new', 'role_list': ['Administrator', 'Catalog Maintenance']})
+        #debit_order = self.create_nav_li(**{'icon_text': 'DO', 'name': 'Debit Order', 'link': '/debit_order/index', 'role_list': ['Administrator', 'Catalog Maintenance']})
+
+        kwargs['ul_list'] = [
+            policy_mgmt,
+            policy_new,
+            #debit_order
+        ]
+        return self.create_accord_li(**kwargs)
+
+    def get_sidebar_claim(self, *args, **kwargs):
+        if not request.identity:
+            return ''
+
+        kwargs['div_id'] = 'claimCollapse'
+        kwargs['name'] = 'Claim'
+        kwargs['now_ui_icon'] = 'media-2_sound-wave'
+
+        claim = self.create_nav_li(**{'icon_text': 'CL', 'name': 'Claims', 'link': '/claim/index', 'role_list' : ['Claim Registration']})
+
+        kwargs['ul_list'] = [
+            claim,
+        ]
+        return self.create_accord_li(**kwargs)
+
+    def get_sidebar_reports(self, *args, **kwargs):
+        if not request.identity:
+            return ''
+
+        kwargs['name'] = 'Reports'
+        kwargs['div_id'] = 'reportsCollapse'
+        kwargs['now_ui_icon'] = 'business_chart-bar-32'
+
+        policy_sales = self.create_nav_li(**{'icon_text': 'PS', 'name': 'Policy Sales', 'link': '/reports/policy_sales', 'role_list' : ['Administrator', 'StatisticalReports', 'FinancialReports']})
+        alloc_report = self.create_nav_li(**{'icon_text': 'AR', 'name': 'Allocation Report', 'link': '/reports/allocations', 'role_list' : ['Administrator', 'StatisticalReports', 'FinancialReports']})
+        gl_account_report = self.create_nav_li(**{'icon_text': 'GL', 'name': 'GL Extract', 'link': '/reports/gl_accounts', 'role_list' : ['Administrator', 'FinancialReports']})
+
+        kwargs['ul_list'] = [
+            policy_sales,
+            alloc_report,
+            gl_account_report,
+        ]
+        return self.create_accord_li(**kwargs)
+
+    def get_sidebar_setup(self, *args, **kwargs):
+        if not request.identity:
+            return ''
+
+        kwargs['name'] = 'Setup'
+        kwargs['div_id'] = 'setupCollapse'
+        kwargs['now_ui_icon'] = 'loader_gear'
+
+        users_access = self.create_nav_li(**{'icon_text': 'UA', 'name': 'Users & Access', 'link': '/useraccess/index', 'role_list' : ['Administrator', 'Catalog Maintenance']})
+        dms_admin = self.create_nav_li(**{'icon_text': 'DM', 'name': 'DMS Admin', 'link': '/media/admin', 'role_list' : ['DMS Administrator']})
+        holiday = self.create_nav_li(**{'icon_text': 'HL', 'name': 'Holiday', 'link': '/setup/holiday', 'role_list' : ['Administrator', 'Catalog Maintenance']})
+        banks = self.create_nav_li(**{'icon_text': 'BA', 'name': 'Banks', 'link': '/setup/banks', 'role_list' : ['Administrator', 'Catalog Maintenance']})
+        currencies = self.create_nav_li(**{'icon_text': 'CR', 'name': 'Currencies', 'link': '/setup/currencies', 'role_list' : ['Administrator', 'Catalog Maintenance']})
+        location = self.create_nav_li(**{'icon_text': 'LO', 'name': 'Locations', 'link': '/location/index', 'role_list' : ['Administrator', 'Catalog Maintenance']})
+        system_documents = self.create_nav_li(**{'icon_text': 'SD', 'name': 'System Documents', 'link': '/setup/system_documents', 'role_list' : ['Administrator', 'Catalog Maintenance']})
+        mail_merge = self.create_nav_li(**{'icon_text': 'MM', 'name': 'Mail Merge', 'link': '/setup/mail_merge', 'role_list' : ['Administrator', 'Catalog Maintenance']})
+        branding = self.create_nav_li(**{'icon_text': 'BR', 'name': 'Branding', 'link': '/branding', 'role_list' : ['Administrator', 'Catalog Maintenance']})
+
+        kwargs['ul_list'] = [
+            users_access,
+            dms_admin,
+            holiday,
+            banks,
+            currencies,
+            location,
+            system_documents,
+            mail_merge,
+            branding,
+        ]
+        return self.create_accord_li(**kwargs)
+
+    def get_sidebar_in_progress(self, *args, **kwargs):
+        if not request.identity:
+            return ''
+
+        kwargs['name'] = 'In Progress'
+        kwargs['div_id'] = 'inprogressCollapse'
+        kwargs['now_ui_icon'] = 'ui-2_settings-90'
+
+        campaign = self.create_nav_li(**{'icon_text': 'CA', 'name': 'Campaigns', 'link': '/campaign/index', 'role_list' : ['Campaign']})
+        campaign_types = self.create_nav_li(**{'icon_text': 'CT', 'name': 'Campaign Types', 'link': '/campaign/campaign_types', 'role_list' : ['Campaign']})
+        batchimport = self.create_nav_li(**{'icon_text': 'BI', 'name': 'Batch Import', 'link': '/batchimport/index', 'role_list' : ['Batch Import']})
+        collections = self.create_nav_li(**{'icon_text': 'CO', 'name': 'Collections', 'link': '/collections/index', 'role_list' : ['Collections']})
+        system_params = self.create_nav_li(**{'icon_text': 'SP', 'name': 'System Params', 'link': '/setup/system_params', 'role_list' : ['Developer']})
+        audit = self.create_nav_li(**{'icon_text': 'AT', 'name': 'Audits', 'link': '/setup/audit', 'role_list' : ['Administrator', 'Catalog Maintenance']})
+
+        kwargs['ul_list'] = [
+            campaign,
+            campaign_types,
+            batchimport,
+            collections,
+            system_params,
+            audit,
+        ]
+        return self.create_accord_li(**kwargs)
+
+    def create_nav_li(self, *args, **kwargs):
+        if not request.identity:
+            return ''
+
+        link = kwargs.get('link', '/')
+        name = kwargs.get('name', '')
+        icon_text = kwargs.get('icon_text', '')
+
+        role_list = kwargs.get('role_list', [])
+        role_list = [str(r).lower() for r in role_list]
+
+        if role_list:
+            user_roles = request.identity.get('user', {}).roles
+            user_roles = [str(r.name).lower() for r in user_roles]
+            matches = [role for role in role_list if role in user_roles]
+            if not matches:
+                return ''
+
+        return f"""
+        <li>
+          <a href="{link}">
+            <span class="sidebar-mini-icon ellipsis">{icon_text}</span>
+            <span class="sidebar-normal ellipsis">{name}</span>
+          </a>
+        </li>
+        """
+
+    def create_accord_li(self, *args, **kwargs):
+        name = kwargs.get('name', '')
+        div_id = kwargs.get('div_id', '')
+        now_ui_icon = kwargs.get('now_ui_icon', '')
+        ul_list = kwargs.get('ul_list', [])
+        if not ul_list:
+            return ''
+
+        inner_html = ''
+        for item in ul_list:
+            inner_html += item
+
+        if not inner_html:
+            return ''
+
+        html = f"""
+        <li>
+            <a data-toggle="collapse" href="#{div_id}">
+                <i class="now-ui-icons {now_ui_icon}"></i>
+                <p> {name} <b class="caret"></b> </p>
+            </a>
+            <div class="collapse" id="{div_id}">
+                <ul class="nav">
+                    {inner_html}
+                </ul>
+            </div>
+        </li>
+        """
+        return html

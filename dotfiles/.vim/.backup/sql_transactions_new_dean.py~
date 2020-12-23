@@ -1,0 +1,91 @@
+# -*- coding: utf-8 -*-
+
+from rocket.lib.model_utils import PhatBase, common_columns, get_phat_table, get_type_table
+
+
+# ********************* Transaction ***********************************#
+
+TransactionType = get_type_table(model_name='Transaction', table_name='transaction')
+
+columns_tbl_transaction = {
+    '__tablename__': 'tbl_transaction',
+    'transaction_type_id': common_columns.get('integer_not_nullable')(),
+    'amount': common_columns.get('currency')()
+}
+Transaction = get_phat_table(model_name='Transaction', columndict=columns_tbl_transaction)
+
+columns_tbl_transaction_reversal = {
+    '__tablename__': 'tbl_transaction_reversal',
+    'transaction_id': common_columns.get('integer_not_nullable')(),
+    'transaction_reversed_id': common_columns.get('integer_not_nullable')(),
+    'reason': common_columns.get('description')()
+}
+TransactionReversal = get_phat_table(model_name='TransactionReversal', columndict=columns_tbl_transaction_reversal)
+
+# ********************* Income ***********************************#
+
+IncomeType = get_type_table(model_name='Income', table_name='income')
+
+columns_tbl_transaction_income_expected = {
+    '__tablename__': 'tbl_transaction_income_expected',
+    'transaction_id': common_columns.get('integer_not_nullable')(),
+    'date_due_by': common_columns.get('date')(),
+    'income_type_id': common_columns.get('integer_not_nullable')(),
+    'gl_account_id': common_columns.get('integer')(),
+    'allocation_id': common_columns.get('integer')
+}
+TransactionIncomeExpected = get_phat_table(model_name='TransactionIncomeExpected',
+                                           columndict=columns_tbl_transaction_income_expected)
+
+columns_tbl_transaction_income_expected_premium = {
+    '__tablename__': 'tbl_transaction_income_expected_premium',
+    'transaction_income_expected_id': common_columns.get('integer_not_nullable')(),
+    'policy_id': common_columns.get('integer_not_nullable')(),
+}
+TransactionIncomeExpectedPremium = get_phat_table(model_name='TransactionIncomeExpectedPremium',
+                                                  columndict=columns_tbl_transaction_income_expected_premium)
+
+columns_tbl_transaction_income_realised = {
+    '__tablename__': 'tbl_transaction_income_realised',
+    'transaction_id': common_columns.get('integer_not_nullable')(),
+    'transaction_income_expected_id': common_columns.get('integer_not_nullable')(),
+    'date_received_on': common_columns.get('date')(),
+    'gl_account_id': common_columns.get('integer_not_nullable')(),
+    'allocation_id': common_columns.get('integer_not_nullable')(),
+}
+TransactionIncomeRealised = get_phat_table(model_name='TransactionIncomeRealised',
+                                           columndict=columns_tbl_transaction_income_realised)
+
+# ********************* Expense ***********************************#
+
+ExpenseType = get_type_table(model_name='Expense', table_name='expense')
+
+columns_tbl_transaction_expense_expected = {
+    '__tablename__': 'tbl_transaction_expense_expected',
+    'transaction_id': common_columns.get('integer_not_nullable')(),
+    'date_due_by': common_columns.get('date')(),
+    'expense_type_id': common_columns.get('integer_not_nullable')(),
+    'gl_account_id': common_columns.get('integer')(),
+    'allocation_id': common_columns.get('integer')
+}
+TransactionExpenseExpected = get_phat_table(model_name='TransactionExpenseExpected',
+                                            columndict=columns_tbl_transaction_expense_expected)
+
+columns_tbl_transaction_expense_expected_claim = {
+    '__tablename__': 'tbl_transaction_expense_expected_claim',
+    'transaction_expense_expected_id': common_columns.get('integer_not_nullable')(),
+    'claim_id': common_columns.get('integer_not_nullable')(),
+}
+TransactionExpenseExpectedClaim = get_phat_table(model_name='TransactionExpenseExpectedClaim',
+                                                 columndict=columns_tbl_transaction_expense_expected_claim)
+
+columns_tbl_transaction_expense_realised = {
+    '__tablename__': 'tbl_transaction_expense_realised',
+    'transaction_id': common_columns.get('integer_not_nullable')(),
+    'transaction_expense_expected_id': common_columns.get('integer_not_nullable')(),
+    'date_paid': common_columns.get('date')(),
+    'gl_account_id': common_columns.get('integer_not_nullable')(),
+    'allocation_id': common_columns.get('integer_not_nullable')(),
+}
+TransactionExpenseRealised = get_phat_table(model_name='TransactionExpenseRealised',
+                                            columndict=columns_tbl_transaction_expense_realised)

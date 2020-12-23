@@ -1,0 +1,39 @@
+#!/bin/python
+
+import os
+import csv
+
+class CsvWriter():
+    def __init__(self, *args, **kwargs):
+        self.filepath = kwargs.get('filepath', None)
+        self.headers = kwargs.get('headers', None)
+        self.records = kwargs.get('records', [])
+
+    def generate_file(self):
+        with open(self.filepath, 'w') as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=self.headers)
+            writer.writeheader()
+            for data in self.records:
+                data = {k.replace('_', ' ').title() : v for k, v in data.items()}
+                try:
+                    writer.writerow(data)
+                except:
+                    print('something went wrong with this row', data)
+        return True
+
+if __name__ == "__main__":
+    filepath = os.path.join(os.getcwd(), 'testoutfile.csv')
+    print(filepath)
+    writer_payload = {
+            'filepath':filepath,
+            'headers':['Code', 'Description', 'Purchase Method', 'Count'],
+            'records':[
+                {'code':'bewim','description':'bewim', 'purchase_method':'Batch Import', 'count':17},
+                {'code':'bnwgd','description':'bnwgd', 'purchase_method':'Batch Import', 'count':14},
+                {'code':'bnzyy','description':'bnzyy', 'purchase_method':'Batch Import', 'count':17},
+                {'code':'clzrz','description':'clzrz', 'purchase_method':'Batch Import', 'count':17},
+                ],
+            }
+    writer = CsvWriter(**writer_payload)
+    filecreated = writer.generate_file()
+    print(filecreated)

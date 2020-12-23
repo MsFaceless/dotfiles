@@ -1,0 +1,391 @@
+# -*- coding: utf-8 -*-
+
+from __future__ import print_function
+
+import re
+import os
+import json
+import string
+import random
+import locale
+#import requests
+
+from collections import defaultdict
+from babel.numbers import format_decimal
+from sqlalchemy.inspection import inspect
+from pkg_resources import resource_filename
+from datetime import datetime, timedelta, date
+from dateutil.relativedelta import relativedelta
+from tg import request
+from calabash.model import DBSession
+
+from xml.etree import ElementTree
+#from urllib3.exceptions import NewConnectionError
+#from requests.exceptions import ConnectionError as RequestConnectionError
+
+###############################################################################
+# REQUEST HELPERS
+###############################################################################
+
+def error_response(message='', *args, **kwargs):
+    return {
+        'success': False,
+        'data': message
+    }
+
+def success_response(data=None, *args, **kwargs):
+    return {
+        'success': True,
+        'data': data
+    }
+
+###############################################################################
+# HTML HELPERS
+###############################################################################
+
+def confirm_country_code_with_mobile_number(mobile_number=None, *args, **kwargs):
+
+    COUNTRY_CODE = '+27'
+
+    if not mobile_number:
+        return False
+
+    if str(mobile_number).startswith(COUNTRY_CODE):
+        return mobile_number
+
+    if str(mobile_number).startswith('0'):
+        return f'{COUNTRY_CODE}{mobile_number[1:]}'
+
+    return False
+
+def get_random_string(length=16, *args, **kwargs):
+    letters = string.ascii_lowercase
+    return ''.join(random.choice(letters) for i in range(length))
+
+def get_currency_by_locale(value, the_locale='en_ZA.utf-8', cents=True):
+    locale.setlocale(locale.LC_ALL, the_locale)
+    if not value:
+        return locale.currency(0, grouping=True)
+    if cents:
+        try:
+            value = int(value)
+        except:
+            return locale.currency(0, grouping=True)
+        value = value / 100
+    return locale.currency(value, grouping=True)
+
+def generate_random_ten_digit_number():
+    return str(random.randint(1000000000, 9999999999))
+
+def sort_dict_list(thelist, thekey, reverse=False):
+    return sorted(thelist, key=lambda k: k[thekey], reverse=reverse)
+
+def str_to_float(string):
+    """ str_to_float """
+    if not string:
+        return None
+    try:
+        return float(string)
+    except ValueError:
+        return None
+
+def str_to_bool(strbool):
+    """ str_to_bool"""
+    if strbool in ['1', 1, 'true', 'True']:
+        return True
+    if strbool in ['0', 0, 'false', 'False']:
+        return False
+    return None
+
+def str_to_date(strdate, dateformat='%d/%m/%Y'):
+    """ str_to_date """
+    if not strdate:
+        return None
+    if type(strdate)==date:
+        return strdate
+    try:
+        return datetime.strptime(strdate, dateformat)
+    except ValueError:
+        return None
+
+def date_to_str(strdate, dateformat='%d/%m/%Y'):
+    """ date_to_str """
+    if not strdate:
+        return None
+    try:
+        return datetime.strftime(strdate, dateformat)
+    except ValueError:
+        return None
+
+def str_to_int(string):
+    """ str_to_int """
+    if not string:
+        return None
+    try:
+        return int(string)
+    except ValueError:
+        return None
+
+def create_checkbox_html(**kwargs):
+    box_val = kwargs.get('box_val', False)
+    label_text_val = kwargs.get('label_text_val', '') # the label on the right side of the checkbox
+    label_text_class = kwargs.get('label_text_class', '')
+    input_id = kwargs.get('input_id', 'check')
+    checked = 'checked' if box_val else ''
+    return f"""
+        <div class="form-check">
+            <label class="mt-1 checkbox">
+                <input id="{input_id}" type="checkbox" name="{input_id}" {checked}> <span class="label-text {label_text_class}">{label_text_val}</span>
+            </label>
+        </div>
+    """
+
+def create_radio_html(**kwargs):
+    """ create_radio_html """
+    classname = kwargs.get('class', None)
+    name_key = kwargs.get('name_key', None)
+    name_value = kwargs.get('name_value', None)
+    id_key = kwargs.get('id_key', None)
+    id_value = kwargs.get('id_value', None)
+    return f"""
+    <div class="custom-control custom-radio">
+        <input class='form-check-input {classname}'
+                type='radio'
+                name='{classname}'
+                {name_key}='{name_value}'
+                {id_key}='{id_value}'
+        >
+    </div>
+    """
+
+def create_radio_html_orig(**kwargs):
+    """ create_radio_html """
+    classname = kwargs.get('class', None)
+    name_key = kwargs.get('name_key', None)
+    name_value = kwargs.get('name_value', None)
+    id_key = kwargs.get('id_key', None)
+    id_value = kwargs.get('id_value', None)
+    return f"""
+    <div class='form-check form-check-radio'>
+        <label class='form-check-label'>
+            <input class='form-check-input {classname}'
+                   type='radio'
+                   name='{classname}'
+                   {name_key}='{name_value}'
+                   {id_key}='{id_value}'
+            >
+            <span class='form-check-sign'></span>
+        </label>
+    </div>
+    """
+
+def create_selectbox_html(**kwargs):
+    """ create_selectbox_html """
+    selectbox_id = kwargs.get('id', None)
+    disabled = kwargs.get('disabled', None)
+    selected = kwargs.get('selected', None)
+    required = kwargs.get('required', None)
+    attributes = kwargs.get('attributes', '')
+    option_attributes = kwargs.get('option_attributes', '')
+    outputlist = kwargs.get('outputlist', [])
+    class_names = kwargs.get('class_names', '')
+    required = 'required="true"' if required else ''
+    case_sensitive = kwargs.get('case_sensitive', False)
+
+    disabled_text = ''
+    empty_message = kwargs.get('empty_message') if 'empty_message' in kwargs.keys() else 'Select an option...'
+    if not outputlist:
+        disabled_text = "disabled"
+        empty_message = 'No options to select...'
+    if disabled:
+        disabled_text = 'disabled'
+
+    html = f"""
+        <select {disabled_text} class='form-control {class_names}' data-style='form-control' id='{selectbox_id}' name='{selectbox_id}' {attributes} {required}>
+            <option value=''>{empty_message}</option>
+    """
+    for item in outputlist:
+        if case_sensitive: name = item.get('name', None).replace('_', ' ')
+        else: name = item.get('name', None).replace('_', ' ').title()
+        if item.get('id') == selected:
+            html += f"<option selected='true' {item.get('option_attributes')} value='{item.get('id')}'>{name}</option>"
+        else:
+            html += f"<option {item.get('option_attributes')} value='{item.get('id')}' >{name}</option>"
+    html += '</select>'
+
+    return html
+
+def create_boolean_selectbox_html(**kwargs):
+    """ Get Boolean selectbox """
+    selectbox_id = kwargs.get('id', None)
+    selected = kwargs.get('selected', True)
+    html = f"""
+        <select class='form-control' id='{selectbox_id}' name='{selectbox_id}'>
+    """
+    if selected:
+        html += """ <option value=1 selected="selected">True</option>
+                    <option value=0>False</option> """
+    else:
+        html += """ <option value=1>True</option>
+                    <option value=0 selected="selected">False</option> """
+    html += '</select>'
+    return html
+
+def build_html_table_material(rowlist, headerlist, headers, tablename, tdclasslist=None):
+    """ build_html_table """
+    from html import escape
+    html = f"<table class='table table-striped table-no-bordered table-hover' cellspacing='0' width='100%' id='{tablename}'><thead class='text-primary'><tr>"
+    for i, head in enumerate(headers):
+        classname = f"class='{tdclasslist[i]}'" if tdclasslist else ''
+        html += f"<th {classname}>{head}</th>"
+    html += "</tr></thead><tbody>"
+    if rowlist:
+        for row in rowlist:
+            html += '<tr>'
+            for i, _ in enumerate(headerlist):
+                value = row[headerlist[i]]
+                #value = escape(value) if value else ''
+                classname = f"class='{tdclasslist[i]}'" if tdclasslist and tdclasslist[i] else ''
+                html += f'<td {classname}>{value}</td>'
+            html += '</tr>'
+    html += "</tbody></table>"
+    if not rowlist:
+        html += '<tr>No records found...</tr>'
+
+    javascript = f"""
+    <script>
+        $(document).ready(function(){{
+            $('#{tablename} tr').on('click', function(e){{
+                e.preventDefault();
+                $('#{tablename} tr').removeClass('active_tr');
+                $(this).addClass('active_tr');
+                return false;
+            }});
+        }});
+    </script>
+    """
+    return html + javascript
+
+def build_html_table(rowlist, headerlist, headers, tablename, tdclasslist=None, trclass=None):
+    """ build_html_table """
+    from html import escape
+    html = f"<table class='table table-striped' id='{tablename}'><thead><tr>"
+    for i, head in enumerate(headers):
+        classname = f"class='{tdclasslist[i]}'" if tdclasslist else ''
+        html += f"<th {classname}>{head}</th>"
+    html += "</tr></thead><tbody>"
+    row_class = f"class='{trclass}'" if trclass else ''
+    if rowlist:
+        for row in rowlist:
+            html += f'<tr {row_class}>'
+            for i, _ in enumerate(headerlist):
+                value = row[headerlist[i]]
+                #value = escape(value) if value else ''
+                classname = f"class='{tdclasslist[i]}'" if tdclasslist else ''
+                html += f'<td {classname}>{value}</td>'
+            html += '</tr>'
+    if not rowlist:
+        html += '<tr><td class="noRecords">No records found...</td></tr>'
+    html += "</tbody></table>"
+    return html
+
+def build_html_grid_form_header(form_header, form_add_new):
+    if not form_header: form_header='Grid Form'
+    button_html = ''
+    if form_add_new:
+        add_button = build_html_button('btn_add_new', form_add_new)
+        button_html = f"""<div class="col-6 text-right">{add_button}</div>"""
+    html = f"""
+    <div class="row">
+        <div class="col-6">
+            <h4 class="font-weight-bold">{form_header}</h4>
+        </div>
+        {button_html}
+    </div>
+    """
+    return html
+
+def build_html_grid_search():
+    search_button = build_html_button('btn_search', 'Search')
+    reset_button = build_html_button('btn_reset', 'Reset')
+    html = f"""
+    <div class="row faded_row mt-4 mb-4">
+        <form action="" class="form-inline col-sm-12">
+            <input id="searchPhrase" type="text" class=" col-sm-4 form-control mr-sm-2">
+            {search_button}
+            {reset_button}
+        </form>
+    </div>
+    """
+    return html
+
+def build_html_button(btn_id, btn_name):
+    return f""" <button id="{btn_id}" class="btn btn-primary btn-sm">{btn_name}</button> """
+
+def build_html_form(form_id, form_class, params_list):
+    form_content = ""
+
+    for item in params_list:
+        input_id = item.get('input_id', '') # also the key/name for formserial
+        wrapper_class = item.get('wrapper_class', 'row col-md-6') # controls whether the form will have 1/2/3 etc columns, use d-flex to make fields fall in line
+        label_attrs = item.get('label_attrs', '') # any settings like for and data attributes go here
+        label_class = item.get('label_class', 'col-sm-4') # mainly controls width, the default should be enough
+        label_val = item.get('label_val', '') # you need css to have the * appear after a required field, see Tanzanite for an example
+        input_val = item.get('input_val', '')
+        input_attrs = item.get('input_attrs', '') # settings like min, max, required, disabled, data attributes go here
+        input_class = item.get('input_class', 'col-sm-8') # will work for a single input in a line, should you need another input next to it consider input field
+        input_type = item.get('input_type', 'text') # number, text, radio, file, hidden etc
+        input_field = item.get('input_field', '') # works with input type 'custom', here you can enter anything your heart desires, make sure the content fits
+        input_wrapper_class = item.get('input_wrapper_class', '') # d-flex will make multiple inputs stack into one line if their widths allow it
+        if input_type == 'hidden':
+            form_content += f"""
+            <input id="{input_id}" name="{input_id}" {input_attrs} hidden {input_val}/>
+            """
+        elif input_type == 'custom':
+            form_content += f"""
+                <div class="{wrapper_class}">
+                    <label class="{label_class} col-form-label" for="{input_id}" {label_attrs}>{label_val}</label>
+                    <div class="{input_class}">
+                        <div class="form-group {input_id} {input_wrapper_class}">
+                            {input_field}
+                        </div>
+                    </div>
+                </div>
+            """
+        elif input_type == 'button':
+            form_content += f"""
+                <div class="{wrapper_class}">
+                    <label class="{label_class} col-form-label" for="{input_id}" {label_attrs}>{label_val}</label>
+                    <div class="{input_class}">
+                        <div class="form-group {input_id} {input_wrapper_class}">
+                            {input_field}
+                        </div>
+                    </div>
+                </div>
+            """
+        else:
+            form_content += f"""
+                <div class="{wrapper_class}">
+                    <label class="{label_class} col-form-label" for="{input_id}" {label_attrs}>{label_val}</label>
+                    <div class="{input_class}">
+                        <div class="form-group {input_wrapper_class}">
+                            <input type="{input_type}" class="form-control" id="{input_id}" name="{input_id}" {input_attrs} {input_val}/>
+                        </div>
+                    </div>
+                </div>
+            """
+    html = f"""
+    <form id="{form_id}" class="{form_class}">
+        {form_content}
+    </form>
+    """
+    return html
+
+def dbsafe(incoming):
+    """ Replace incoming to be database safe """
+    incoming.replace("'", "\'")
+    incoming.replace('"', '\"')
+    incoming.replace("'\'", "\\")
+    incoming.replace("%", r"\%")
+    incoming.replace("_", r"\_")
+    return incoming

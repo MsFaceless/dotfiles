@@ -1,0 +1,51 @@
+# -*- coding: utf-8 -*-
+from flask import Blueprint, request
+from twilio.rest import Client
+
+from auditLogs.models import DBEvent
+from messenger.bulkSMS import BulkSMSMessenger
+from messenger.sms import SMSMessenger
+from messenger.whatsapp import WhatsappMessenger
+
+messaging = Blueprint("messaging", __name__)
+
+
+# whatsapp = WhatsappMessenger("whatsapp")
+
+
+# bulk_sms = BulkSMSMessenger("bulk_sms")
+SMSMessenger.register_logger(DBEvent)
+WhatsappMessenger.register_logger(DBEvent)
+BulkSMSMessenger.register_logger(DBEvent)
+# bulk_sms.register_logger(DBEvent)
+# sms.register_logger(DBEvent)
+# whatsapp.register_logger(DBEvent)
+
+
+@messaging.route("/sms", methods=["POST"])
+def send_sms():
+
+    success, error = SMSMessenger.send_message_from_content(request.get_json())
+    return {"message_sent": success, "error": error}
+
+
+@messaging.route("/bulk_sms", methods=["POST"])
+def send_bulk_sms():
+
+    success, error = BulkSMSMessenger.send_message_from_content(request.get_json())
+    return {"message_sent": success, "error": error}
+
+
+@messaging.route("/whatsapp", methods=["POST"])
+def send_whatsapp():
+
+    success, error = WhatsappMessenger.send_message_from_content(request.get_json())
+    return {"message_sent": success, "error": error}
+
+
+@messaging.route("/bulk_whatsapp", methods=["POST"])
+def send_bulk_whatsapp():
+
+    content = request.get_json()
+    raise NotImplementedError("This view is not implemented yet")
+    return content

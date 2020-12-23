@@ -1,0 +1,27 @@
+#!/bin/python
+
+import time
+import requests
+
+session = requests.session()
+
+target = "https://testing.calabashpay.co.za"
+sub_target = f"{target}/sub"
+pub_target = f"{target}/pub"
+
+def main():
+    rs = []
+
+    response = session.get(sub_target, params={'id':1})
+    print(response.text)
+
+    while True:
+        headers = {}
+    headers['If-Modified-Since'] = response.headers.get("Last-Modified")
+    headers['If-None-Match'] = response.headers.get("Etag")
+    response = session.get(sub_target, params={'id':1}, headers=headers)
+    print(response.text)
+    time.sleep(0.5)
+
+if __name__ == '__main__':
+    main()

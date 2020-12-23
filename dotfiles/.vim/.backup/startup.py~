@@ -1,0 +1,536 @@
+# -*- coding: utf-8 -*-
+
+def create_defaults():
+    import transaction
+    from calabash.lib.sql_crud_utils import Cruds
+    from calabash.controllers.root import RootController
+    from calabash.controllers.groups import GroupsController
+    from calabash.model import DBSession, Application, CurrentApplication, MessageTemplate, ApplicationTwilioCredentials, MerchantLoyaltyProgram
+
+    CRUDS = Cruds()
+    ROOT = RootController()
+    GROUPS = GroupsController()
+
+    EIFFEL_KEY='ahJzfm15LWltYWxpLXRlc3RpbmdyFAsSB0FwaUtleXMYgICAvMHFpwoM'
+    CALABASH_KEY='ahJzfm15LWltYWxpLXRlc3RpbmdyFAsSB0FwaUtleXMYgICArLCahwoM'
+
+    # APPLICATIONS
+    namelist = [
+        ('Calabash Gateway',        '71823727c1aa4e08b53c0a7f69d77309', CALABASH_KEY),
+        ('Calabash Website',        'a3e4e6affb8342caa2ea444de847142d', CALABASH_KEY),
+        ('Calabash Merchant',       '16e3df0f3cbf447b87510117128c904e', CALABASH_KEY),
+        ('Calabash Mobile',         '85dcac9157c5403599b90bbe60fcb2fc', CALABASH_KEY),
+
+        ('Calabash Campus Mobile',  '1e95e6e426974386a7494a4a7681b098', EIFFEL_KEY),
+        ('Eiffel Corp Admin',       'a24f7e85715d4ba6b76428fb73765eff', EIFFEL_KEY),
+        ('Eiffel Corp Marketplace', '157c7ac43f0d4a169b09e418d676f5df', EIFFEL_KEY),
+            ]
+    for name, guid, api_key in namelist:
+        kwargs = {
+            'table_name' : 'Application',
+            'name' : name,
+            'guid' : guid,
+            'myimali_api_key' : api_key,
+        }
+        exists = Application.by_attr_first('name', kwargs.get('name', None))
+        if not exists:
+            result = CRUDS.create_entry(**kwargs)
+            transaction.commit()
+
+    current = CurrentApplication()
+    current.application_id = 1
+    DBSession.add(current)
+    DBSession.flush()
+    transaction.commit()
+
+    #creds = ApplicationTwilioCredentials()
+    #creds.application_id = 1
+    #creds.account_sid = 'AC83724059b301018de02caea36671ca70'
+    #creds.auth_token = '65ed344f19a4666af9a14425109ce515'
+    #creds.messaging_sid = 'MGee15989cd586b31283cff93ab6c632e7'
+    #creds.twilio_number = '+12562428083'
+    #creds.whatsapp_number = '+14155238886'
+    #DBSession.add(creds)
+    #DBSession.flush()
+    #transaction.commit()
+
+    #loyalty = MerchantLoyaltyProgram()
+    #loyalty.name = 'calabash-cashback-10'
+    #loyalty.percentage = 10
+    #DBSession.add(loyalty)
+    #DBSession.flush()
+    #transaction.commit()
+
+    sale_success_email_plain = """
+    CALABASH CAMPUS Sale Notification {str_datetime}:
+    {amount} paid to {merchant_fullname}. Ref. {reference}
+    Please do not reply to this message as it is sent from an unattended mailbox.
+    """
+    sale_success_email_rich = """
+    <p> CALABASH CAMPUS Sale Notification {str_datetime}: </p>
+    <p> {amount} paid to {merchant_fullname}. Ref. {reference} </p>
+    <b> Please do not reply to this message as it is sent from an unattended mailbox.  </b>
+    """
+
+    transfer_success_email_plain = """
+    CALABASH CAMPUS Transfer Notification {str_datetime}:
+    {amount} transferred to {to_fullname}. Ref. {reference}
+    Please do not reply to this message as it is sent from an unattended mailbox.
+    """
+    transfer_success_email_rich = """
+    <p> CALABASH CAMPUS Transfer Notification {str_datetime}: </p>
+    <p> {amount} transferred to {to_fullname}. Ref. {reference} </p>
+    <b> Please do not reply to this message as it is sent from an unattended mailbox.  </b>
+    """
+
+    login_email_plain = """
+    CALABASH CAMPUS Login Notification {str_datetime}:
+    If this is not you logging in, please call <support details here>.
+    Please do not reply to this message as it is sent from an unattended mailbox.
+    """
+    login_email_rich = """
+    <p> CALABASH CAMPUS Login Notification {str_datetime}: </p>
+    <p> If this is not you logging in, please call <support details here>.  </p>
+    <b> Please do not reply to this message as it is sent from an unattended mailbox.  </b>
+    """
+
+    messagelist = [
+        ('Sale Success', '{amount_in_rands} paid to {to_fullname}. Ref: {reference}'),
+        ('Sale Success Email Plain', sale_success_email_plain),
+        ('Sale Success Email Rich', sale_success_email_rich),
+        ('Transfer Success', '{amount_in_rands} paid to {to_fullname}. Ref: {reference}'),
+        ('Transfer Success Email Plain', transfer_success_email_plain),
+        ('Transfer Success Email Rich', transfer_success_email_rich),
+        ('Refund Success', '{amount_in_rands} received from {merchant_name}. Ref: {reference}'),
+        ('Group Invite', "You've been invited to {groupname} by {username}."),
+        ('Transaction Cancelled', 'Transaction Cancelled.'),
+        ('Premium Ad Success', 'You have successfully purchased a featured ad.'),
+        ('Premium Ad Failure', 'Transaction failed: {reason}.'),
+        ('Marketplace Make Sale Rejected', '{from_name} {from_surname} cancelled the sale.'),
+        ('Mobile Buyer Make Sale Accepted Success', 'You have successfully paid: R {notification.amount}.'),
+        ('Mobile Seller Make Sale Accepted Success', 'Payment received from {to_name} {to_surname}: R {notification.amount}'),
+        ('Mobile Buyer Make Sale Accepted Failure', 'Failed to make payment due to: {reason}'),
+        ('Mobile Seller Make Sale Accepted Failure', 'Payment failed due to: {reason}'),
+        ('Login Email Plain', login_email_plain),
+        ('Login Email Rich', login_email_rich),
+    ]
+    for usage, message in messagelist:
+        message = message.strip()
+        kwargs = {
+            'table_name' : 'MessageTemplate',
+            'usage' : usage,
+            'message' : message,
+        }
+        exists = MessageTemplate.by_attr_first('usage', kwargs.get('usage', None))
+        if not exists:
+            result = CRUDS.create_entry(**kwargs)
+            transaction.commit()
+
+    # USER - alexawilliams
+    kwargs = {
+        'student_number': 'alexawilliams',
+        'mobile': '0765295540',
+        'title': 'Ms.',
+        'name': 'Alexa',
+        'surname': 'Williams',
+        'identity_number': '7408018850089',
+        'email': 'developer@dotxmltech.com',
+
+        'mobile_number': '0765295540',
+        'username': 'alexawilliams',
+        'password': '1234',
+
+        'guid': 'bcfee28ff8924bb8aef1c93f401947a1',
+    }
+    result = ROOT.preregister_student(**kwargs)
+    print()
+    print(result)
+    print()
+    result = ROOT.register_user(**kwargs)
+    print()
+    print(result)
+    print()
+    transaction.commit()
+
+    # USER - john20
+    kwargs = {
+        'student_number': 'student_john20',
+        'mobile': '0640605016',
+        'title': 'Mr.',
+        'name': 'John',
+        'surname': 'Developer',
+        'passport_number': 'passport_john20',
+        'email': 'tafadzwa@dotxmltech.com',
+
+        'mobile_number': '0640605016',
+        'username': 'john20',
+        'password': '1234',
+
+        'guid': '905806788cef44e88f52f9bff6994059',
+    }
+    result = ROOT.register_standalone_user(**kwargs)
+    print()
+    print(result)
+    print()
+    transaction.commit()
+
+    # USER - garystarfish
+    kwargs = {
+        'student_number': 'student_garystarfish',
+        'mobile': '0820394789',
+        'title': 'Mr.',
+        'name': 'Gary',
+        'surname': 'Starfish',
+        'passport_number': 'passport_garystarfish',
+        'email': 'salesstar@testmail.com',
+
+        'mobile_number': '0820394789',
+        'username': 'garystarfish',
+        'password': '1234',
+
+        'guid': '2ed48e6e62ac4aeba28f9d008cba9478',
+    }
+    result = ROOT.preregister_student(**kwargs)
+    print()
+    print(result)
+    print()
+    result = ROOT.register_user(**kwargs)
+    print()
+    print(result)
+    print()
+    transaction.commit()
+
+    # USER - seangrey
+    kwargs = {
+        'student_number': 'student_seangrey',
+        'mobile': '0746379920',
+        'title': 'Mr.',
+        'name': 'Sean2',
+        'surname': 'Grey3',
+        'passport_number': 'passport_seangrey',
+        'email': 'sean@testmail.com',
+
+        'mobile_number': '0746379920',
+        'username': 'seangrey',
+        'password': '1234',
+
+        'guid': '254b225fb8d747d2bab2bb66bd4b2471',
+    }
+    result = ROOT.preregister_student(**kwargs)
+    print()
+    print(result)
+    print()
+    result = ROOT.register_user(**kwargs)
+    print()
+    print(result)
+    print()
+    transaction.commit()
+
+    # USER - camilla
+    kwargs = {
+        'mobile': '0737034769',
+        'title': 'Ms.',
+        'name': 'Camilla',
+        'surname': 'Buys',
+        'passport_number': 'passport_camilla',
+        'email': 'camilla.buys@testmail.com',
+
+        'mobile_number': '0737034769',
+        'username': 'camilla',
+        'password': '1234',
+
+        'guid': '6adfb213d34e4f69be1a234b457a2b80',
+    }
+    result = ROOT.register_standalone_user(**kwargs)
+    print()
+    print(result)
+    print()
+    transaction.commit()
+
+    # USER - tmutero
+    kwargs = {
+        'mobile': '0640605017',
+        'title': 'Mr.',
+        'name': 'Tafadzwa',
+        'surname': 'Mutero',
+        'passport_number': 'passport_tmutero',
+        'email': 'tahaj@gmail.com',
+
+        'mobile_number': '0640605017',
+        'username': 'tmutero',
+        'password': '1234',
+
+        'guid': '30516118953b4e47b2ebd605979082ff',
+    }
+    result = ROOT.register_standalone_user(**kwargs)
+    print()
+    print(result)
+    print()
+    transaction.commit()
+
+    # USER - jpbez
+    kwargs = {
+        'mobile': '0727297914',
+        'title': 'Mr.',
+        'name': 'JP',
+        'surname': 'Bezuidenhout',
+        'passport_number': 'passport_jpbez',
+        'email': 'jp.bezuidenhout@testmail.com',
+
+        'mobile_number': '0727297914',
+        'username': 'jpbez',
+        'password': '1234',
+
+        'guid': 'ff08289f9c214940b14a2e2247505b23',
+    }
+    result = ROOT.register_standalone_user(**kwargs)
+    print()
+    print(result)
+    print()
+    transaction.commit()
+
+    # USER - ozinsky01
+    kwargs = {
+        'mobile': '0836283426',
+        'title': 'Ms.',
+        'name': 'Sheryl',
+        'surname': 'Ozinsky',
+        'identity_number': '6001010145086',
+        'email': 'sheryl@ozinsky.co.za',
+
+        'mobile_number': '0836283426',
+        'username': 'ozinsky01',
+        'password': '1234',
+
+        'guid': '31516118953b4e47b2ebd605979082ff',
+    }
+    result = ROOT.register_standalone_user(**kwargs)
+    print()
+    print(result)
+    print()
+    transaction.commit()
+
+    # USER - vlietman01
+    kwargs = {
+        'mobile': '0828594078',
+        'title': 'Ms.',
+        'name': 'Rejeanne',
+        'surname': 'Vlietman',
+        'identity_number': '7501030071088',
+        'email': 'denanker@mweb.co.za',
+
+        'mobile_number': '0828594078',
+        'username': 'vlietman01',
+        'password': '1234',
+
+        'guid': '32516118953b4e47b2ebd605979082ff',
+    }
+    result = ROOT.register_standalone_user(**kwargs)
+    print()
+    print(result)
+    print()
+    transaction.commit()
+
+    # USER - dommisse01
+    kwargs = {
+        'mobile': '0846888554',
+        'title': 'Mr.',
+        'name': 'Ian',
+        'surname': 'Dommisse',
+        'identity_number': '8609215145087',
+        'email': 'igdommisse@gmail.com',
+
+        'mobile_number': '0846888554',
+        'username': 'dommisse01',
+        'password': '1234',
+
+        'guid': '33516118953b4e47b2ebd605979082ff',
+    }
+    result = ROOT.register_standalone_user(**kwargs)
+    print()
+    print(result)
+    print()
+    transaction.commit()
+
+    # USER - conn01
+    kwargs = {
+        'mobile': '0789396131',
+        'title': 'Mr.',
+        'name': 'Alistair',
+        'surname': 'Conn',
+        'identity_number': '5909260047086',
+        'email': 'ali@saharvest.org',
+
+        'mobile_number': '0789396131',
+        'username': 'conn01',
+        'password': '1234',
+
+        'guid': '34516118953b4e47b2ebd605979082ff',
+    }
+    result = ROOT.register_standalone_user(**kwargs)
+    print()
+    print(result)
+    print()
+    transaction.commit()
+
+    # USER - williams01
+    kwargs = {
+        'mobile': '0794954433',
+        'title': 'Ms.',
+        'name': 'Renee Margolite',
+        'surname': 'Williams',
+        'identity_number': '8906265087080',
+        'email': 'margolite@saharvest.org',
+
+        'mobile_number': '0794954433',
+        'username': 'williams01',
+        'password': '1234',
+
+        'guid': '35516118953b4e47b2ebd605979082ff',
+    }
+    result = ROOT.register_standalone_user(**kwargs)
+    print()
+    print(result)
+    print()
+    transaction.commit()
+
+    # USER - wegmershaus01
+    kwargs = {
+        'mobile': '0799808936',
+        'title': 'Mr.',
+        'name': 'Manu',
+        'surname': 'Wegmershaus',
+        'identity_number': '8001265938084',
+        'email': 'manu@saharvest.org',
+
+        'mobile_number': '0799808936',
+        'username': 'wegmershaus01',
+        'password': '1234',
+
+        'guid': '36516118953b4e47b2ebd605979082ff',
+    }
+    result = ROOT.register_standalone_user(**kwargs)
+    print()
+    print(result)
+    print()
+    transaction.commit()
+
+    # MERCHANT - vuyofoodtruck
+    kwargs = {
+        'username': 'vuyofoodtruck',
+        'password': 'vuyofoodtruck',
+        'email': 'vuyo@foodtruck.com',
+        'mobile': '0737297914',
+        'name': 'Vuyo',
+        'surname': 'Foodtruck',
+        'passport_number' : 'vuyofoodtruck',
+    }
+    result = ROOT.register_merchant(**kwargs)
+    print()
+    print(result)
+    print()
+    kwargs = {
+        'merchant_username': 'vuyofoodtruck',
+        'percentage': '1',
+    }
+    result = ROOT.save_merchant_reward(**kwargs)
+    print()
+    print(result)
+    print()
+    transaction.commit()
+
+    # MERCHANT - calabash pay
+    kwargs = {
+        'username': 'calabash pay',
+        'password': 'calabash123',
+        'email': 'jp@calabashpay.com',
+        'mobile': '0727297915',
+        'name': 'Johan-Pierre',
+        'surname': 'Bezuidenhout',
+        'passport_number' : 'calabash pay',
+    }
+    result = ROOT.register_merchant(**kwargs)
+    print()
+    print(result)
+    print()
+    kwargs = {
+        'merchant_username': 'calabash pay',
+        'percentage': '1',
+    }
+    result = ROOT.save_merchant_reward(**kwargs)
+    print()
+    print(result)
+    print()
+    transaction.commit()
+
+    # MERCHANT - calabash
+    kwargs = {
+        'username': 'calabash',
+        'password': 'calabash',
+        'email': 'calabash@testmail.com',
+        'mobile': '0820394790',
+        'name': 'Calabash',
+        'surname': 'Surname',
+        'passport_number' : 'calabash',
+    }
+    result = ROOT.register_merchant(**kwargs)
+    print()
+    print(result)
+    print()
+    kwargs = {
+        'merchant_username': 'calabash',
+        'percentage': '1',
+    }
+    result = ROOT.save_merchant_reward(**kwargs)
+    print()
+    print(result)
+    print()
+    transaction.commit()
+
+    # GROUP - braai tonight
+    kwargs = {
+        'username': 'john20',
+        'groupname': 'Braai Tonight',
+    }
+    result = GROUPS.create_group(**kwargs)
+    print()
+    print(result)
+    print()
+    transaction.commit()
+
+    kwargs = {
+        'username': 'john20',
+        'groupname': 'Braai Tonight',
+        'to_mobile_number': '0737034769', # mobile for camilla user
+        'admin': True,
+    }
+    result = GROUPS.invite_user(**kwargs)
+    print()
+    print(result)
+    print()
+    transaction.commit()
+
+    kwargs = {
+        'username': 'john20',
+        'groupname': 'Braai Tonight',
+        'to_mobile_number': '0727297914', # mobile for jpbez user
+    }
+    result = GROUPS.invite_user(**kwargs)
+    print()
+    print(result)
+    print()
+    transaction.commit()
+
+    kwargs = {
+        'username': 'john20',
+        'groupname': 'Braai Tonight',
+        'to_mobile_number': '0727297914', # mobile for jpbez user
+    }
+    result = GROUPS.invite_user(**kwargs)
+    print()
+    print(result)
+    print()
+    transaction.commit()
+
+    result = GROUPS.get_all_wallet_groups(**kwargs)
+    transaction.commit()

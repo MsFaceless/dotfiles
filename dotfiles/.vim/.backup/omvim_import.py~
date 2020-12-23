@@ -1,0 +1,1355 @@
+# -*- coding: utf-8 -*-
+"""OmvimImportController module"""
+
+import transaction
+from tg import expose, require, redirect, validate, url, request, response, predicates
+
+from tg.i18n import ugettext as _
+from tg.i18n import lazy_ugettext as l_
+
+import os
+import json
+import requests
+from datetime import datetime
+from pkg_resources import resource_filename
+
+from rocket.model import *
+
+from rocket.lib.tg_utils import *
+from rocket.lib.base import BaseController
+from rocket.lib.tgfileuploader import FileUploader
+from rocket.lib.email_creator import RocketEmailCreator
+from rocket.lib.type_utils import TypeDictionary as TypeDict
+from rocket.lib.tg_generic_reportlab import PDFCreator, Paragraph
+import rocket.lib.gateway_utils as GATEWAY
+from sqlalchemy import func, desc, asc, or_, and_
+from rocket.controllers.common import CommonController
+
+COMMON = CommonController()
+TYPEUTIL = TypeDict()
+ACTIVE = TYPEUTIL.get_id_of_name('policy_status_type', 'active')
+MALE = TYPEUTIL.get_id_of_name('entity_person_gender_type', 'male')
+FEMALE = TYPEUTIL.get_id_of_name('entity_person_gender_type', 'female')
+UNKNWON = TYPEUTIL.get_id_of_name('entity_person_gender_type', 'other')
+
+POLICY_NUMBER_MAX_LENGTH = 10
+
+__all__ = ['OmvimImportController']
+
+class OmvimImportController(BaseController):
+    """Docstring for OmvimImportController."""
+
+    @expose()
+    def _default(self, *args, **kwargs):
+        return 'This page is not available.'
+
+#######################################################################
+# OMVIM import specific Functions
+#######################################################################
+    @expose()
+    def save_new_general_ledger_accounts(self, *args, **kwargs):
+        data = json.loads(kwargs.get('data', json.dumps({})))
+        if not data:
+            return json.dumps({'success': False, 'data': 'No data provided', 'status': 'danger'})
+        gl_name = data.get('name', None)
+        exists = DBSession.query(GeneralLedgerAccount). \
+            filter(GeneralLedgerAccount.gl_name == gl_name). \
+            filter(GeneralLedgerAccount.bln_active == True). \
+            first()
+        if exists: return json.dumps(
+            {'success': False, 'data': exists.id, 'message': 'An account with this name already exists', 'status': 'danger'})
+        this = GeneralLedgerAccount()
+        this.gl_name = gl_name
+        this.debit_account = data.get('debit_account', None)
+        this.credit_account = data.get('credit_account', None)
+        this.gl_key = data.get('gl_key', None)
+        this.added_by = 1
+        DBSession.add(this)
+        DBSession.flush()
+        return json.dumps({'success': True, 'data': this.id, 'status': 'success'})
+
+    @expose()
+    def save_product_system_document(self, *args, **kwargs):
+        name = kwargs.get('name', None)
+        if not name:
+            return json.dumps({'success': False, 'data': 'No name in the kwargs.'})
+
+        description = kwargs.get('description', None)
+        if not description:
+            return json.dumps({'success': False, 'data': 'No description in the kwargs.'})
+
+        system_document_type_id = kwargs.get('system_document_type_id', None)
+        if not system_document_type_id:
+            return json.dumps({'success': False, 'data': 'No docuemnt type id in the kwargs.'})
+
+        system_document_exists = DBSession.query(SystemDocument).\
+            filter(SystemDocument.name == name).\
+            filter(SystemDocument.system_document_type_id == system_document_type_id).\
+            filter(SystemDocument.bln_active == True).\
+            first()
+
+        if system_document_exists:
+            return json.dumps({'success': True, 'data': system_document_exists.id})
+
+        this = SystemDocument()
+        this.name = name
+        this.description = description
+        this.system_document_type_id = system_document_type_id
+        this.added_by = 1
+        this.added = datetime.now()
+        this.bln_edited = False
+        this.bln_active = True
+        this.added_by = 1
+        DBSession.add(this)
+        DBSession.flush()
+        return json.dumps({'success': True, 'data': this.id})
+
+    @expose()
+    def save_new_entityobj(self, *args, **kwargs):
+        dict_entity = {
+            'entity_type_id': kwargs.get('entity_type_id'),
+        }
+        entity_id = COMMON.save_new_entity(**dict_entity)
+
+        dict_entity_organisation = {
+            'entity_id': entity_id,
+            'entity_organisation_type_id': kwargs.get('entity_organisation_type_id'),
+            'code': kwargs.get('code'),
+            'name': kwargs.get('name'),
+            'tax_number': kwargs.get('tax_number'),
+            'registration_number': kwargs.get('registration_number'),
+            'financial_regulatory_number': kwargs.get('financial_regulatory_number'),
+        }
+        entity_organisation_id = COMMON.save_new_entity_organisation(**dict_entity_organisation)
+
+        is_product_owner = str_to_bool(kwargs.get('is_product_owner', 'False'))
+        if is_product_owner:
+            dict_product_owner = {
+                'entity_organisation_id': entity_organisation_id,
+                'policy_number_prefix': kwargs.get('policy_number_prefix'),
+            }
+            self.save_new_product_owner(**dict_product_owner)
+
+        is_insurer = str_to_bool(kwargs.get('is_insurer', 'False'))
+        if is_insurer:
+            dict_insurer = {
+                'entity_organisation_id': entity_organisation_id,
+            }
+            self.save_new_insurer(**dict_insurer)
+
+        is_client = str_to_bool(kwargs.get('is_client', 'False'))
+        if is_client:
+            dict_entity_client = {
+                'entity_organisation_id': entity_organisation_id,
+                'billing_frequency_type_id': kwargs.get('billing_frequency_type_id'),
+            }
+            COMMON.save_new_entity_organisation_client(**dict_entity_client)
+
+        redirect_url = kwargs.get('redirect_url', None)
+        return json.dumps({'success': True, 'data': entity_id})
+
+    @expose()
+    def save_new_insurer(self, *args, **kwargs):
+        this = EntityOrganisationInsurer()
+        this.entity_organisation_id = kwargs.get('entity_organisation_id', None)
+        this.added_by = 1
+        DBSession.add(this)
+        DBSession.flush()
+        return this.id
+
+    @expose()
+    def save_new_product_owner(self, *args, **kwargs):
+        this = EntityOrganisationProductOwner()
+        this.entity_organisation_id = kwargs.get('entity_organisation_id', None)
+        this.policy_number_prefix = kwargs.get('policy_number_prefix', None)
+        this.added_by = 1
+        DBSession.add(this)
+        DBSession.flush()
+        return this.id
+
+    @expose()
+    def save_new_organisation_contact(self, *args, **kwargs):
+        COMMON.save_new_organisation_contact(**kwargs)
+        entity_id = kwargs.get('entity_id')
+        redirect_url = '/entity/edit_organisation'
+        return json.dumps({'success': True, 'data': entity_id, 'redirect': redirect_url})
+
+    @expose()
+    def save_or_edit_address(self, *args, **kwargs):
+        data = json.loads(kwargs.get('data', json.dumps({})))
+        result = COMMON.save_or_edit_address(**data)
+        redirect_url = '/entity/edit_organisation'
+        if result:
+            return json.dumps({'success': True, 'data': data.get('entity_id'), 'redirect': redirect_url})
+        else:
+            return json.dumps({'success': False, 'data': data.get('entity_id'), 'redirect': redirect_url})
+
+    @expose()
+    def check_organisation_exists(self, *args, **kwargs):
+        code = kwargs.get('code', None)
+        if not code:
+            return json.dumps({'success': False, 'message': 'Please supply a code', 'status': 'danger'})
+
+        exists = EntityOrganisation.by_attr_first('code', code)
+        if not exists:
+            return json.dumps({'success': False, })
+        return json.dumps({'success': True, 'data': exists.entity_id})
+
+    @expose()
+    def save_new_allocations(self, *args, **kwargs):
+        data = json.loads(kwargs.get('data', json.dumps({})))
+        if not data:
+            return json.dumps({'success': False, 'data': 'No data provided'})
+        
+        name = data.get('name', None)
+        exists = DBSession.query(BenefitAllocation). \
+            filter(BenefitAllocation.name == name). \
+            filter(BenefitAllocation.bln_active == True). \
+            first()
+        if exists: return json.dumps(
+            {'success': False, 'data': 'A benefit allocation with this name already exists', 'status': 'danger'})
+
+        this = BenefitAllocation()
+        this.name = name 
+        this.added_by = 1
+        DBSession.add(this)
+        DBSession.flush()
+        return json.dumps({'success': True, 'data': this.id})
+
+
+    @expose()
+    def save_benefit_allocation(self, *args, **kwargs):
+        benefit_id = kwargs.get('benefit_id', None)
+        gl_account_id = kwargs.get('gl_account_id', None)
+        benefit_allocation_id = kwargs.get('benefit_allocation_id', None)
+        payment_received_type_id = kwargs.get('payment_received_type_id', None)
+        benefit_allocation_link_id = kwargs.get('benefit_allocation_link_id', None)
+        benefit_allocation_type_id = kwargs.get('benefit_allocation_type_id', None)
+        benefit_allocation_calculation_type_id = kwargs.get('benefit_allocation_calculation_type_id', None)
+
+        amount = kwargs.get('amount', None)
+        factor = kwargs.get('factor', None)
+        percentage = kwargs.get('percentage', None)
+
+        bln_require_gl_account_id = kwargs.get('bln_require_gl_account_id', None)
+        if bln_require_gl_account_id:
+            bln_require_gl_account_id = True
+        else:
+            bln_require_gl_account_id = False
+
+        active = kwargs.get('active', None)
+        if active:
+            active = True
+        else:
+            active = False
+
+        if benefit_allocation_link_id:
+            link = BenefitAllocationLink.by_id(benefit_allocation_link_id)
+            link.benefit_allocation_type_id = benefit_allocation_type_id
+            link.benefit_allocation_id = benefit_allocation_id
+            link.benefit_allocation_calculation_type_id = benefit_allocation_calculation_type_id
+            link.bln_require_gl_account_id = bln_require_gl_account_id
+            link.gl_account_id = gl_account_id
+            link.payment_received_type_id = payment_received_type_id
+            link.bln_active = active
+            DBSession.flush()
+
+        else:
+            link = BenefitAllocationLink()
+            link.benefit_id = benefit_id
+            link.benefit_allocation_type_id = benefit_allocation_type_id
+            link.benefit_allocation_id = benefit_allocation_id
+            link.benefit_allocation_calculation_type_id = benefit_allocation_calculation_type_id
+            link.bln_require_gl_account_id = bln_require_gl_account_id
+            link.gl_account_id = gl_account_id
+            link.payment_received_type_id = payment_received_type_id
+            DBSession.add(link)
+            DBSession.flush()
+
+        if amount:
+            dbase_query = BenefitAllocationLinkCalculationPercentage.by_attr_all('benefit_allocation_link_id', link.id)
+            for old in dbase_query:
+                old.bln_active = False
+                DBSession.flush()
+
+            dbase_query = BenefitAllocationLinkCalculationFactor.by_attr_all('benefit_allocation_link_id', link.id)
+            for old in dbase_query:
+                old.bln_active = False
+                DBSession.flush()
+
+            child = BenefitAllocationLinkCalculationAmount.by_attr_first('benefit_allocation_link_id', link.id)
+            if child:
+                child.amount = amount
+                DBSession.flush()
+            else:
+                child = BenefitAllocationLinkCalculationAmount()
+                child.benefit_allocation_link_id = link.id
+                child.amount = amount
+                DBSession.add(child)
+                DBSession.flush()
+
+        if factor:
+            dbase_query = BenefitAllocationLinkCalculationPercentage.by_attr_all('benefit_allocation_link_id', link.id)
+            for old in dbase_query:
+                old.bln_active = False
+                DBSession.flush()
+
+            dbase_query = BenefitAllocationLinkCalculationAmount.by_attr_all('benefit_allocation_link_id', link.id)
+            for old in dbase_query:
+                old.bln_active = False
+                DBSession.flush()
+
+            child = BenefitAllocationLinkCalculationFactor.by_attr_first('benefit_allocation_link_id', link.id)
+            if child:
+                child.factor = factor
+                DBSession.flush()
+            else:
+                child = BenefitAllocationLinkCalculationFactor()
+                child.benefit_allocation_link_id = link.id
+                child.factor = factor
+                DBSession.add(child)
+                DBSession.flush()
+
+        if percentage:
+            dbase_query = BenefitAllocationLinkCalculationFactor.by_attr_all('benefit_allocation_link_id', link.id)
+            for old in dbase_query:
+                old.bln_active = False
+                DBSession.flush()
+
+            dbase_query = BenefitAllocationLinkCalculationAmount.by_attr_all('benefit_allocation_link_id', link.id)
+            for old in dbase_query:
+                old.bln_active = False
+                DBSession.flush()
+
+            child = BenefitAllocationLinkCalculationPercentage.by_attr_first('benefit_allocation_link_id', link.id)
+            if child:
+                child.percentage = percentage
+                DBSession.flush()
+            else:
+                child = BenefitAllocationLinkCalculationPercentage()
+                child.benefit_allocation_link_id = link.id
+                child.percentage = percentage
+                DBSession.add(child)
+                DBSession.flush()
+
+        return json.dumps({'success': True, 'data': benefit_id, 'message': 'Message Created Successfully', 'status': 'success'})
+
+    @expose()
+    def save_new_memberobj(self, *args, **kwargs):
+        family_member = kwargs.get('family_member', False)
+        redirect = kwargs.get('redirect_url', '/members/edit_member')
+        entity_person_id = kwargs.get('entity_person_id', None)
+        try:
+            entity_id = self.save_new_personobj(**kwargs)
+        except Exception as e:
+            return json.dumps({'success': False, 'data' : 'Failed Creating Person', 'message': str(e)})
+
+        if not entity_id:
+            return json.dumps({'success': False, 'message': 'Member creation failed.'})
+
+        entity_person = DBSession.query(EntityPerson). \
+                filter(EntityPerson.entity_id == entity_id). \
+                first()
+        if not entity_person:
+            return json.dumps({'success': False, 'message': 'Could not retrieve Person.'})
+
+        if not entity_person_id:
+            entity_person_id = entity_person.id
+
+        outputdict = {
+            'success': True,
+            'data': entity_person_id,
+            'redirect': redirect,
+                }
+        if family_member:
+            outputdict['family_member_entity_person_id'] = entity_person.id
+
+        return json.dumps(outputdict)
+
+    @expose()
+    def save_new_personobj(self, *args, **kwargs):
+
+        name = kwargs.get('name', None)
+        if not name:
+            return False
+
+        surname = kwargs.get('surname', None)
+        if not surname:
+            return False
+
+        preferred_name = kwargs.get('preferred_name', None)
+        if not preferred_name:
+            preferred_name = name
+
+        title = kwargs.get('title', 'N/A')
+        entity_person_title_id = 1
+        if not title:
+            title = 'N/A'
+
+        entity_person_title =  DBSession.query(EntityPersonTitle).\
+            filter(EntityPersonTitle.title == title).\
+            first()
+        if entity_person_title:
+            entity_person_title_id = entity_person_title.id
+        else:
+            entity_person_title_id = 1
+
+        entity_person_gender_type_id = kwargs.get('entity_person_gender_type_id', None)
+        if not entity_person_gender_type_id:
+            male = TYPEUTIL.get_id_of_name('entity_person_gender_type', 'male')
+            entity_person_gender_type_id = male
+
+        if entity_person_gender_type_id != MALE and entity_person_gender_type_id != FEMALE and entity_person_gender_type_id != UNKNWON:
+            entity_person_gender_type_id = UNKNWON
+
+        date_of_birth = kwargs.get('date_of_birth', None)
+        if not date_of_birth:
+            log.warning('Missing date_of_birth')
+            return False
+
+        date_of_birth = str_to_date(date_of_birth)
+        if not date_of_birth:
+            log.warning('Converting date_of_birth to date failed')
+            return False
+
+        try:
+            date_of_birth = date_of_birth.date().isoformat()
+        except:
+            return False
+
+        enrol_date = kwargs.get('enrol_date', None)
+        if not enrol_date:
+            enrol_date = datetime.now()
+        else:
+            enrol_date = str_to_date(enrol_date)
+
+        try:
+            enrol_date = enrol_date.date().isoformat()
+        except:
+            enrol_date = datetime.now()
+
+        language_id = kwargs.get('language_id', None)
+        if not language_id:
+            english = Language.by_attr_first('code', 'ENG')
+            if not english:
+                log.warning('Missing language_id and English not found')
+                return False
+            language_id = english
+
+        identity_type_id = kwargs.get('identity_type_id', None)
+        if not identity_type_id:
+            identity_number = TYPEUTIL.get_id_of_name('entity_person_identity_type', 'identity_number')
+            identity_type_id = identity_number
+
+        number = kwargs.get('number', None)
+        if not number:
+            log.warning('Missing number')
+            return False
+
+        mobile = kwargs.get('mobile', None)
+        if not mobile:
+            log.warning('Missing mobile')
+            return False
+
+        person = TYPEUTIL.get_id_of_name('entity_type', 'person')
+        entity = Entity()
+        entity.entity_type_id = person
+        entity.added = enrol_date
+        DBSession.add(entity)
+        DBSession.flush()
+        entity_id = entity.id
+
+        person = EntityPerson()
+        person.surname = surname
+        person.firstname = name
+        person.preferred_name = preferred_name
+        person.entity_id = entity_id
+        person.entity_person_gender_type_id = entity_person_gender_type_id
+        person.entity_person_title_id = entity_person_title_id
+        person.language_id = language_id
+        person.date_of_birth = date_of_birth
+        person.added = enrol_date
+        DBSession.add(person)
+        DBSession.flush()
+
+        identity = EntityPersonIdentity()
+        identity.entity_person_identity_type_id = identity_type_id
+        identity.value = number
+        identity.entity_person_id = person.id
+        identity.expiry_date = '1990-01-01'
+        identity.added = enrol_date
+        DBSession.add(identity)
+        DBSession.flush()
+        if not entity_id:
+            log.warning(f'Failed to get_entity_id')
+            return False
+
+        mobile_id = TYPEUTIL.get_id_of_name('entity_contact_type', 'mobile')
+        contact = EntityContact()
+        contact.entity_id = entity_id
+        contact.entity_contact_type_id = mobile_id
+        contact.name = preferred_name
+        contact.value = mobile
+        contact.preferred = True
+        contact.added = enrol_date
+        DBSession.add(contact)
+        DBSession.flush()
+
+        return entity_id
+
+    @expose()
+    def save_new_member_contact(self, *args, **kwargs):
+        entity_person_id = kwargs.get('entity_person_id')
+        COMMON.save_new_member_contact(**kwargs)
+        redirect_url = '/members/edit_member'
+        return json.dumps({'success': True, 'data': entity_person_id, 'redirect': redirect_url})
+
+    @expose()
+    def save_person_address(self, *args, **kwargs):
+        entity_person_id = kwargs.get('entity_person_id', None)
+        if not entity_person_id:
+            return json.dumps({'success': False})
+
+        entity_person = EntityPerson.by_id(entity_person_id)
+        if not entity_person:
+            return json.dumps({'success': False})
+
+        address_type_id = int(kwargs.get('entity_address_type_id', POSTAL))
+
+        address_line = kwargs.get('address_line', '')
+        city = kwargs.get('city', '')
+        postal_code = kwargs.get('postal_code', '')
+        country_id = kwargs.get('country_id', 0)
+        region_id = kwargs.get('region_id', 0)
+        district_id = kwargs.get('district_id', 0)
+        centre_id = kwargs.get('centre_id', 0)
+        country_id = kwargs.get('country_id', 0)
+        latitude = 0
+        longitude = 0
+
+        if address_type_id == POSTAL:
+            postal_address_id = kwargs.get('postal_address_id', None)
+            if postal_address_id:
+
+                address = EntityAddress.by_id(postal_address_id)
+                address.address_line = address_line
+                address.city = city
+                address.postal_code = postal_code
+                address.region_id = region_id
+                address.district_id = district_id
+                address.centre_id = centre_id
+                address.country_id = country_id
+                address.latitude = latitude
+                address.longitude = longitude
+                DBSession.flush()
+
+            else:
+                address = EntityAddress()
+                address.entity_id = entity_person.entity_id
+                address.entity_address_type_id = POSTAL
+                address.address_line = address_line
+                address.city = city
+                address.postal_code = postal_code
+                address.region_id = region_id
+                address.district_id = district_id
+                address.centre_id = centre_id
+                address.country_id = country_id
+                address.latitude = latitude
+                address.longitude = longitude
+                DBSession.add(address)
+                DBSession.flush()
+
+        if address_type_id == STREET:
+            street_address_id = kwargs.get('street_address_id', None)
+            if street_address_id:
+                address = EntityAddress.by_id(street_address_id)
+                address.address_line = address_line
+                address.city = city
+                address.postal_code = postal_code
+                address.region_id = region_id
+                address.district_id = district_id
+                address.centre_id = centre_id
+                address.country_id = country_id
+                address.latitude = latitude
+                address.longitude = longitude
+                DBSession.flush()
+
+            else:
+                address = EntityAddress()
+                address.entity_id = entity_person.entity_id
+                address.entity_address_type_id = STREET
+                address.address_line = address_line
+                address.city = city
+                address.postal_code = postal_code
+                address.region_id = region_id
+                address.district_id = district_id
+                address.centre_id = centre_id
+                address.country_id = country_id
+                address.latitude = latitude
+                address.longitude = longitude
+                DBSession.add(address)
+                DBSession.flush()
+
+        return json.dumps({'success': True, 'data': entity_person_id, 'entity_id' : entity_person.entity_id})
+
+    @expose()
+    def save_person_bank_account(self, *args, **kwargs):
+        entity_id = str_to_int(kwargs.get('entity_id', None))
+        entity_person_id = kwargs.get('entity_person_id', None)
+        commercial = TYPEUTIL.get_id_of_name('entity_bank_account_type', 'commercial_bank')
+
+        if entity_id:
+            entity_person = EntityPerson.by_attr_first('entity_id', entity_id)
+        if entity_person_id:
+            entity_person = EntityPerson.by_id(entity_person_id)
+            entity_id = entity_person.entity_id
+        if not entity_person:
+            return json.dumps({'success': False, 'message': 'No entity person found'})
+
+        bank_account_id = str_to_int(kwargs.get('bank_account_id', None))
+        bank_id = str_to_int(kwargs.get('bank_id', None))
+        swift_code = '000000000000000'
+
+        account_number = kwargs.get('account_number', None)
+        if not account_number:
+            return json.dumps({'success': False, 'message': 'No account_number in kwargs'})
+
+        account_holder = kwargs.get('account_holder', None)
+        if not account_holder:
+            return json.dumps({'success': False, 'message': 'No account_holder in kwargs'})
+
+        bank_branch_id = kwargs.get('bank_branch_id', None)
+        if not bank_branch_id:
+            branch = BankBranch.by_attr_first('bank_id', bank_id)
+            if branch:
+                bank_branch_id = branch.id
+
+        branch_code = ''
+        if bank_branch_id:
+            bank_branch = BankBranch.by_id(bank_branch_id)
+            branch_code = bank_branch.branch_code
+
+        iban = kwargs.get('iban', None)
+        if not iban:
+            return json.dumps({'success': False, 'message': 'No iban in kwargs'})
+
+        currency_id = kwargs.get('currency_id', None)
+        if not currency_id:
+            return json.dumps({'success': False, 'message': 'No currency_id in kwargs'})
+
+        if bank_account_id or bank_account_id <= 0:
+            bank_account_id = None
+
+        if bank_account_id:
+            bank = EntityBankAccount.by_id(bank_account_id)
+            bank.bank_account_type_id = commercial
+            bank.bank_id = bank_id
+            bank.swift_code = swift_code
+            bank.account_number = account_number
+            bank.account_holder = account_holder
+            bank.branch_code = branch_code
+            bank.currency_id = currency_id
+            bank.iban = iban
+            DBSession.flush()
+
+        else:
+            bank = EntityBankAccount()
+            bank.entity_id = entity_person.entity_id
+            bank.bank_account_type_id = commercial
+            bank.bank_id = bank_id
+            bank.swift_code = swift_code
+            bank.account_number = account_number
+            bank.account_holder = account_holder
+            bank.branch_code = branch_code
+            bank.currency_id = currency_id
+            bank.entity_id = entity_id
+            bank.iban = iban
+            DBSession.add(bank)
+            DBSession.flush()
+
+        return json.dumps({'success': True, 'data' : entity_id, 'entity_person_id' : entity_person.id})
+
+    @expose()
+    def save_new_person_identity(self, *args, **kwargs):
+        identity_type_id = kwargs.get('identity_type_id', None)
+        value = kwargs.get('value', None)
+        entity_person_id = kwargs.get('entity_person_id', None)
+
+        if not identity_type_id or not value or not entity_person_id:
+            return json.dumps({'success': False, })
+
+        identity = EntityPersonIdentity()
+        identity.entity_person_identity_type_id = identity_type_id
+        identity.value = value
+        identity.entity_person_id = entity_person_id
+        identity.expiry_date = '1990-01-01'
+        DBSession.add(identity)
+        DBSession.flush()
+
+        return json.dumps({'success': True, 'data': identity.id})
+
+    @expose()
+    def check_member_exists(self, *args, **kwargs):
+        identity_type = kwargs.get('identity_type_id', None)
+        if not identity_type:
+            return json.dumps({'success': False, 'message': 'Please supply a identity type', 'status': 'danger'})
+
+        identity_number = kwargs.get('identity_number', None)
+        if not identity_number:
+            return json.dumps({'success': False, 'message': 'Please supply a identity number', 'status': 'danger'})
+
+        identity = DBSession.query(EntityPersonIdentity). \
+                filter(EntityPersonIdentity.value == identity_number). \
+                filter(EntityPersonIdentity.entity_person_identity_type_id == identity_type). \
+                first()
+        if not identity:
+            return json.dumps({'success': True, 'message': 'Could not find identity data', 'status': 'danger'})
+
+        entity_person = EntityPerson.by_id(identity.entity_person_id)
+        if not entity_person:
+            return json.dumps({'success': False})
+
+        return json.dumps({'success': True, 'data': entity_person.id})
+
+    @expose()
+    def link_person_to_client_by_entity_id(self, *args, **kwargs):
+        entity_person_id = kwargs.get('entity_person_id',None)
+        entity_id =  kwargs.get('entity_id',None) 
+        created =  kwargs.get('created',None) 
+        if not entity_person_id or not entity_id:
+            return json.dumps({'success': False, 'data': f'Missing entity id or enity person id {entity_id} {entity_person_id}'})        
+        
+        entity_organisation = EntityOrganisation.by_attr_first("entity_id", entity_id)
+        if not entity_organisation:
+            return json.dumps({f'success': False, 'data': 'Cannot find entity organisation'})        
+
+        entity_client = EntityOrganisationClient.by_attr_first("entity_organisation_id", entity_organisation.id)
+        if not entity_client:
+            return json.dumps({f'success': False, 'data': 'Cannot find entity Client'})
+        
+        entity_client_person = DBSession.query(EntityOrganisationClientPersonLink).\
+            filter(EntityOrganisationClientPersonLink.entity_organisation_client_id == entity_client.id).\
+            filter(EntityOrganisationClientPersonLink.entity_person_id == entity_person_id).\
+            first()
+        if entity_client_person:
+            return json.dumps({f'success': False, 'data': 'Entity Client Person exists.'})
+
+        person_client = EntityOrganisationClientPersonLink()
+        person_client.entity_person_id = entity_person_id
+        person_client.entity_organisation_client_id = entity_client.id
+        person_client.added_by = 1
+        if not created:
+            person_client.added = created
+        DBSession.add(person_client)
+        DBSession.flush()
+        return json.dumps({'success': True, 'entity_client_person_id': person_client.id})
+
+    @expose()
+    def get_product_owner_id_from_entity_id(self, *args, **kwargs):
+        entity_id =  kwargs.get('entity_id',None) 
+        if not entity_id:
+            return json.dumps({'success': False})
+        
+        entity_organisation = EntityOrganisation.by_attr_first("entity_id", entity_id)
+        if not entity_organisation:
+            return json.dumps({'success': False})
+        
+        product_owner = EntityOrganisationProductOwner.by_attr_first("entity_organisation_id", entity_organisation.id)
+        if not product_owner:
+            return json.dumps({'success': False})
+        return json.dumps({'success': True, 'data': product_owner.id})
+
+    @expose()
+    def get_product_owner_id_from_code(self, *args, **kwargs):
+        code =  kwargs.get('code',None) 
+        if not code:
+            return json.dumps({'success': False})
+        
+        entity_organisation = EntityOrganisation.by_attr_first("code", code)
+        if not entity_organisation:
+            return json.dumps({'success': False})
+        
+        service_provider = EntityOrganisationServiceProvider.by_attr_first("entity_organisation_id", entity_organisation.id)
+        if not service_provider:
+            return json.dumps({'success': False})
+        return json.dumps({'success': True, 'data': service_provider.id})
+
+    @expose()
+    def get_insurer_id_from_entity_id(self, *args, **kwargs):
+        entity_id =  kwargs.get('entity_id',None) 
+        if not entity_id:
+            return json.dumps({'success': False})
+        
+        entity_organisation = EntityOrganisation.by_attr_first("entity_id", entity_id)
+        if not entity_organisation:
+            return json.dumps({'success': False})
+        
+        insurer = EntityOrganisationInsurer.by_attr_first("entity_organisation_id", entity_organisation.id)
+        if not insurer:
+            return json.dumps({'success': False})
+        return json.dumps({'success': True, 'data': insurer.id})
+
+    @expose()
+    def get_product_id_from_code(self, product_code=None, *args, **kwargs):
+        if not product_code:
+            return None
+        
+        product = Product.by_attr_first("code", product_code)
+        if not product:
+            return None
+        return product.id
+
+    @expose()
+    def import_product_exists(self, *args, **kwargs):
+        group_entity_id = kwargs.get('group_entity_id', None)
+        code = kwargs.get('code', None)
+        name = kwargs.get('name', None)
+        policy_number_prefix = kwargs.get('policy_number_prefix', None)
+        is_compulsory = kwargs.get('is_compulsory', None)
+        is_life = kwargs.get('is_life', None)
+        number_of_payouts = int(kwargs.get('number_of_payouts', '1'))
+        frequency_type = kwargs.get('frequency_type', None)
+        cover_and_exclusion_id = kwargs.get('cover_and_exclusion_id', None)
+        min_age = kwargs.get('min_age', None)
+        max_age = kwargs.get('max_age', None)
+        premium = kwargs.get('premium', None)
+        sum_insured = kwargs.get('sum_insured', None)
+
+        period_type = kwargs.get('period_type', None)
+        waiting = kwargs.get('waiting', None)
+        active_period = kwargs.get('active_period', None)
+        claim_grace_period = kwargs.get('claim_grace_period', None)
+        refund_grace_period = kwargs.get('refund_grace_period', None)
+        initial_period_type = kwargs.get('initial_period_type', None)
+        advance_period = kwargs.get('advance_period', None)
+        schedule = kwargs.get('schedule', None)
+        purchase_confirmation = kwargs.get('purchase_confirmation', None)
+        claim_confirmation = kwargs.get('claim_confirmation', None)
+        refund_confirmation = kwargs.get('refund_confirmation', None)
+        advance_reminder = kwargs.get('advance_reminder', None)
+        pre_registration = kwargs.get('pre_registration', None)
+
+        entity_organisation = EntityOrganisation.by_attr_first('entity_id', group_entity_id)
+        product_owner = EntityOrganisationProductOwner.by_attr_first('entity_organisation_id', entity_organisation.id)
+        product_insurer = EntityOrganisationInsurer.by_attr_first('id', 1)
+        product_type_id = TYPEUTIL.get_id_of_name('product_type', 'voucher')
+
+        product_state_type_id = TYPEUTIL.get_id_of_name('product_state_type', 'active')
+
+        this = Product()
+        this.product_type_id = product_type_id
+        this.code = code
+        this.name = name
+        this.entity_organisation_product_owner_id = product_owner.id
+        this.product_state_type_id = product_state_type_id
+        this.policy_number_prefix = policy_number_prefix
+        this.has_excess = False
+        DBSession.add(this)
+        DBSession.flush()
+        
+        product_id = this.id
+        communication_type_id = 3
+        if not period_type:
+            period_type = 1
+
+        if schedule:
+            product_message_id = self.create_product_message(product_id, 2, 1, communication_type_id, schedule)
+
+        if purchase_confirmation:
+            product_message_id = self.create_product_message(product_id, 2, 2, communication_type_id, purchase_confirmation)
+
+        if claim_confirmation:
+            product_message_id = self.create_product_message(product_id, 2, 3, communication_type_id, claim_confirmation)
+
+        if refund_confirmation:
+            product_message_id = self.create_product_message(product_id, 2, 4, communication_type_id, refund_confirmation)
+
+        if advance_reminder:
+            product_message_id = self.create_product_message(product_id, 1, 2, communication_type_id, advance_reminder)
+            if advance_period:
+                this = ProductMessageReminder()
+                this.product_message_id = product_message_id
+                this.period = advance_period 
+                this.period_type_id = period_type
+                DBSession.add(this)
+                DBSession.flush()
+
+        # if pre_registration:
+        #     this = ProductMessage()
+        #     this.product_id = product_id
+        #     this.product_message_type_id = 2
+        #     this.benefit_message_type_id = 1
+        #     this.communication_type_id = communication_type_id
+        #     this.content = pre_registration
+        #     DBSession.add(this)
+        #     DBSession.flush()
+
+        benefit_purchase_type_id = TYPEUTIL.get_id_of_name('benefit_purchase_type', 'group')
+        benefit_insured_type_id = TYPEUTIL.get_id_of_name('benefit_insured_type','member_only')
+        benefit_price_type_id = TYPEUTIL.get_id_of_name('benefit_price_type', 'fixed')
+
+        this = Benefit()
+        this.product_id = product_id
+        this.name = name
+        this.entity_organisation_insurer_id = product_insurer.id
+        this.benefit_price_type_id = benefit_price_type_id
+        this.is_life = True
+        this.benefit_insured_type_id = benefit_insured_type_id
+        this.benefit_purchase_type_id = benefit_purchase_type_id
+        this.cover_and_exclusion_id = cover_and_exclusion_id
+        this.is_main_benefit = True
+        this.is_compulsory = True
+        this.allow_multiple_payouts = False if number_of_payouts == 1 else True
+        this.claim_terminates_policy = True
+        this.rounding_rate_id = 0
+        this.premium = premium
+        this.sum_insured = sum_insured
+        this.rate_table_id = 0
+        this.premium_increase_percentage = 0
+        this.sum_insured_increase_percentage = 0
+        this.has_premium_limits = False
+        this.has_sum_insured_limits = False
+        this.limit_claims = True
+        this.number_of_claims = 1
+        DBSession.add(this)
+        DBSession.flush()
+
+        benefit_id = this.id
+        relationship_type_id = TYPEUTIL.get_id_of_name('benefit_insured_life_relationship_type','principal')
+
+        this = BenefitInsuredLife()
+        this.benefit_id = benefit_id
+        this.benefit_insured_life_relationship_type_id = relationship_type_id
+        this.maximum_entry_age = max_age
+        this.expiry_age = max_age
+        this.maximum_lives = 1
+        this.minimum_age = min_age
+        DBSession.add(this)
+        DBSession.flush()
+
+        if waiting:
+            self.create_benefit_period(benefit_id, 2, period_type, waiting)
+
+        if active_period:
+            self.create_benefit_period(benefit_id, 1, period_type, active_period)
+
+        if claim_grace_period:
+            self.create_benefit_period(benefit_id, 3, period_type, claim_grace_period)
+
+        if refund_grace_period:
+            self.create_benefit_period(benefit_id, 4, period_type, refund_grace_period)
+
+        return json.dumps({'success': True, 'data': product_id})
+
+    def create_product_message(self, product_id, product_message_type_id, benefit_message_type_id, communication_type_id, content, *args, **kwargs):
+
+        this = ProductMessage()
+        this.product_id = product_id
+        this.product_message_type_id = product_message_type_id
+        this.benefit_message_type_id = benefit_message_type_id
+        this.communication_type_id = communication_type_id
+        this.content = content
+        DBSession.add(this)
+        DBSession.flush()
+        return this.id
+
+    def create_benefit_period(self, benefit_id, benefit_period_effect_type_id, period_type_id, time_period, *args, **kwargs):
+
+        this = BenefitPeriod()
+        this.benefit_id = benefit_id
+        this.benefit_period_effect_type_id = benefit_period_effect_type_id
+        this.period_type_id = period_type_id
+        this.time_period = time_period
+        DBSession.add(this)
+        DBSession.flush()
+        return this.id
+
+    @expose()
+    def get_benefit_id_from_product_id(self, *args, **kwargs):
+        product_id = kwargs.get('product_id', None)
+        if not product_id:
+            return json.dumps({'success': False,})
+        
+        benefit = Benefit.by_attr_first('product_id', product_id)
+        if not benefit:
+            return json.dumps({'success': False,})
+        return json.dumps({'success': True, 'data': benefit.id})
+
+    @expose()
+    def import_policy_exists(self, *args, **kwargs):
+        try:
+            return self.import_policy(**kwargs)
+        except Exception as e:
+            return json.dumps({'success': False, 'data' : 'Failed Creating Policy/Voucher:', 'message': str(e)})
+
+    def import_policy(self, *args, **kwargs):
+        member_msisdn = kwargs.get('member_msisdn', None)
+        beneficiary_msisdn = kwargs.get('beneficiary_msisdn', None)
+        product_code = kwargs.get('product_code', None)
+        purchase_date = kwargs.get('purchase_date', None)
+        valid_from_date = kwargs.get('valid_from_date', None)
+        valid_to_date = kwargs.get('valid_to_date', None)
+
+        purchase_date = str_to_date(purchase_date)
+        valid_from_date = str_to_date(valid_from_date)
+        valid_to_date = str_to_date(valid_to_date)
+
+        purchase_date_type_id = TYPEUTIL.get_id_of_name('policy_date_type', 'purchase_date')
+        valid_from_date_type_id = TYPEUTIL.get_id_of_name('policy_date_type', 'valid_from')
+        valid_to_date_type_id = TYPEUTIL.get_id_of_name('policy_date_type', 'valid_to')
+
+        product_id = self.get_product_id_from_code(product_code)
+        if not product_id:
+            return json.dumps({'success': False, 'data': f'No product found for {product_code}', 'message': kwargs})
+        identity_type_id = TYPEUTIL.get_id_of_name('entity_person_identity_type', 'msisdn')
+
+        # Member
+        identity = DBSession.query(EntityPersonIdentity). \
+            filter(EntityPersonIdentity.value == member_msisdn). \
+            filter(EntityPersonIdentity.entity_person_identity_type_id == identity_type_id). \
+            first()
+
+        if not identity:
+            return json.dumps({'success': False, 'data': f'No person identity found for {member_msisdn} and {identity_type_id}', 'message': kwargs})
+        
+        entity_person_id = identity.entity_person_id
+        entity_person = EntityPerson.by_id(entity_person_id)
+        entity_id = entity_person.entity_id
+        date_of_birth = entity_person.date_of_birth
+
+        # Beneficiary
+        identity = DBSession.query(EntityPersonIdentity). \
+            filter(EntityPersonIdentity.value == beneficiary_msisdn). \
+            filter(EntityPersonIdentity.entity_person_identity_type_id == identity_type_id). \
+            first()
+
+        # if not identity:
+        #     return json.dumps({'success': False, 'data': f'No beneficiary identity found for {beneficiary_msisdn} and {identity_type_id}', 'message': kwargs})
+
+        beneficary_entity_id = None
+        if identity:
+            entity_beneficary_id = identity.entity_person_id
+            entity_beneficary = EntityPerson.by_id(entity_beneficary_id)
+            beneficary_entity_id = entity_beneficary.entity_id
+
+        #ok, so we need to see if we already have a policy
+        policy_benefits = DBSession.query(PolicyBenefitInsuredLife).\
+            filter(PolicyBenefitInsuredLife.entity_person_id == entity_person_id).\
+            all()
+
+        policy_id = None
+        for benefit in policy_benefits:
+            policy_benefit = PolicyBenefit.by_id(benefit.id)
+            policy = Policy.by_id(policy_benefit.policy_id)
+            if policy.product_id == product_id:
+                policy_id = policy.id
+                break
+
+        if policy_id:
+            self.import_policy_dates(**{
+                'policy_id' : policy_id, 
+                'purchase_date' : purchase_date, 
+                'purchase_date_type_id' : purchase_date_type_id, 
+                'valid_from_date' : valid_from_date, 
+                'valid_from_date_type_id' : valid_from_date_type_id, 
+                'valid_to_date' : valid_to_date, 
+                'valid_to_date_type_id' : valid_to_date_type_id, })
+            return json.dumps({'success': True, 'data': policy_id})
+
+        # Now we need to create all the policy records.
+        product = Product.by_id(product_id)
+        product_owner = EntityOrganisationProductOwner.by_id(product.entity_organisation_product_owner_id)
+        entity_organisation = EntityOrganisation.by_id(product_owner.entity_organisation_id)
+        policy_owner_entity_id = entity_organisation.entity_id
+        policy_payer_entity_id = entity_organisation.entity_id # Same Organisation
+        policy_number = self.generate_unique_policy_number()
+
+        policy_number = self.get_unique_policy_number(product_id)
+        this = Policy()
+        this.product_id = product_id
+        this.policy_number = policy_number
+        this.policy_owner_entity_id = policy_owner_entity_id
+        this.policy_payer_entity_id = policy_payer_entity_id
+        this.added_by = 1
+        this.added = purchase_date
+        DBSession.add(this)
+        DBSession.flush()
+        
+        policy_id = this.id
+
+        status = PolicyStatus()
+        status.policy_id = policy_id
+        status.policy_status_type_id = ACTIVE
+        status.date_set = datetime.now()
+        status.current_status = True
+        status.added_by = 1
+        DBSession.add(status)
+        DBSession.flush()
+
+        benefit = Benefit.by_attr_first('product_id', product_id)
+        benefit_id = benefit.id
+        cover_and_exclusion_id = benefit.cover_and_exclusion_id
+        premium = benefit.premium
+        sum_insured = benefit.sum_insured
+        is_compulsory = benefit.is_compulsory
+
+        this = PolicyBenefit()
+        this.policy_id = policy_id
+        this.product_benefit_id = benefit_id
+        this.number_of_claims_remaining = 1
+        this.cover_and_exclusion_id = cover_and_exclusion_id
+        this.premium = premium
+        this.sum_insured = sum_insured
+        this.is_compulsory = is_compulsory
+        this.added = purchase_date
+        DBSession.add(this)
+        DBSession.flush()
+
+        benefit_id = this.id
+        benefit_status_id = TYPEUTIL.get_id_of_name('policy_benefit_status_type', 'active')
+
+        this = PolicyBenefitStatus()
+        this.policy_benefit_id = benefit_id
+        this.policy_benefit_status_type_id = benefit_status_id
+        this.date_set = purchase_date
+        this.current_status = True
+        this.added = purchase_date
+        DBSession.add(this)
+        DBSession.flush()
+
+        relationship_type_id = TYPEUTIL.get_id_of_name('benefit_insured_life_relationship_type','principal')
+
+        this = PolicyBenefitInsuredLife()
+        this.policy_benefit_id = benefit_id
+        this.entity_person_id = entity_person_id
+        this.relationship_type_id = relationship_type_id
+        this.date_of_birth = date_of_birth
+        this.added = purchase_date
+        DBSession.add(this)
+        DBSession.flush()
+
+        this = PolicyBenefitPremium()
+        this.policy_benefit_id = benefit_id
+        this.initial_annual_premium_amount = premium
+        this.premium_annual_increase_percentage = 0.00
+        this.added = purchase_date
+        DBSession.add(this)
+        DBSession.flush()
+
+        beneficiary_relationship_type_id = TYPEUTIL.get_id_of_name('benefit_insured_life_relationship_type','household')
+
+        if beneficary_entity_id:
+            this = PolicyBenefitBeneficiary()
+            this.policy_benefit_id = benefit_id
+            this.entity_id = beneficary_entity_id
+            this.share_of_sum_insured_percentage = 100
+            this.notify = False
+            this.relationship_type_id = beneficiary_relationship_type_id
+            this.added = purchase_date
+            DBSession.add(this)
+            DBSession.flush()
+
+        self.import_policy_dates(**{
+            'policy_id' : policy_id, 
+            'purchase_date' : purchase_date, 
+            'purchase_date_type_id' : purchase_date_type_id, 
+            'valid_from_date' : valid_from_date, 
+            'valid_from_date_type_id' : valid_from_date_type_id, 
+            'valid_to_date' : valid_to_date, 
+            'valid_to_date_type_id' : valid_to_date_type_id, })
+
+        self.link_person_to_client_by_entity_id(**{
+            'entity_person_id' : entity_person_id,
+            'entity_id' :  policy_owner_entity_id,
+            'created' :  purchase_date ,})
+
+        return json.dumps({'success': True, 'data': policy_id})
+
+    def get_unique_policy_number(self, product_id=None, *args, **kwargs):
+        number = ''
+        if product_id:
+            product = Product.by_id(product_id)
+            if product and product.policy_number_prefix:
+                number = product.policy_number_prefix
+
+        number += datetime.now().strftime("%y%m%d%H%M%S")
+        policy_number = number[-POLICY_NUMBER_MAX_LENGTH:]
+        exists = Policy.by_attr_first('policy_number', policy_number)
+        if exists:
+            return self.get_unique_policy_number(product_id)
+        return policy_number
+
+    @expose()
+    def import_policy_dates(self, *args, **kwargs):
+        policy_id = kwargs.get('policy_id', None) 
+        purchase_date = kwargs.get('purchase_date', None)
+        purchase_date_type_id = kwargs.get('purchase_date_type_id', None)
+        valid_from_date = kwargs.get('valid_from_date', None) 
+        valid_from_date_type_id = kwargs.get('valid_from_date_type_id', None)
+        valid_to_date = kwargs.get('valid_to_date', None) 
+        valid_to_date_type_id = kwargs.get('valid_to_date_type_id', None)
+
+        self.valid_policy_date(policy_id, purchase_date_type_id, purchase_date, purchase_date)
+        self.valid_policy_date(policy_id, valid_from_date_type_id, valid_from_date, purchase_date)
+        self.valid_policy_date(policy_id, valid_to_date_type_id, valid_to_date, valid_to_date)
+        return 
+
+    def valid_policy_date(self, policy_id=None, date_type_id=None, date=None, added=None, *args, **kwargs):
+        if not policy_id or not date_type_id or not date:
+            return
+        exists = DBSession.query(PolicyDate).\
+            filter(PolicyDate.policy_id == policy_id).\
+            filter(PolicyDate.policy_date_type_id == date_type_id).\
+            filter(PolicyDate.date == date).\
+            first()
+        if exists:
+            return
+        this = PolicyDate()
+        this.policy_id = policy_id
+        this.policy_date_type_id = date_type_id
+        this.date = date
+        this.added = added
+        DBSession.add(this)
+        DBSession.flush()
+        return
+
+    @expose()
+    def generate_unique_policy_number(self, *args, **kwargs):
+        number = datetime.now().strftime("%y%m%d%H%M%S")
+        policy_number = number[-10:]
+        exists = Policy.by_attr_first('policy_number', policy_number)
+        if exists:
+            return self.generate_unique_policy_number()
+        return policy_number
+
+
+    @expose()
+    def save_new_audit_request(self, *args, **kwargs):
+        controller_name = kwargs.get('controller_name', 'Unspecified')
+        method_name = kwargs.get('method_name', 'Unspecified')
+        user_agent = kwargs.get('user_agent', 'API Call')
+        request_ip_address = kwargs.get('request_ip_address', 'Unspecified')
+        params = kwargs.get('params', 'Unspecified')
+        response_status_code = kwargs.get('response_status_code', 'Unknown')
+        response_message = kwargs.get('response_message', 'Unknown')
+
+        audit = AuditRequest()
+        audit.controller_name = controller_name
+        audit.method_name = method_name
+        audit.user_agent = user_agent
+        audit.request_ip_address = request_ip_address
+        audit.params = params
+        audit.response_status_code = response_status_code
+        audit.response_message = response_message
+        DBSession.add(audit)
+        DBSession.flush()
+        return json.dumps({'success': True, 'data': audit.id})
+
+    @expose()
+    def save_new_audit_request_archive(self, *args, **kwargs):
+        controller_name = kwargs.get('controller_name', 'Unspecified')
+        method_name = kwargs.get('method_name', 'Unspecified')
+        user_agent = kwargs.get('user_agent', 'API Call')
+        request_ip_address = kwargs.get('request_ip_address', 'Unspecified')
+        params = kwargs.get('params', 'Unspecified')
+        response_status_code = kwargs.get('response_status_code', 'Unknown')
+        response_message = kwargs.get('response_message', 'Unknown')
+        datetime = kwargs.get('datetime', None)
+        archived = kwargs.get('archived', None)
+
+        audit_archive = AuditRequestArchive()
+        audit_archive.controller_name = controller_name
+        audit_archive.method_name = method_name
+        audit_archive.user_agent = user_agent
+        audit_archive.request_ip_address = request_ip_address
+        audit_archive.params = params
+        audit_archive.response_status_code = response_status_code
+        audit_archive.response_message = response_message
+        audit_archive.datetime = datetime
+        DBSession.add(audit_archive)
+        DBSession.flush()
+        return json.dumps({'success': True, 'data': audit_archive.id})
+    
+    @expose()
+    def save_new_audit_log_archive(self, *args, **kwargs):
+
+        log_text = kwargs.get('log_text', 'Unspecified')
+        audit_action_id = kwargs.get('audit_action_id', '1')
+        audit_action = kwargs.get('audit_action', 'Unspecified')
+        datetime = kwargs.get('datetime', None)
+        user_id = kwargs.get('user_id', '1')
+        user = kwargs.get('user', 'Unspecified')
+
+        audit_log = AuditLogArchive()
+        audit_log.log_text = log_text
+        audit_log.audit_action_id = audit_action_id
+        audit_log.audit_action = audit_action
+        audit_log.datetime = datetime
+        audit_log.user_id = user_id
+        audit_log.user = user
+        DBSession.add(audit_log)
+        DBSession.flush()
+        return json.dumps({'success': True, 'data': audit_log.id})
+    
+
+    @expose()
+    def import_batch_import(self, *args, **kwargs):
+        import_type = kwargs.get('import_type', None)
+        import_type_id = TYPEUTIL.get_id_of_name('batch_import_type',import_type)
+        
+        entity_product_owner_id = kwargs.get('entity_product_owner_id', None)
+        filename = kwargs.get('filename', None)
+        processed = kwargs.get('processed', None)
+        total_count = kwargs.get('total_count', None)
+        accepted_count = kwargs.get('accepted_count', None)
+        rejected_count = kwargs.get('rejected_count', None)
+        pre_voucher_count = kwargs.get('pre_voucher_count', None)
+        notes = kwargs.get('notes', None)
+        added_by = kwargs.get('added_by', None)
+        added = kwargs.get('added', None)
+
+        this = BatchImport()
+        this.import_type_id = import_type_id
+        this.filename = filename
+        this.processed = processed
+        this.total_count = total_count
+        this.accepted_count = accepted_count
+        this.rejected_count = rejected_count
+        this.pre_voucher_count = pre_voucher_count
+        this.notes = notes
+        this.added_by = added_by
+        this.added = added
+        DBSession.add(this)
+        DBSession.flush()
+        batch_import_id = this.id
+
+        if entity_product_owner_id:
+            this = BatchImportProductOwner()
+            this.batch_import_id = batch_import_id
+            this.entity_org_product_owner_id = entity_product_owner_id
+            this.added_by = added_by
+            this.added = added
+            DBSession.add(this)
+            DBSession.flush()
+
+        this = BatchImportAudit()
+        this.batch_import_id = batch_import_id
+        this.audit_date_time = processed
+        this.audit = 'Imported from OMVIM'
+        DBSession.add(this)
+        DBSession.flush()
+        return json.dumps({'success': True, 'data': batch_import_id})
+
+    @expose()
+    def import_batch_import_error(self, *args, **kwargs):
+        batch_import_id = kwargs.get('batch_import_id', None)
+        message = kwargs.get('message', None)
+
+        this = BatchImportError()
+        this.batch_import_id = batch_import_id
+        this.message = message
+        DBSession.add(this)
+        DBSession.flush()
+        return json.dumps({'success': True, 'data': this.id})
+
+

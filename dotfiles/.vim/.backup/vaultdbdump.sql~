@@ -1,0 +1,279 @@
+-- MySQL dump 10.16  Distrib 10.1.44-MariaDB, for debian-linux-gnu (x86_64)
+--
+-- Host: localhost    Database: vaultdb
+-- ------------------------------------------------------
+-- Server version	10.1.44-MariaDB-0ubuntu0.18.04.1
+
+/*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;
+/*!40101 SET @OLD_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS */;
+/*!40101 SET @OLD_COLLATION_CONNECTION=@@COLLATION_CONNECTION */;
+/*!40101 SET NAMES utf8mb4 */;
+/*!40103 SET @OLD_TIME_ZONE=@@TIME_ZONE */;
+/*!40103 SET TIME_ZONE='+00:00' */;
+/*!40014 SET @OLD_UNIQUE_CHECKS=@@UNIQUE_CHECKS, UNIQUE_CHECKS=0 */;
+/*!40014 SET @OLD_FOREIGN_KEY_CHECKS=@@FOREIGN_KEY_CHECKS, FOREIGN_KEY_CHECKS=0 */;
+/*!40101 SET @OLD_SQL_MODE=@@SQL_MODE, SQL_MODE='NO_AUTO_VALUE_ON_ZERO' */;
+/*!40111 SET @OLD_SQL_NOTES=@@SQL_NOTES, SQL_NOTES=0 */;
+
+--
+-- Table structure for table `tbl_address`
+--
+
+DROP TABLE IF EXISTS `tbl_address`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `tbl_address` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `added_by` int(11) DEFAULT NULL,
+  `added` datetime DEFAULT NULL,
+  `active` tinyint(1) DEFAULT NULL,
+  `address_type_id` int(11) NOT NULL,
+  `address_line` varchar(100) COLLATE utf8_unicode_ci NOT NULL,
+  `city` varchar(100) COLLATE utf8_unicode_ci DEFAULT NULL,
+  `postal_code` varchar(100) COLLATE utf8_unicode_ci DEFAULT NULL,
+  `country_id` int(11) NOT NULL,
+  `region_id` int(11) NOT NULL,
+  `district_id` int(11) NOT NULL,
+  `centre_id` int(11) NOT NULL,
+  `latitude` decimal(10,7) DEFAULT NULL,
+  `longitude` decimal(10,7) DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `id` (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `tbl_address`
+--
+
+LOCK TABLES `tbl_address` WRITE;
+/*!40000 ALTER TABLE `tbl_address` DISABLE KEYS */;
+INSERT INTO `tbl_address` VALUES (1,1,'2020-04-15 07:24:56',1,1,'P.O.BOX 2345','Brackenfell','2331',207,0,0,0,0.0000000,0.0000000);
+/*!40000 ALTER TABLE `tbl_address` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `tbl_bank_account`
+--
+
+DROP TABLE IF EXISTS `tbl_bank_account`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `tbl_bank_account` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `added_by` int(11) DEFAULT NULL,
+  `added` datetime DEFAULT NULL,
+  `active` tinyint(1) DEFAULT NULL,
+  `bank_id` int(11) NOT NULL,
+  `bank_account_type_id` int(11) NOT NULL,
+  `swift_code` varchar(100) COLLATE utf8_unicode_ci DEFAULT NULL,
+  `account_number` varchar(100) COLLATE utf8_unicode_ci NOT NULL,
+  `account_holder` varchar(100) COLLATE utf8_unicode_ci NOT NULL,
+  `branch_code` varchar(100) COLLATE utf8_unicode_ci NOT NULL,
+  `currency_id` int(11) NOT NULL,
+  `iban` varchar(100) COLLATE utf8_unicode_ci NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `id` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `tbl_bank_account`
+--
+
+LOCK TABLES `tbl_bank_account` WRITE;
+/*!40000 ALTER TABLE `tbl_bank_account` DISABLE KEYS */;
+/*!40000 ALTER TABLE `tbl_bank_account` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `tbl_contact`
+--
+
+DROP TABLE IF EXISTS `tbl_contact`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `tbl_contact` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `added_by` int(11) DEFAULT NULL,
+  `added` datetime DEFAULT NULL,
+  `active` tinyint(1) DEFAULT NULL,
+  `contact_type_id` int(11) NOT NULL,
+  `value` varchar(100) COLLATE utf8_unicode_ci NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `id` (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=3 DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `tbl_contact`
+--
+
+LOCK TABLES `tbl_contact` WRITE;
+/*!40000 ALTER TABLE `tbl_contact` DISABLE KEYS */;
+INSERT INTO `tbl_contact` VALUES (1,1,'2020-04-15 07:23:35',1,3,'+27 63 556 4422'),(2,1,'2020-04-15 07:24:22',1,1,'johns@springbokfans.com');
+/*!40000 ALTER TABLE `tbl_contact` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `tbl_person`
+--
+
+DROP TABLE IF EXISTS `tbl_person`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `tbl_person` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `added_by` int(11) DEFAULT NULL,
+  `added` datetime DEFAULT NULL,
+  `active` tinyint(1) DEFAULT NULL,
+  `surname` varchar(100) COLLATE utf8_unicode_ci NOT NULL,
+  `firstname` varchar(100) COLLATE utf8_unicode_ci NOT NULL,
+  `preferred_name` varchar(100) COLLATE utf8_unicode_ci DEFAULT NULL,
+  `person_gender_type_id` int(11) NOT NULL,
+  `person_title_type_id` int(11) NOT NULL,
+  `date_of_birth` date NOT NULL,
+  `language_id` int(11) NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `id` (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=3 DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `tbl_person`
+--
+
+LOCK TABLES `tbl_person` WRITE;
+/*!40000 ALTER TABLE `tbl_person` DISABLE KEYS */;
+INSERT INTO `tbl_person` VALUES (1,1,'2020-07-07 06:15:42',1,'Smith','John','John',2,2,'1962-04-15',117),(2,1,'2020-05-20 10:20:02',1,'Mhangwani','Brenda','Brenda',1,1,'1990-10-20',1073);
+/*!40000 ALTER TABLE `tbl_person` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `tbl_person_address_link`
+--
+
+DROP TABLE IF EXISTS `tbl_person_address_link`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `tbl_person_address_link` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `added_by` int(11) DEFAULT NULL,
+  `added` datetime DEFAULT NULL,
+  `active` tinyint(1) DEFAULT NULL,
+  `person_id` int(11) NOT NULL,
+  `address_id` int(11) NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `id` (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `tbl_person_address_link`
+--
+
+LOCK TABLES `tbl_person_address_link` WRITE;
+/*!40000 ALTER TABLE `tbl_person_address_link` DISABLE KEYS */;
+INSERT INTO `tbl_person_address_link` VALUES (1,1,'2020-04-15 07:24:56',1,1,1);
+/*!40000 ALTER TABLE `tbl_person_address_link` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `tbl_person_bankaccount_link`
+--
+
+DROP TABLE IF EXISTS `tbl_person_bankaccount_link`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `tbl_person_bankaccount_link` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `added_by` int(11) DEFAULT NULL,
+  `added` datetime DEFAULT NULL,
+  `active` tinyint(1) DEFAULT NULL,
+  `person_id` int(11) NOT NULL,
+  `bankaccount_id` int(11) NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `id` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `tbl_person_bankaccount_link`
+--
+
+LOCK TABLES `tbl_person_bankaccount_link` WRITE;
+/*!40000 ALTER TABLE `tbl_person_bankaccount_link` DISABLE KEYS */;
+/*!40000 ALTER TABLE `tbl_person_bankaccount_link` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `tbl_person_contact_link`
+--
+
+DROP TABLE IF EXISTS `tbl_person_contact_link`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `tbl_person_contact_link` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `added_by` int(11) DEFAULT NULL,
+  `added` datetime DEFAULT NULL,
+  `active` tinyint(1) DEFAULT NULL,
+  `person_id` int(11) NOT NULL,
+  `contact_id` int(11) NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `id` (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=3 DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `tbl_person_contact_link`
+--
+
+LOCK TABLES `tbl_person_contact_link` WRITE;
+/*!40000 ALTER TABLE `tbl_person_contact_link` DISABLE KEYS */;
+INSERT INTO `tbl_person_contact_link` VALUES (1,1,'2020-04-15 07:23:35',1,1,1),(2,1,'2020-04-15 07:24:22',1,1,2);
+/*!40000 ALTER TABLE `tbl_person_contact_link` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `tbl_person_identity`
+--
+
+DROP TABLE IF EXISTS `tbl_person_identity`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `tbl_person_identity` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `identity_type_id` int(11) NOT NULL,
+  `number` varchar(255) COLLATE utf8_unicode_ci NOT NULL,
+  `person_id` int(11) NOT NULL,
+  `expiry_date` date DEFAULT NULL,
+  `active` tinyint(1) NOT NULL,
+  `added_by` int(11) NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `identity_type_id` (`identity_type_id`,`number`),
+  KEY `ix_tbl_person_identity_number` (`number`),
+  KEY `ix_tbl_person_identity_identity_type_id` (`identity_type_id`)
+) ENGINE=InnoDB AUTO_INCREMENT=3 DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `tbl_person_identity`
+--
+
+LOCK TABLES `tbl_person_identity` WRITE;
+/*!40000 ALTER TABLE `tbl_person_identity` DISABLE KEYS */;
+INSERT INTO `tbl_person_identity` VALUES (1,1,'6204120030089',1,NULL,1,1),(2,1,'9010200553089',2,NULL,1,1);
+/*!40000 ALTER TABLE `tbl_person_identity` ENABLE KEYS */;
+UNLOCK TABLES;
+/*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
+
+/*!40101 SET SQL_MODE=@OLD_SQL_MODE */;
+/*!40014 SET FOREIGN_KEY_CHECKS=@OLD_FOREIGN_KEY_CHECKS */;
+/*!40014 SET UNIQUE_CHECKS=@OLD_UNIQUE_CHECKS */;
+/*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;
+/*!40101 SET CHARACTER_SET_RESULTS=@OLD_CHARACTER_SET_RESULTS */;
+/*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
+/*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
+
+-- Dump completed on 2020-08-28  8:14:06

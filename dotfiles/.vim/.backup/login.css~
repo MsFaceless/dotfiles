@@ -1,0 +1,168 @@
+@import url('https://fonts.googleapis.com/css?family=Cantarell');
+:root{
+    --image-login-background: url("/images/login_rocket.jpg");
+}
+body {
+    background: var(--image-login-background) no-repeat fixed;
+    background-color: #1b1e2b;
+    position: relative;
+    object-fit: cover;
+    background-position-x: center;
+    font-family: 'Cantarell', sans-serif;
+    color: #666666;
+}
+.login-box {
+    position: fixed;
+    top: 0;
+    right: 0;
+    height: 100vh;
+    width: 33%;
+    display: flex;
+    align-content: center;
+    justify-content: center;
+    /* background: linear-gradient(to right, rgba(0, 0, 0, 0.0), 25%, #000); */
+}
+.login-form {
+    position: absolute;
+    z-index: 1;
+    top: 30%;
+    width: 60%;
+    height: 40%;
+    background-color: #fff;
+}
+.logo {
+    position: absolute;
+    left: 0px;
+    width: 100vw;
+    font-size: 70px;
+    z-index: 1;
+    color: #fff;
+}
+.logo-text {
+    padding-left: 30px;
+    /* position: absolute; */
+    right: 30px;
+}
+.orange-o {
+    color: #F6CD1F;
+}
+.logo-banner {
+    position: absolute;
+    top: 100px;
+    left: 0px;
+    background-color: #F6CD1F;
+    width: 75%;
+    padding: 0px;
+    padding-left: 35px;
+    font-size: 20px;
+    letter-spacing: 10;
+    text-transform: uppercase;
+    color: #000;
+}
+.logo-banner:after {
+    content: " ";
+    position: absolute;
+    display: block;
+    width: 100%;
+    height: 100%;
+    top: 0;
+    left: 0;
+    z-index: -1;
+    background: #F6CD1F;
+    transform-origin: bottom left;
+    -ms-transform: skew(-23deg, 0deg);
+    -webkit-transform: skew(-23deg, 0deg);
+    transform: skew(-23deg, 0deg);
+}
+/* login form styling */
+.container {
+    height: 100%;
+    align-content: center;
+}
+.card {
+    /* height: 370px; */
+    margin-top: auto;
+    margin-bottom: auto;
+    width: 400px;
+    background-color: rgba(255, 255, 255, 0.3) !important;
+    /* background-color: rgba(0, 0, 0, 0.5) !important; */
+}
+.social_icon span {
+    font-size: 60px;
+    margin-left: 10px;
+    color: #F6CD1F;
+}
+.social_icon span:hover {
+    color: white;
+    cursor: pointer;
+}
+.card-header h3 {
+    color: white;
+}
+.social_icon {
+    position: absolute;
+    right: 20px;
+    top: -45px;
+}
+.input-group-prepend span {
+    background-color: #F6CD1F;
+    color: black;
+    border: 0 !important;
+}
+input:focus {
+    outline: 0 0 0 0 !important;
+    box-shadow: 0 0 0 0 !important;
+}
+.remember {
+    color: white;
+}
+.remember input {
+    width: 20px;
+    height: 20px;
+    margin-left: 15px;
+    margin-right: 5px;
+}
+.action_btn {
+    color: black;
+    background-color: #F6CD1F;
+    /* width: 100px; */
+}
+.action_btn:hover {
+    color: black;
+    background-color: white;
+}
+.links {
+    color: white;
+}
+.login-link {
+    color: #F6CD1F;
+}
+.links a {
+    margin-left: 4px;
+}
+.hidden{
+    display: none;
+}
+.action_link{
+    font-weight: bold;
+    text-decoration: underline;
+    cursor: pointer;
+}
+.action_link:hover{
+    font-weight: normal;
+    text-decoration: none;
+}
+
+.policy_text{
+    color: #fff;
+}
+i.fas.fa-times-circle.red {
+    color: #FF5400;
+}
+
+i.fas.fa-check-circle.green {
+    color: #99cc00;
+}
+.card.reset {
+    width: 450px;
+}

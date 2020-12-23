@@ -1,0 +1,1076 @@
+# -*- coding: utf-8 -*-
+"""Application Form module"""
+
+import logging
+
+from tg import predicates, require, expose, request, redirect
+from tg.i18n import ugettext as _
+from tg.i18n import lazy_ugettext as l_
+
+from rocket.model import *
+
+from rocket.lib.tg_utils import *
+from rocket.lib.html_utils import create_checkbox_html
+from rocket.lib.base import BaseController
+from rocket.lib.type_utils import TypeDictionary
+
+from rocket.controllers.common import CommonController
+from rocket.controllers.product import ProductController
+from rocket.controllers.beneficiary import BeneficiaryController
+
+from sqlalchemy import func, desc, asc, or_
+
+LOGGER = logging.getLogger(__name__)
+
+TYPEUTIL = TypeDictionary()
+COMMON = CommonController()
+BENEFICIARY = BeneficiaryController()
+DBQUERY_LIMIT = 15
+
+
+SEARCHKEY_POLICY_HOLDER = 'PolicyHolder_SearchKeyword'
+SEARCHKEY_POLICY_BENEFIT_INSURED_LIFE = "PolicyBenefitInsuredLife_SearchKeyword"
+
+PRINCIPAL_TYPE = TYPEUTIL.get_id_of_name('benefit_insured_life_relationship_type', 'principal')
+
+class ApplicationFormController(BaseController):
+
+    @expose()
+    def _default(self, *args, **kwargs):
+        return 'This page is not available.'
+
+    @require(predicates.not_anonymous())
+    @expose('rocket.templates.generic')
+    def index(self, *args, **kwargs):
+        policy_id = kwargs.get('policy_id', None)
+        kwargs['policy_id'] = policy_id
+        policy = Policy.by_id(policy_id)
+        product = Product.by_id(policy.product_id)
+
+        response = self.get_total_premium(policy_id)
+        if not response.get('success'):
+            log.warning(f'application_form.index: Could not calculate a total premium for policy_id: {policy_id}')
+
+        total_premium = response.get('data', 0)
+
+        tab_list = [
+            {'tab_id':'principal_member_tab', 'title': 'Principal Member', 'target_url': '/application_form/get_principal_member_html'},
+            {'tab_id':'benefits_tab', 'title': 'Benefits', 'target_url': '/application_form/get_benefits_html'},
+            {'tab_id':'payment_tab', 'title': 'Payment details', 'target_url': '/application_form/get_payment_details'},
+        ]
+        nav_items = ""
+        for i, tab in enumerate(tab_list):
+            title = tab.get('title', None)
+            target_url = tab.get('target_url', None)
+            active = 'active' if i == 0 else ''
+            tab_id = tab.get('tab_id', None)
+            nav_items += f"""
+                <li class="nav-item">
+                    <div id="{tab_id}" class="nav-link {active}" data-toggle="tab" data-target-url="{target_url}" role="tablist">
+                        {title}
+                    </div>
+                </li>
+            """
+        html = f"""
+            <div class="row sticky-top">
+                <div class="col-md-12">
+                    <div class="card pb-2">
+                        <div class="card-header">
+                            <div class="row d-flex">
+                                <div class="col-md-6">
+                                    <h4 class="card-title">{_('Policy')}: {policy.policy_number}</h4>
+                                </div>
+                                <div class="col-md-6 text-right">
+                                    <h4 class="card-title">{_('Total Premium')}: { total_premium}</h4>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <ul id="tabsHeader" class="nav nav-pills nav-pills-primary mb-4" role="tablist" data-policy_id="{policy_id}">
+                                {nav_items}
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div id="contentDiv" class="tab-content tab-space pt-0">
+            </div>
+        """
+        javascript = """
+            var contentDiv = $('#contentDiv');
+            $('.nav-link').click(function(){
+                var targetUrl = $(this).data('targetUrl');
+                var kwargs = $('#tabsHeader').data();
+                contentDiv.load(targetUrl, kwargs, function(e){
+                    return false;
+                })
+            });
+            $('.nav-link').first().click();
+        """
+        title = _("Application Form")
+        return dict(title=title, html=html, javascript=javascript)
+
+    def get_total_premium(self, policy_id=None, *args, **kwargs):
+        if not policy_id:
+            return {'success': False, 'message': 'Policy Id not present in args'}
+
+        benefits = PolicyBenefit.by_attr_all('policy_id', policy_id)
+        total_premium = 0
+        for ben in benefits:
+            if ben.premium:
+                total_premium += ben.premium
+
+        total_premium = get_currency_by_locale(total_premium * 100)
+        return {'success': True, 'data': total_premium}
+
+    @expose()
+    def get_principal_member_html(self, *args, **kwargs):
+        policy_id = kwargs.get('policy_id', None)
+        if not policy_id:
+            log.warning('get_principal_member_html: No policy_id in kwargs')
+            return ''
+
+        kwargs['form_id'] = 'principal_member_form'
+
+        policy = Policy.by_id(policy_id)
+        entity_person = EntityPerson.by_attr_first('entity_id', policy.policy_owner_entity_id)
+
+        principal_member_html = COMMON.get_new_person_form(**kwargs)
+        if entity_person:
+            kwargs['entity_person_id'] = entity_person.id
+            principal_member_html = COMMON.get_edit_person_form(**kwargs)
+
+        found_entity_person_id = kwargs.get('found_entity_person_id', None)
+        if found_entity_person_id:
+            kwargs['entity_person_id'] = found_entity_person_id
+            principal_member_html = COMMON.get_edit_person_form(**kwargs)
+
+        kwargs['show_save'] = False
+        address_html = COMMON.get_person_address_html(**kwargs)
+        html = f"""
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h4 class="card-title">Principal Member</h4>
+                        <hr>
+                    </div>
+                    <div class="card-body">
+                        <div id="mainMemberDiv">
+                            {principal_member_html}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {address_html}
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-body">
+                        <div class="col-md-12 text-right">
+                            <button id="saveBtn" type="button" class="btn btn-primary">Save</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        javascript = """
+        <script>
+            var principal_member_form = $('#principal_member_form');
+            var form_postal_address = $('#form_postal_address');
+            var form_street_address = $('#form_street_address');
+
+            setFormValidation(principal_member_form);
+            setFormValidation(form_postal_address);
+            setFormValidation(form_street_address);
+
+            $('#saveBtn').click(function(){
+
+                var principal_member_form_valid = FormIsValid(principal_member_form);
+                var form_postal_address_valid = FormIsValid(form_postal_address);
+                var form_street_address_valid = FormIsValid(form_street_address);
+
+                if( principal_member_form_valid &&
+                    form_postal_address_valid &&
+                    form_street_address_valid
+                ){
+                    var formserial = new Object;
+                    formserial['principal_member_form'] = getFormData(principal_member_form);
+                    formserial['form_postal_address'] = getFormData(form_postal_address);
+                    formserial['form_street_address'] = getFormData(form_street_address);
+                    formserial['policy_id'] = $('#tabsHeader').data('policy_id');
+
+                    var formdata = {data: JSON.stringify(formserial)};
+                    $.post('/application_form/save_principal_member', formdata, function(data){
+                        var result = JSON.parse(data);
+                        if(result.success === true){
+                            $('#benefits_tab').click();
+                        } else {
+                            showNotification(result.status, result.message);
+                        }
+                        return false;
+                    });
+                }
+            });
+
+            var idNumber = $('#number');
+
+            var idType = $('#identity_type_id');
+            var saidType = $(identity_type_id).data('saidId');
+            var saidLength = $(identity_type_id).data('length');
+
+            idNumber.on('keyup', function(){
+                if ((idNumber.val().length >= saidLength) && (parseInt($('#identity_type_id option:selected').val()) === saidType)){
+                    var params = {
+                        'identity_type_id': idType.val(),
+                        'identity_number': idNumber.val()
+                    }
+                    $.post('/members/check_member_exists', params, function(data){
+                        var result = JSON.parse(data);
+                        if(result.success === true){
+                            var kwargs = {
+                                'found_entity_person_id': result.data,
+                                'policy_id': $('#tabsHeader').data('policy_id')
+                            }
+                            $('#contentDiv').load('/application_form/get_principal_member_html', kwargs, function(){
+
+                            });
+                        }
+                        return false;
+                    });
+
+                    var kwargs = 'identity_type_id=' + $('#identity_type_id option:selected').val()
+                    kwargs += '&value=' + $(this).val();
+                    $.post('/members/check_identity_number?', kwargs, function(data){
+                        var result = JSON.parse(data);
+                        if(result.success === true){
+                            $('#date_of_birth').val(result.date_of_birth);
+                            $('#entity_person_gender_type_id').val(result.gender).change();
+
+                        };
+                        return false;
+                    });
+                }
+            });
+        </script>
+        """
+        return html + javascript
+
+    @expose()
+    def save_principal_member(self, *args, **kwargs):
+        data = json.loads(kwargs.get('data', {}))
+        if not data:
+            log.warning('save_principal_member: No data key in formserial')
+            return json.dumps({'success': False, 'message': 'There is not data to save', 'status': 'danger'})
+
+        policy_id = data.get('policy_id', None)
+        if not policy_id:
+            log.error('save_principal_member: Trying to save a Principal Member without selecting a policy_id')
+            return json.dumps({'success': False, 'message': 'Please select a policy before trying to add a Principal Member', 'status': 'danger'})
+
+        principal_member_form = data.get('principal_member_form', {})
+
+        date_of_birth = principal_member_form.get('date_of_birth', None)
+        if not date_of_birth:
+            log.warning('save_principal_member: No date of birth present in principal_member_form kwargs')
+            return json.dumps({'success': False, 'message': 'Please supply a date of birth', 'status': 'danger'})
+
+        comp_result = COMMON.validate_benefits(**{
+            'policy_id': policy_id,
+            'date_of_birth': date_of_birth,
+            'relationship_type_id': PRINCIPAL_TYPE,
+            'is_compulsory': True,
+            'is_life': True,
+        })
+        if not comp_result.get('success'):
+            print('right here')
+            message = comp_result.get('message', 'Validation failed on Principal Member')
+            return json.dumps({'success': False, 'message': message, 'status': 'danger'})
+
+        entity_person_id = principal_member_form.get('entity_person_id', None)
+        if not entity_person_id:
+            return self.save_new_principal_member(**data)
+
+        result = COMMON.save_edit_personobj(**principal_member_form)
+
+        postal_address_form = data.get('form_postal_address', {})
+        postal_address_form['entity_person_id'] = entity_person_id
+        postal_address_id = COMMON.save_person_address(**postal_address_form)
+
+        street_address_form = data.get('form_street_address', {})
+        street_address_form['entity_person_id'] = entity_person_id
+        street_address_id = COMMON.save_person_address(**street_address_form)
+
+        entity_person = EntityPerson.by_id(entity_person_id)
+        params = {}
+        params['policy_id'] = policy_id
+        params['entity_id'] = entity_person.entity_id
+        ownership_result = self.update_policy_ownership(**params)
+
+        params['date_of_birth'] = principal_member_form.get('date_of_birth', None)
+        params['entity_person_id'] = entity_person_id
+
+        clb_result = self.update_life_benefits(**params)
+
+        opt_result = COMMON.validate_benefits(**{
+            'policy_id': policy_id,
+            'date_of_birth': date_of_birth,
+            'relationship_type_id': PRINCIPAL_TYPE,
+            'is_compulsory': False,
+            'is_life': True,
+        })
+        if opt_result.get('success'):
+            params['is_compulsory'] = False
+            olb_result = self.update_life_benefits(**params)
+
+        principal_member_ben_result = self.set_principal_member_optional_life_benefits_beneficiary(**params)
+        return json.dumps({'success': True})
+
+    def update_life_benefits(self, *args, **kwargs):
+        policy_id = kwargs.get('policy_id', None)
+        if not policy_id:
+            log.warning('update_life_benefits: No policy_id in kwargs')
+            return {'success': False}
+
+        is_compulsory = kwargs.get('is_compulsory', True)
+
+        life_benefits = self.get_life_policy_benefits(policy_id, compulsory=is_compulsory)
+
+        dob_str = kwargs.get('date_of_birth', None)
+        entity_person_id = kwargs.get('entity_person_id', None)
+
+        for clb in life_benefits:
+            params = {
+                'policy_benefit_id': clb.id,
+                'entity_person_id': entity_person_id,
+                'relationship_type_id': PRINCIPAL_TYPE,
+                'date_of_birth': dob_str
+            }
+            result = self.save_policy_benefit_insured_life(**params)
+        return {'success': True}
+
+    def set_principal_member_optional_life_benefits_beneficiary(self, *args, **kwargs):
+        policy_id = kwargs.get('policy_id', None)
+        if not policy_id:
+            log.warning('set_principal_member_optional_life_benefits_beneficiary: No policy_id in kwargs')
+            return {'success': False}
+
+        entity_id = kwargs.get('entity_id', None)
+        if not entity_id:
+            log.warning('set_principal_member_optional_life_benefits_beneficiary: No entity_id in kwargs')
+            return {'success': False}
+
+        opt_life_policy_benefits = self.get_life_policy_benefits(policy_id)
+
+        for item in opt_life_policy_benefits:
+            kwargs['policy_benefit_id'] = item.id
+            kwargs['share_of_sum_insured_percentage'] = 100
+            kwargs['notify'] = False
+            kwargs['relationship_type_id'] = PRINCIPAL_TYPE
+
+            beneficiary_exists = DBSession.query(PolicyBenefitBeneficiary).\
+                filter(PolicyBenefitBeneficiary.policy_benefit_id == item.id).\
+                filter(PolicyBenefitBeneficiary.entity_id == entity_id).\
+                filter(PolicyBenefitBeneficiary.bln_active == True).\
+                first()
+
+            if beneficiary_exists:
+                return {'success': True}
+
+            result = self.save_new_policy_benefit_beneficiary(**kwargs)
+            if not result.get('success'):
+                return result
+        return {'success': True}
+
+    def save_new_policy_benefit_beneficiary(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+        policy_benefit_id = kwargs.get('policy_benefit_id', None)
+        if not policy_benefit_id:
+            log.warning('save_new_policy_benefit_beneficiary: No policy_benefit_id in kwargs')
+            return {'success': False}
+
+        entity_id = kwargs.get('entity_id', None)
+        if not entity_id:
+            log.warning('save_new_policy_benefit_beneficiary: No entity_id in kwargs')
+            return {'success': False}
+
+        share_of_sum_insured_percentage = kwargs.get('share_of_sum_insured_percentage', None)
+        if not share_of_sum_insured_percentage:
+            log.warning('save_new_policy_benefit_beneficiary: No share_of_sum_insured_percentage in kwargs')
+            return {'success': False}
+
+        notify = kwargs.get('notify', False)
+
+        relationship_type_id = kwargs.get('relationship_type_id', None)
+        if not relationship_type_id:
+            log.warning('save_new_policy_benefit_beneficiary: No relationship_type_id in kwargs')
+            return {'success': False}
+
+        this = PolicyBenefitBeneficiary()
+        this.policy_benefit_id = policy_benefit_id
+        this.entity_id = entity_id
+        this.share_of_sum_insured_percentage = share_of_sum_insured_percentage
+        this.notify = notify
+        this.relationship_type_id = relationship_type_id
+        this.added_by = usernow.id
+        this.added = datetime.now()
+        this.bln_active = True
+        DBSession.add(this)
+        DBSession.flush()
+        return {'success': True, 'data': this.id}
+
+    def get_life_policy_benefits(self, policy_id=None, compulsory=False, *args, **kwargs):
+        if not policy_id:
+            log.warning('get_life_policy_benefits: No policy_id in kwargs')
+            return []
+
+        policy = Policy.by_id(policy_id)
+        benefits = DBSession.query(Benefit).\
+            filter(Benefit.product_id == policy.product_id).\
+            filter(Benefit.is_life == True).\
+            filter(Benefit.is_compulsory == compulsory).\
+            filter(Benefit.bln_active == True).\
+            all()
+
+        life_benefits = []
+        for ben in benefits:
+            policy_benefit = DBSession.query(PolicyBenefit).\
+                filter(PolicyBenefit.policy_id == policy_id).\
+                filter(PolicyBenefit.product_benefit_id == ben.id).\
+                first()
+            if policy_benefit:
+                life_benefits.append(policy_benefit)
+
+        return life_benefits
+
+    def save_policy_benefit_insured_life(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+        policy_benefit_id = kwargs.get('policy_benefit_id', None)
+        if not policy_benefit_id:
+            log.warning('save_policy_benefit_insured_life: No policy_benefit_id in kwargs')
+            return {'success': False, 'message': 'Please supply a policy_benefit_id'}
+
+        entity_person_id = kwargs.get('entity_person_id', None)
+        if not entity_person_id:
+            log.warning('save_policy_benefit_insured_life: No entity_person_id in kwargs')
+            return {'success': False, 'message': 'Please supply a entity_person_id'}
+
+        relationship_type_id = kwargs.get('relationship_type_id', None)
+        if not relationship_type_id:
+            log.warning('save_policy_benefit_insured_life: No relationship_type_id in kwargs')
+            return {'success': False, 'message': 'Please supply a relationship_type_id'}
+
+        date_of_birth = kwargs.get('date_of_birth', None)
+        if not date_of_birth:
+            log.warning('save_policy_benefit_insured_life: No date_of_birth in kwargs')
+            return {'success': False, 'message': 'Please supply a date_of_birth'}
+
+        sane_dob = str_to_date(date_of_birth)
+
+        policy_benefit = PolicyBenefit.by_id(policy_benefit_id)
+        result = COMMON.validate_benefit_min_max_age(policy_benefit.product_benefit_id, date_of_birth)
+        if not result.get('success'):
+            return result
+
+        benefit = Benefit.by_id(policy_benefit.product_benefit_id)
+        result = COMMON.validate_benefit_assured_max(policy_benefit.policy_id, benefit.id)
+
+        if not result.get('success'):
+            pol_ben = PolicyBenefitInsuredLife.by_attr_first('policy_benefit_id', policy_benefit_id)
+            pol_ben.entity_person_id = entity_person_id
+            pol_ben.date_of_birth = sane_dob
+            DBSession.flush()
+            return {'success': True, 'data': pol_ben.id}
+
+        this = PolicyBenefitInsuredLife()
+        this.policy_benefit_id = policy_benefit_id
+        this.entity_person_id = entity_person_id
+        this.relationship_type_id = relationship_type_id
+        this.date_of_birth = sane_dob
+        this.added_by = usernow.id
+        this.added = datetime.now()
+        this.bln_active = True
+        DBSession.add(this)
+        DBSession.flush()
+        return {'success': True, 'data': this.id}
+
+    @expose()
+    def save_new_principal_member(self, *args, **kwargs):
+        policy_id = kwargs.get('policy_id', None)
+        if not policy_id:
+            log.warning('save_new_principal_member: No policy_id in kwargs')
+            return json.dumps({'success': False, 'message': 'No policy selected.', 'status': 'danger'})
+
+        principal_member_form = kwargs.get('principal_member_form', {})
+        postal_address_form = kwargs.get('form_postal_address', {})
+        street_address_form = kwargs.get('form_street_address', {})
+
+        entity_id = COMMON.save_new_personobj(**principal_member_form)
+        if not entity_id:
+            log.warning('save_new_principal_member: COMMON.save_new_personobj result failed')
+            return json.dumps({'success': False, 'message': 'Could not create the member', 'status': 'danger'})
+
+        entity_person = EntityPerson.by_attr_first('entity_id', entity_id)
+
+        postal_address_form['entity_person_id'] = entity_person.id
+        postal_address_id = COMMON.save_person_address(**postal_address_form)
+
+        street_address_form['entity_person_id'] = entity_person.id
+        street_address_id = COMMON.save_person_address(**street_address_form)
+
+        params = {}
+        params['policy_id'] = policy_id
+        params['entity_id'] = entity_id
+        ownership_result = self.update_policy_ownership(**params)
+
+        date_of_birth = principal_member_form.get('date_of_birth', None)
+        params['date_of_birth'] = date_of_birth
+        params['entity_person_id'] = entity_person.id
+        clb_result = self.update_life_benefits(**params)
+
+        params['is_compulsory'] = False
+        params['is_life'] = True
+        opt_result = COMMON.validate_benefits(**params)
+        if opt_result.get('success'):
+            olb_result = self.update_life_benefits(**params)
+
+        principal_member_ben_result = self.set_principal_member_optional_life_benefits_beneficiary(**params)
+
+        return json.dumps({'success': True})
+
+    def update_policy_ownership(self, *args, **kwargs):
+        policy_id = kwargs.get('policy_id', None)
+        entity_id = kwargs.get('entity_id', None)
+        if not policy_id or not entity_id:
+            log.warning('update_policy_ownership: No policy_id or entity_id in kwargs')
+            return {'success': False}
+
+        policy = Policy.by_id(policy_id)
+        policy.policy_owner_entity_id = entity_id
+        policy.policy_payer_entity_id = entity_id
+        DBSession.flush()
+        return {'success': True}
+
+    @expose()
+    def get_benefits_html(self, *args, **kwargs):
+        policy_id = kwargs.get('policy_id', None)
+        if not policy_id:
+            log.warning('get_benefits_html: No policy_id in kwargs')
+            return ''
+
+        dbase_query = DBSession.query(PolicyBenefit).\
+            filter(PolicyBenefit.policy_id == policy_id).\
+            filter(PolicyBenefit.bln_active == True).\
+            group_by(PolicyBenefit.product_benefit_id).\
+            order_by(desc(PolicyBenefit.is_compulsory)). \
+            order_by(asc(PolicyBenefit.id)). \
+            all()
+
+        html = ""
+        for pb in dbase_query:
+            kwargs['product_benefit_id'] = pb.product_benefit_id
+            benefit_card = self.get_benefit_card(**kwargs)
+            html += f'<div id="benefitContainerDiv{pb.product_benefit_id}">{benefit_card}</div>'
+
+        return html
+
+    @expose()
+    def get_benefit_card(self, *args, **kwargs):
+        policy_id = kwargs.get('policy_id', None)
+        if not policy_id:
+            log.warning('get_benefit_card: No policy_id in kwargs')
+            return ''
+
+        product_benefit_id = kwargs.get('product_benefit_id', None)
+        if not product_benefit_id:
+            log.warning('get_benefit_card: No product_benefit_id in kwargs')
+            return ''
+
+        product_benefit = Benefit.by_id(product_benefit_id)
+        product_benefit_insured_life = BenefitInsuredLife.by_attr_first('benefit_id', product_benefit.id)
+
+        policy_benefits = DBSession.query(PolicyBenefit).\
+            filter(PolicyBenefit.policy_id == policy_id).\
+            filter(PolicyBenefit.product_benefit_id == product_benefit_id).\
+            filter(PolicyBenefit.bln_active == True).\
+            all()
+
+        insured_lives_list = []
+        benefit_premium = 0
+        sum_insured = 0
+        for pb in policy_benefits:
+            if pb.premium:
+                benefit_premium += pb.premium
+            policy_benefit_insured_life = PolicyBenefitInsuredLife.by_attr_all('policy_benefit_id', pb.id)
+            if policy_benefit_insured_life:
+                insured_lives_list += policy_benefit_insured_life
+
+        total_premium = get_currency_by_locale(benefit_premium * 100)
+        compulsory = 'Compulsory' if product_benefit.is_compulsory else 'Optional'
+        insured_amount = get_currency_by_locale(pb.sum_insured*100)
+
+        insured_count = len(insured_lives_list)
+        benefit_count = len(policy_benefits)
+        new_button = ''
+        if product_benefit_insured_life:
+            if insured_count < product_benefit_insured_life.maximum_lives and insured_count < benefit_count:
+                new_button = f"""
+                    <button type="button" class="btn btn-primary addBtn" data-target="benefitDiv{product_benefit_id}"
+                        data-product_benefit_id="{product_benefit_id}" data-policy_id="{policy_id}">
+                        Add Life Assured
+                    </button>
+                """
+            elif insured_count < product_benefit_insured_life.maximum_lives and insured_count == benefit_count:
+                new_button = f"""
+                    <button type="button" class="btn btn-primary updateBtn" data-target="benefitDiv{product_benefit_id}"
+                        data-product_benefit_id="{product_benefit_id}" data-policy_id="{policy_id}">
+                        Add New Benefit
+                    </button>
+                """
+
+        table = self.get_benefit_insured_table(insured_lives_list, **kwargs)
+
+        beneficiary_table = self.get_beneficiary_table(policy_benefits, product_benefit_id)
+        beneficiaries = ""
+        if beneficiary_table:
+            beneficiaries = f"""
+                <div class="d-flex justify-content-between align-items-center">
+                    <h5 class="mt-4">Beneficiaries</h5>
+
+                </div>
+                {beneficiary_table}
+            """
+        indicator = ''
+        if insured_count == benefit_count:
+            indicator = f'''
+                <i id="indicatorIcon" class="fas fa-check-circle text-success"
+                    data-toggle="popover" data-trigger="hover" title="Complete"
+                    data-content="{insured_count}/{benefit_count} insureds loaded">
+                </i>
+            '''
+        else:
+            indicator = f'''
+                <i id="indicatorIcon" class="fas fa-info-circle text-danger"
+                    data-toggle="popover" data-trigger="hover" title="Incomplete"
+                    data-content="{insured_count}/{benefit_count} insureds loaded">
+                </i>
+            '''
+        html = f"""
+            <div class="row">
+                <div class="col-md-12">
+                    <div class="card">
+                        <div class="card-header d-flex">
+                            <div class="col-md-6 px-0">
+                                <h4 class="card-title">{compulsory} - {product_benefit.name} ({total_premium}) {indicator}</h4>
+                                Sum Insured: {insured_amount}
+                            </div>
+                            <div class="col-md-6 px-0 text-right">
+                                {new_button}
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <h5 class="mt-4">Insured lives</h5>
+                            <div id="tableDiv{product_benefit_id}">
+                                {table}
+                            </div>
+                            <div id="benefitDiv{product_benefit_id}" class="mt-5" style="display:none;"></div>
+                            {beneficiaries}
+                            <div id="beneficiaryDiv{product_benefit_id}" class="mt-5" style="display:none;"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        """
+        javascript = f"""
+        <script>
+            var productBenefitId = {product_benefit_id};
+        """
+        javascript += """
+            $('.addBtn').click(function(){
+                var data = $(this).data();
+                var benefitDiv = $('#' + data.target);
+                benefitDiv.load('/application_form/get_policy_benefit_insured_life_form', data, function(){
+                    benefitDiv.slideDown('slow');
+                    return false;
+                });
+            });
+            $('.updateBtn').click(function(){
+                var data = $(this).data();
+                var benefitDiv = $('#' + data.target);
+                Swal.fire({
+                title: 'Are you sure?',
+                text: "You are about to add a benefit that was not included in the quote, are you sure you want to continue?",
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonText: 'Add new benefit'
+                }).then((result) => {
+                    benefitDiv.load('/application_form/get_policy_benefit_insured_life_form', data, function(){
+                        benefitDiv.slideDown();
+                    });
+                });
+            });
+            $(function(){
+                if ($('#indicatorIcon.fa-info-circle').length > 0){
+                    $('#payment_tab').addClass('disabled');
+                } else {
+                    $('#payment_tab').removeClass('disabled');
+                }
+            });
+            $(function () {
+                $('[data-toggle="popover"]').popover();
+            })
+        </script>
+        """
+        return html + javascript
+
+    def get_benefit_insured_table(self, insured_list=None, *args, **kwargs):
+        if not insured_list:
+            log.warning('get_benefit_insured_table: No insured_list in args')
+
+        product_benefit_id = kwargs.get('product_benefit_id', None)
+        if not product_benefit_id:
+            log.warning('get_benefit_insured_table: No product_benefit_id in kwargs')
+            return ''
+
+        outputlist = []
+        for item in insured_list:
+
+            person_dict = COMMON.get_edit_person_form_data(**{'entity_person_id': item.entity_person_id})
+            name = person_dict.get('firstname', None)
+            surname = person_dict.get('surname', None)
+            full_name = f'{name} {surname}'
+
+            gender_id = person_dict.get('entity_person_gender_type_id', None)
+            gender = TYPEUTIL.get_pretty_name('entity_person_gender_type', gender_id)
+
+            title_type_id = person_dict.get('person_title_type_id', None)
+            title = TYPEUTIL.get_pretty_name('person_title_type', title_type_id)
+
+            relationship = TYPEUTIL.get_pretty_name('benefit_insured_life_relationship_type', item.relationship_type_id)
+            outputlist.append({
+            'title': title,
+            'relationship': relationship,
+            'name': full_name,
+            'gender': gender,
+        })
+        dbcolumnlist=[
+            'title',
+            'relationship',
+            'name',
+            'gender',
+        ]
+        theadlist=[
+            'Title',
+            'Relationship',
+            'Name',
+            'Gender',
+        ]
+        tdclasslist = [
+            '',
+            '',
+            '',
+            '',
+        ]
+        return  build_html_table(outputlist, dbcolumnlist, theadlist, f"benefit_table{product_benefit_id}", tdclasslist)
+
+    def get_beneficiary_table(self, policy_benefits=[], product_benefit_id=None, *args, **kwargs):
+
+        beneficiary_list = []
+        for pb in policy_benefits:
+            policy_benefit_beneficiaries = PolicyBenefitBeneficiary.by_attr_all('policy_benefit_id', pb.id)
+            if policy_benefit_beneficiaries:
+                beneficiary_list += policy_benefit_beneficiaries
+
+        if not beneficiary_list:
+            return ''
+
+        outputlist = []
+        for item in beneficiary_list:
+            entity_person_id = self.get_entity_person_id_for_entity_id(item.entity_id)
+            if not entity_person_id:
+                continue
+
+            person_dict = COMMON.get_edit_person_form_data(**{'entity_person_id': entity_person_id})
+            name = person_dict.get('firstname', None)
+            surname = person_dict.get('surname', None)
+            full_name = f'{name} {surname}'
+
+            gender_id = person_dict.get('entity_person_gender_type_id', None)
+            gender = TYPEUTIL.get_pretty_name('entity_person_gender_type', gender_id)
+
+            title_type_id = person_dict.get('person_title_type_id', None)
+            title = TYPEUTIL.get_pretty_name('person_title_type', title_type_id)
+
+            relationship = TYPEUTIL.get_pretty_name('benefit_insured_life_relationship_type', item.relationship_type_id)
+            outputlist.append({
+            'title': title,
+            'relationship': relationship,
+            'name': full_name,
+            'gender': gender,
+        })
+        dbcolumnlist=[
+            'title',
+            'relationship',
+            'name',
+            'gender',
+        ]
+        theadlist=[
+            'Title',
+            'Relationship',
+            'Name',
+            'Gender',
+        ]
+        tdclasslist = [
+            '',
+            '',
+            '',
+            '',
+        ]
+        return  build_html_table(outputlist, dbcolumnlist, theadlist, f"beneficiary_table{product_benefit_id}", tdclasslist)
+
+    def get_entity_person_id_for_entity_id(self, entity_id=None, *args, **kwargs):
+        if not entity_id:
+            log.warning('get_entity_person_id_for_entity_id: No entity_id in args')
+            return None
+        entity_person = EntityPerson.by_attr_first('entity_id', entity_id)
+
+        if not entity_person:
+            log.warning(f'get_entity_person_id_for_entity_id: No EntityPerson resord for entity_id({entity_id})')
+            return None
+        return entity_person.id
+
+    @expose()
+    def get_policy_benefit_insured_life_form(self, *args, **kwargs):
+        policy_id = kwargs.get('policy_id', None)
+        if not policy_id:
+            log.warning('get_policy_benefit_insured_life_form: No policy_id in kwargs')
+
+        product_benefit_id = kwargs.get('product_benefit_id', None)
+        if not product_benefit_id:
+            log.warning('get_policy_benefit_insured_life_form: No product_benefit_id in kwargs')
+
+        policy_benefits = DBSession.query(PolicyBenefit).\
+            filter(PolicyBenefit.policy_id == policy_id).\
+            filter(PolicyBenefit.product_benefit_id == product_benefit_id).\
+            filter(PolicyBenefit.bln_active == True).\
+            all()
+
+        for pb in policy_benefits:
+            policy_benefit_insured_life = PolicyBenefitInsuredLife.by_attr_first('policy_benefit_id', pb.id)
+
+            if policy_benefit_insured_life:
+                continue
+            kwargs['policy_benefit_id'] = pb.id
+            return self.get_insured_life_form(**kwargs)
+
+        return self.get_insured_life_form(**kwargs)
+
+    @expose()
+    def get_insured_life_form(self, *args, **kwargs):
+        policy_id = kwargs.get('policy_id', None)
+        if not policy_id:
+            log.warning('get_insured_life_form: No policy_id in kwargs')
+            return ''
+
+        product_benefit_id = kwargs.get('product_benefit_id', None)
+        if not product_benefit_id:
+            log.warning('get_insured_life_form: No product_benefit_id in kwargs')
+            return ''
+
+        policy_benefit_id = kwargs.get('policy_benefit_id', None)
+        # if not policy_benefit_id:
+        #     log.warning('get_insured_life_form: No policy_benefit_id in kwargs')
+        #     return ''
+
+        form_id = f'benefit_form_{policy_benefit_id}'
+        kwargs['form_id'] = form_id
+        form_inputs = COMMON.get_person_form_inputs(**kwargs)
+        html = f"""
+            <div id="formDiv{policy_benefit_id}">
+                <form id="benefitForm{policy_benefit_id}" class="d-flex flex-wrap">
+                    {form_inputs}
+                </form>
+            </div>
+            <div class="col-md-12 text-right">
+                <button type="button" class="btn btn-outline-primary cancelBtn" data-target="benefitDiv{policy_benefit_id}"
+                    data-policy_id="{policy_id}" data-product_benefit_id="{product_benefit_id}"
+                    data-policy_benefit_id="{policy_benefit_id}">Cancel</button>
+
+                <button type="button" class="btn btn-primary saveBtn" data-target="benefitDiv{policy_benefit_id}"
+                    data-policy_id="{policy_id}" data-product_benefit_id="{product_benefit_id}"
+                    data-policy_benefit_id="{policy_benefit_id}">Save</button>
+            </div>
+        """
+        javascript = f"""
+        <script>
+            var policyBenefitId = '{policy_benefit_id}';
+        """
+        javascript += """
+            var containerDiv = $('#formDiv' + policyBenefitId);
+            var benefit_form = $('#benefitForm' + policyBenefitId);
+            setFormValidation(benefit_form);
+            $('.saveBtn[data-target="benefitDiv'+ policyBenefitId +'"]').click(function(){
+                var btnData = $(this).data();
+                var benefit_form_valid = FormIsValid(benefit_form);
+                if (benefit_form_valid){
+                    var formserial = getFormData(benefit_form);
+                    $.extend(formserial, btnData);
+                    $.post('/application_form/save_benefit_life_assured', formserial, function(data){
+                        var result = JSON.parse(data);
+                        if (result.success === true){
+                            $('#benefitContainerDiv' + btnData.product_benefit_id).load('/application_form/get_benefit_card', btnData, function(data){
+                                return false;
+                            });
+                        } else {
+                            showNotification(result.status, result.message)
+                        }
+                    });
+                }
+            });
+
+            var idNumber = $('#number');
+            var idType = $('#identity_type_id');
+            var saidType = $(identity_type_id).data('saidId');
+            var saidLength = $(identity_type_id).data('length');
+
+            idNumber.on('keyup', function(){
+                if ((idNumber.val().length >= saidLength) && (parseInt($('#identity_type_id option:selected').val()) === saidType)){
+                    var params = {
+                        'identity_type_id': idType.val(),
+                        'identity_number': idNumber.val()
+                    }
+                    $.post('/members/check_member_exists', params, function(data){
+                        var result = JSON.parse(data);
+                        if(result.success === true){
+                            var kwargs = {
+                                'entity_person_id': result.data,
+                                'form_id': 'benefitForm' + policyBenefitId
+                            }
+                            $(containerDiv).load('/common/get_edit_person_form', kwargs, function(){
+                                benefit_form = $('#benefitForm' + policyBenefitId);
+                                setFormValidation(benefit_form);
+                                return false;
+                            });
+                        }
+                        return false;
+                    });
+                }
+            });
+
+            $('.cancelBtn').click(function(){
+                var data = $(this).data();
+                $('#benefitContainerDiv' + data.product_benefit_id).load('/application_form/get_benefit_card', data, function(d){
+                    return false;
+                });
+            });
+        </script>
+        """
+        return html + javascript
+
+    @expose()
+    def save_benefit_life_assured(self, *args, **kwargs):
+        policy_benefit_id = kwargs.get('policy_benefit_id', None)
+        if not policy_benefit_id:
+            log.warning('save_benefit_life_assured: No policy_benefit_id in kwargs')
+            return json.dumps({'success': False, 'message': 'Please select a policy benefit to add this assured to', 'status': 'danger'})
+
+        policy_benefit = PolicyBenefit.by_id(policy_benefit_id)
+
+        date_of_birth = kwargs.get('date_of_birth', None)
+        if not date_of_birth:
+            log.warning('save_benefit_life_assured: No date_of_birth in kwargs')
+
+        res = COMMON.validate_benefit_min_max_age(policy_benefit.product_benefit_id, date_of_birth)
+        if not res.get('success'):
+            message = res.get('message', 'The member that you are trying to add does not qualify due to age criteria')
+            return json.dumps({'success': False, 'message': message, 'status': 'danger'})
+
+        entity_person_id = kwargs.get('entity_person_id', None)
+        if not entity_person_id:
+            log.info('save_benefit_life_assured: Saving new entity_person')
+            entity_id = COMMON.save_new_personobj(**kwargs)
+            entity_person = EntityPerson.by_attr_first('entity_id', entity_id)
+            entity_person_id = entity_person.id
+
+        insured_exists = DBSession.query(PolicyBenefitInsuredLife).\
+            filter(PolicyBenefitInsuredLife.policy_benefit_id == policy_benefit_id).\
+            filter(PolicyBenefitInsuredLife.entity_person_id == entity_person_id).\
+            filter(PolicyBenefitInsuredLife.bln_active == True).\
+            first()
+
+        if insured_exists:
+            return json.dumps({'success': False, 'message': 'Insured already exists on this benefit', 'status': 'danger'})
+
+        kwargs['entity_person_id'] = entity_person_id
+        kwargs['policy_benefit_id'] = policy_benefit_id
+        benefit_insured_life = BenefitInsuredLife.by_attr_first('benefit_id', policy_benefit.product_benefit_id)
+
+        kwargs['relationship_type_id'] = benefit_insured_life.benefit_insured_life_relationship_type_id
+        result = self.save_policy_benefit_insured_life(**kwargs)
+
+        return json.dumps({'success': True, 'message': 'Great Success', 'status': 'success'})
+
+    @expose()
+    def get_payment_details(self, *args, **kwargs):
+        policy_id = kwargs.get('policy_id', None)
+        if not policy_id:
+            log.warning('get_payment_details: No policy_id in kwargs')
+            return ''
+
+        policy = Policy.by_id(policy_id)
+        bank_account = EntityBankAccount.by_attr_first('entity_id', policy.policy_payer_entity_id)
+        if bank_account:
+            bank_account = bank_account.__dict__
+        else:
+            bank_account = {}
+        bank_account['bank_form_id'] = 'bank_form'
+        bank_account['form_id'] = 'bank_form'
+        bank_account['entity_id'] = policy.policy_payer_entity_id
+        banking_form = COMMON.get_bank_account_form(**bank_account)
+        html = f"""
+        <div class="row">
+            <div class="col-md-12">
+                <div id="cardHeader" class="card">
+                    <div class="card-header d-flex">
+                        <div class="col-md-6 px-0">
+                            <h4 class="card-title">Payment Details</h4>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        {banking_form}
+                        <div class="col-md-12 text-right">
+                            <button id="cancelBtn" type="button" class="btn btn-outline-primary">Cancel</button>
+                            <button id="saveBtn" type="button" class="btn btn-primary">Save</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        javascript = """
+        <script>
+            var bank_form = $('#bank_form');
+            setFormValidation(bank_form);
+            $('#saveBtn').click(function(){
+                var valid = FormIsValid(bank_form);
+                if (valid){
+                    var formserial = getFormData(bank_form);
+                    formserial['entity_person_id'] = $('#cardHeader').data('entity_person_id');
+                    $.post('/application_form/save_payment_details', formserial, function(data){
+                        var result = JSON.parse(data);
+                        if (result.success === true){
+                            return false;
+                        }
+                    });
+                }
+            });
+        </script>
+        """
+        return html + javascript
+
+    @expose()
+    def save_payment_details(self, *args, **kwargs):
+        result = COMMON.save_person_bank_account(**kwargs)
+        return json.dumps({'success': True, 'message': 'Saved!', 'status': 'danger'})

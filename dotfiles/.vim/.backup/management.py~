@@ -1,0 +1,35 @@
+# -*- coding: utf-8 -*-
+"""Home controller module"""
+from tg import predicates
+
+import string
+import requests
+import json
+
+from tg import expose, require, redirect, validate, flash, url, request, response, predicates
+
+from calabashweb.model import *
+
+from calabashweb.lib.base import BaseController
+from calabashweb.lib.tg_utils import *
+from calabashweb.lib.tg_decorators import time_it
+from calabashweb.lib.tgfileuploader import FileUploader
+import calabashweb.lib.myimali_utils as calabash_gateway
+
+FILENAME = os.path.abspath(resource_filename('calabashweb', 'public'))
+PUBLIC_DIRNAME = os.path.join(FILENAME)
+UPLOADS_DIRNAME = os.path.join(PUBLIC_DIRNAME, 'uploads')
+
+class ManagementController(BaseController):
+
+    @expose('calabashweb.templates.generic')
+    def index(self):
+        get_url = 'http://localhost:9090/trevor/get_management_index'    
+        r = requests.get(get_url)
+        print('R json: ', r.json())
+        response = r.json()
+        html = response.get('html','')
+        javascript = response.get('javascript','')
+        python = response.get('python','')
+        return dict(title='Management - Calabash Portal', html=html, javascript=javascript, python=python)
+   

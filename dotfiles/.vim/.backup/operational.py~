@@ -1,0 +1,1039 @@
+"""Operational controller module"""
+import urllib.parse
+from tg.predicates import has_permission
+
+from tg.i18n import ugettext as _, lazy_ugettext as l_
+import string
+import datetime
+# from tg.i18n import ugettext as _
+# from tg import predicates
+from sqlalchemy import func, desc, asc, or_
+from tg import expose, require, redirect, validate, flash, url, request, response, predicates
+
+from tanzanite.model import *
+from tanzanite.lib.tg_utils import *
+from tanzanite.lib.base import BaseController
+from tanzanite.controllers.common import CommonController
+from tanzanite.controllers.logging import LoggingController
+
+LOGGING = LoggingController()
+COMMON = CommonController()
+LIMIT = 20
+
+class OperationalController(BaseController):
+
+    allow_only = has_permission(
+        'Operator',
+        msg=l_('Only for people with the "Operator" permission')
+    )
+    def change_content_serial_range(self, *args, **kwargs):
+        #TESTED TGJ 20200211
+        old_pack_id = kwargs.get('old_pack_id', None)
+        new_pack_id = kwargs.get('new_pack_id', None)
+        serial = kwargs.get('serial', None)
+
+        if not old_pack_id  \
+           or not serial: return False
+
+        usernow = request.identity.get('user', {})
+
+        old_pack = PackingDetail.by_id(old_pack_id)
+        if not old_pack: return False
+        if serial in old_pack.content_serial_range:
+            #Remove it from the old pack...
+            old_pack.content_serial_range.replace(serial, '')
+            old_pack.content_serial_range.replace(', ,', ', ')
+            DBSession.flush()
+
+        if new_pack_id:
+            new_pack = PackingDetail.by_id(new_pack_id)
+            if  new_pack:
+                new_pack.content_serial_range += ', '+serial
+                new_pack.content_serial_range.replace(', ,', ', ')
+                DBSession.flush()
+
+        return True
+
+    def ensure_branch_store(self, *args, **kwargs):
+        #TESTED TGJ 20200211
+        client_branch_name = kwargs.get('client_branch_name', None)
+        client_branch_id = kwargs.get('client_branch_id', None)
+
+        if not client_branch_name \
+           or not client_branch_id:
+            return json.dumps({'success': 'false'})
+
+        usernow = request.identity.get('user', {})
+        store = DBSession.query(Store).\
+            filter(Store.client_branch_id == client_branch_id).\
+            first()
+
+        if not store:
+            store = Store()
+        store.name = client_branch_name[0:40]
+        store.client_branch_id = client_branch_id
+        store.store_type_id = COMMON.get_type_id(StoreType, 'Branch')
+        store.created = datetime.now() if not store.created else store.created
+        store.created_by_id = usernow.id if not store.created_by_id else store.created_by_id
+        if not store.id:
+            DBSession.add(store)
+        DBSession.flush()
+
+        store_location = DBSession.query(StoreLocation).\
+            filter(StoreLocation.store_id==store.id).\
+            first()
+
+        if not store_location:
+            store_location = StoreLocation()
+        store_location.store_id = store.id
+        store_location.description = client_branch_name[0:35]
+        store_location.location_code = client_branch_name[0:40]
+        if not store_location.id:
+            DBSession.add(store_location)
+        DBSession.flush()
+
+        LOGGING.add_audit_log(**{
+            'audit_action_id': COMMON.get_type_id(AuditAction, 'Added'),
+            'audit_type_id': COMMON.get_type_id(AuditType, 'Store'),
+            'key': store.id,
+            'message': 'Store '+store.name+' created/updated',
+        })
+
+        return json.dumps({'success': 'true', 'store_id': store.id, 'store_location_id': store_location.id, })
+
+    def get_store_name_from_location_id(self, store_location_id, *args, **kwargs):
+        if not store_location_id: return 'Unknown Store'
+
+        store_location = StoreLocation.by_id(store_location_id)
+        if not store_location: return 'Unknown Location'
+
+        store = Store.by_id(store_location.store_id)
+        if not store: return 'Unknown Store'
+        return store.name
+
+    def get_store_location_from_id(self, store_location_id, *args, **kwargs):
+        if not store_location_id: return 'Unknown Location'
+        store_location = StoreLocation.by_id(store_location_id)
+        if not store_location: return 'Unknown Location'
+        return store_location.name
+
+    def get_product_from_sku(self, sku=None, *args, **kwargs):
+        #TESTED TGJ 20200211
+        if not sku: return None
+        product = DBSession.query(Product). \
+                filter(Product.sku == sku). \
+                first()
+        return product
+
+    def get_product_name(self, *args, **kwargs):
+        #TESTED TGJ 20200211
+        pallet_id = kwargs.get('pallet_id', None)
+        packing_detail_id = kwargs.get('packing_detail_id', None)
+        if not pallet_id and not packing_detail_id: return ''
+        if pallet_id:
+            pallet = Pallet.by_id(pallet_id)
+            if not pallet: return ''
+            packing_detail = DBSession.query(PackingDetail).\
+                filter(PackingDetail.pallet_id==pallet_id).\
+                first()
+            if not packing_detail: return ''
+            # product, client = DBSession.query(Product.description, Client.name). \
+            #     join(SupplierOrderDetail, SupplierOrderDetail.product_id == Product.id). \
+            #     join(PackingDetail, PackingDetail.supplier_order_detail_id == SupplierOrderDetail.id). \
+            #     join(Client, Client.id == Product.client_id). \
+            #     filter(PackingDetail.pallet_id == pallet_id). \
+            #     first()
+        else:
+            packing_detail = PackingDetail.by_id(packing_detail_id)
+            if not packing_detail: return ''
+            # product, client = DBSession.query(Product.description, Client.name). \
+            #     join(SupplierOrderDetail, SupplierOrderDetail.product_id == Product.id). \
+            #     join(PackingDetail, PackingDetail.supplier_order_detail_id == SupplierOrderDetail.id). \
+            #     join(Client, Client.id == Product.client_id). \
+            #     filter(PackingDetail.id == packing_detail_id). \
+            #     first()
+
+        supplier_order_detail = DBSession.query(SupplierOrderDetail).\
+            filter(SupplierOrderDetail.id==packing_detail.supplier_order_detail_id).\
+            first()
+        if not supplier_order_detail: return ''
+
+        product = Product.by_id(supplier_order_detail.product_id)
+        return product
+
+        if not product: return ''
+        client = Client.by_id(product.client_id)
+
+        if not product or not client: return ''
+        return product.description+' ('+client.name+')'
+
+    def get_product_from_pallet(self, pallet_id=None, *args, **kwargs):
+        if not pallet_id: return
+
+        pallet = Pallet.by_id(pallet_id)
+        if not pallet: return
+
+        packing_detail = DBSession.query(PackingDetail).\
+            filter(PackingDetail.pallet_id==pallet_id).\
+            first()
+        if not packing_detail: return
+
+        supplier_order_detail = SupplierOrderDetail.by_id(packing_detail.supplier_order_detail_id)
+        if not supplier_order_detail: return
+
+        product = Product.by_id(supplier_order_detail.product_id)
+        return product
+
+    def get_product_name_from_packing_detail(self, packing_detail_id=None, *args, **kwargs):
+        if not packing_detail_id: return  ''
+
+        packing_detail = PackingDetail.by_id(packing_detail_id)
+        if not packing_detail: return ''
+
+        supplier_order_detail = SupplierOrderDetail.by_id(packing_detail.supplier_order_detail_id)
+        if not supplier_order_detail: return ''
+
+        product = Product.by_id(supplier_order_detail.product_id)
+        if not product: return ''
+        return product.description
+
+    def generate_card_numbers(self, serial_start=None, serial_end=None, *args, **kwargs):
+        #TESTED TGJ: 20200211
+        if not serial_start or not serial_end: return ''
+        #get the first nuber in the tracking number
+        #ZAR241012186672 and ZAR241012186721
+        result = re.search(r"\d", serial_start)
+        if not result: return ''
+
+        digit_index = result.start()
+
+        this_length = len(serial_start[digit_index: ])
+
+        # serial_start_number = long(serial_start[digit_index: ])
+        # serial_end_number = long(serial_end[digit_index: ])
+        serial_start_number = int(serial_start[digit_index: ])
+        serial_end_number = int(serial_end[digit_index: ])
+        prefix = serial_end[: digit_index]
+
+        current_card_number = prefix+str(serial_start_number).zfill(this_length)
+        card_numbers = ''
+        while serial_start_number <= serial_end_number:
+            card_numbers +=  current_card_number+', '
+            serial_start_number +=1 #step
+            current_card_number = prefix+str(serial_start_number).zfill(this_length)
+        card_number_length = len(card_numbers)-2
+        card_numbers = card_numbers[: card_number_length]
+        return card_numbers
+
+    def move_box_pallet(self, packing_detail_id=None, pallet_id=None, *args, **kwargs):
+        #TESTED TGJ 20200211
+        if not packing_detail_id: return
+        #Move box and all inner content to new pallet
+        #If pallet = None then remove the pallet link from the packing detail
+
+        box = PackingDetail.by_id(packing_detail_id)
+        if not box: return
+
+        box.pallet_id = pallet_id if pallet_id else None
+        DBSession.flush()
+
+        pack_list = DBSession.query(PackingDetail).\
+            filter(PackingDetail.outer_pack_id == box.id).\
+            all()
+
+        if not pack_list: return
+
+        for pack in pack_list:
+            pack.pallet_id = pallet_id if pallet_id else None
+            #DBSession.flush()
+
+            pack2_list = DBSession.query(PackingDetail).\
+                filter(PackingDetail.outer_pack_id == pack.id).\
+                all()
+
+            if not pack2_list: continue
+            for pack2 in pack2_list:
+                pack2.pallet_id = pallet_id if pallet_id else None
+                #DBSession.flush()
+        DBSession.flush()
+        return
+
+    def move_card(self, *args, **kwargs):
+        #TESTED TGJ: 20200211
+        #Should only ever be called for a single card
+        card = kwargs.get('card', None)
+        store_location_id = kwargs.get('store_location_id', None)
+        card_status_id = kwargs.get('card_status_id', None)
+        packing_detail_id = kwargs.get('packing_detail_id', None)
+
+        if not card \
+           or not store_location_id  \
+           or not packing_detail_id \
+           or not card_status_id:
+            return json.dumps({'success': 'false'})
+
+        pack = PackingDetail.by_id(packing_detail_id)
+        if not pack: return json.dumps({'success': 'false'})
+
+        usernow = request.identity.get('user', {})
+        if card_status_id != card.card_status_id:
+            card.card_status_id = card_status_id
+
+        old_store_location_id = card.store_location_id
+        card.store_location_id = store_location_id
+        moved_pack = False
+        old_pack_id = card.packing_detail_id
+        if pack.id != card.packing_detail_id:
+            moved_pack = True
+            card.packing_detail_id = pack.id
+        pack.store_location_id = store_location_id
+        DBSession.flush()
+
+        #write the history
+        self.write_card_history(card.id, card.card_status_id, card.store_location_id)
+
+        if moved_pack:
+            #We need to update the content here.
+            self.change_content_serial_range(**{
+                'old_pack_id': old_pack_id,
+                'new_pack_id': packing_detail_id,
+                'serial': card.tracking_number,
+            })
+
+        LOGGING.add_movement_audit_log(**{
+            'audit_action_id': COMMON.get_type_id(AuditAction, 'Audit'),
+            'audit_type_id': COMMON.get_type_id(AuditType, 'GoodsMovement'),
+            'key': packing_detail_id,
+            'packing_type_id': pack.id,
+            'key_auxillary': old_store_location_id,
+            'packing_type_id2': None,
+            'key_auxillary2': store_location_id,
+            'packing_type_id3': None,
+            'key_auxillary3': None,
+            'message': 'Card with ID '+str(card.id)+' - '+card.tracking_number+' was moved',
+            'card_id': card.id,
+            })
+
+        return json.dumps({'success': 'true'})
+
+    def move_card_range(self, *args, **kwargs):
+        #TESTED TGJ: 20200212
+        serial_start = kwargs.get('serial_start', None)
+        serial_end = kwargs.get('serial_end', None)
+        to_store_location_id = kwargs.get('to_store_location_id', None)
+        from_store_location_id = kwargs.get('from_store_location_id', None)
+        new_card_status_id = kwargs.get('new_card_status_id', None)
+
+        if not serial_start \
+           or not serial_end \
+           or not to_store_location_id \
+           or not from_store_location_id:
+            message = 'Not enough input parameters to complete request.'
+            return {'success': 'false', 'message': message, 'status':'danger'}
+
+        card_string = self.generate_card_numbers(serial_start, serial_end)
+        tracking_list = card_string.split(', ')
+
+        in_stock_id = COMMON.get_type_id(CardStatus, 'InStock')
+        branch_store_id = COMMON.get_type_id(CardStatus, 'BranchStore')
+
+        card_list = DBSession.query(Card).\
+            filter(Card.tracking_number.in_(tracking_list)).\
+            filter(Card.store_location_id == from_store_location_id).\
+            filter(or_(
+                Card.card_status_id==in_stock_id,
+                Card.card_status_id==branch_store_id,)). \
+            all()
+
+        for card in card_list:
+            self.move_card_and_pack(**{
+                'card': card ,
+                'store_location_id': to_store_location_id ,
+                'card_status_id': COMMON.get_type_id(CardStatus, 'InStock') ,
+            })
+
+        self.rebuild_all_soh(from_store_location_id)
+        self.rebuild_all_soh(to_store_location_id)
+
+        message = 'Successfully Move Card Range'
+        return {'success': 'true', 'message': message, 'status':'success'}
+
+    def move_pack_2_branch(self, *args, **kwargs):
+        #TESTED TGJ: 20200212
+        client_branch_id = kwargs.get('client_branch_id', None)
+        packing_detail_id = kwargs.get('packing_detail_id', None)
+
+        if not client_branch_id \
+           or not packing_detail_id:
+               return json.dumps({'success': 'false'})
+
+        client_branch = ClientBranch.by_id(client_branch_id)
+        if not client_branch: return json.dumps({'success': 'false'})
+
+        self.ensure_branch_store(**{
+                'client_branch_name': client_branch.store_number+' - '+client_branch.branch_code+' - '+client_branch.name,
+                'client_branch_id': client_branch.id,
+            })
+
+        store = DBSession.query(Store).\
+            filter(Store.client_branch_id == client_branch_id).\
+            first()
+        if not store: return json.dumps({'success': 'false'})
+
+        store_location = DBSession.query(StoreLocation).\
+            filter(StoreLocation.store_id==store.id).\
+            first()
+        if not store_location: return json.dumps({'success': 'false'})
+
+        packing_detail = PackingDetail.by_id(packing_detail_id)
+        if not packing_detail: return json.dumps({'success': 'false'})
+
+        orig_store_location_id = packing_detail.store_location_id
+
+        packing_detail.store_location_id = store_location.id
+        packing_detail.outer_pack_id = None
+        packing_detail.pallet_id = None
+        DBSession.flush()
+
+        inner_packs = DBSession.query(PackingDetail).\
+            filter(PackingDetail.outer_pack_id == packing_detail_id).\
+            all()
+        if inner_packs:
+            for pack in inner_packs:
+                pack.store_location_id = packing_detail.store_location_id
+                pack.pallet_id = packing_detail.pallet_id
+                DBSession.flush()
+
+                card_list = DBSession.query(Card).\
+                    filter(Card.packing_detail_id == pack.id).\
+                    all()
+
+                if card_list:
+                    for card in card_list:
+                        self.move_card_and_pack(**{
+                            'card': card ,
+                            'store_location_id': packing_detail.store_location_id ,
+                            'card_status_id': COMMON.get_type_id(CardStatus, 'InStock') ,
+                        })
+
+        else:
+            card_list = DBSession.query(Card).\
+                filter(Card.packing_detail_id == packing_detail_id).\
+                all()
+
+            if card_list:
+                for card in card_list:
+                    self.move_card_and_pack(**{
+                        'card': card ,
+                        'store_location_id': packing_detail.store_location_id ,
+                        'card_status_id': COMMON.get_type_id(CardStatus, 'InStock') ,
+                    })
+
+        self.rebuild_all_soh(orig_store_location_id)
+        self.rebuild_all_soh(store_location.id)
+
+        return json.dumps({'success': 'true'})
+
+    def move_card_and_pack(self, *args, **kwargs):
+        card = kwargs.get('card', None)
+        store_location_id = kwargs.get('store_location_id', None)
+        card_status_id = kwargs.get('card_status_id', None)
+        
+        if not card \
+           or not store_location_id \
+           or not card_status_id: return False
+        
+        pack = PackingDetail.by_id(card.packing_detail_id)           
+        if not pack: return False
+        
+        pack.store_location_id = store_location_id
+        DBSession.flush()
+        
+        card.store_location_id = store_location_id
+        card.card_status_id = card_status_id
+        DBSession.flush()
+        self.write_card_history(card.id, card.card_status_id, card.store_location_id)
+        return True
+
+
+
+    def parse_raw_scan(self, raw_scan=None, *args, **kwargs):
+        #TGJ: Only used when scanning in details.
+        #TESTED TGJ: 20200212
+        if not raw_scan: return json.dumps({'success': 'false'})
+        raw_string = raw_scan.split('|')
+        is_partial = raw_string[0]
+        sku = raw_string[1]
+        packing_layer = raw_string[2]
+        reference_number = raw_string[3]
+        bundle_numbers = raw_string[4]
+        card_number_range = raw_string[5]
+        sub_string = card_number_range.split('-')
+        card_numbers = self.generate_card_numbers(sub_string[0], sub_string[1])
+        order_number = raw_string[6]
+
+        # print('sku', sku)
+        # print('packing_layer', packing_layer)
+        # print('reference_number', reference_number)
+        # print('bundle_numbers', bundle_numbers)
+        # print('card_number_range', card_number_range)
+        # print('card_numbers', card_numbers)
+        # print('order_number', order_number)
+
+        if not sku \
+           or not packing_layer \
+           or not reference_number \
+           or not bundle_numbers \
+           or not card_number_range \
+           or not card_numbers \
+           or not order_number:
+            return json.dumps({
+                'success': 'false',
+                'message': 'Input Error: Fields missing from box import.'
+                })
+
+
+
+        return json.dumps({
+            'success': 'true',
+            'message': '',
+            'sku': sku ,
+            'packing_layer': packing_layer ,
+            'reference_number': reference_number ,
+            'bundle_numbers': bundle_numbers ,
+            'card_number_range': card_number_range,
+            'card_numbers': card_numbers,
+            'order_number': order_number ,
+            })
+
+    @expose()
+    def return_branch_stock(self, *args, **kwargs):
+        #TESTED TGJ: 20200212
+        client_branch_id = kwargs.get('client_branch_id', None)
+        if not client_branch_id:
+            message = 'No cards moved. Branch details missing.'
+            return json.dumps({'message': message})
+        client_branch = ClientBranch.by_id(client_branch_id)
+        if not client_branch:
+            message = 'No cards moved. Branch details missing.'
+            return json.dumps({'message': message})
+
+        store = DBSession.query(Store).\
+            filter(Store.client_branch_id == client_branch_id).\
+            first()
+        if not store:
+            message = 'No cards moved. Branch store not found.'
+            return json.dumps({'message': message})
+
+        store_location = DBSession.query(StoreLocation).\
+            filter(StoreLocation.store_id == store.id).\
+            first()
+        if not store_location:
+            message = 'No cards moved. Branch store location not found.'
+            return json.dumps({'message': message})
+
+        card_list = DBSession.query(Card, PackingDetail).\
+            filter(PackingDetail.id==Card.packing_detail_id).\
+            filter(Card.store_location_id == store_location.id).\
+            all()
+        if not card_list:
+            message = 'No cards were found or moved from branch '+client_branch.name
+            return json.dumps({'message': message})
+
+        return_store_location_id = COMMON.get_return_store_location_id()
+
+        for card, pack in card_list:
+            card.store_location_id = return_store_location_id
+            if pack.store_location_id != return_store_location_id:
+                pack.store_location_id = return_store_location_id
+
+            self.write_card_history(card.id, card.card_status_id, card.store_location_id)
+            DBSession.flush()
+
+        self.rebuild_all_soh(store_location.id)
+        self.rebuild_all_soh(return_store_location_id)
+
+        message = 'Cards were moved from branch '+client_branch.name+' to Warehouse Returns Location.'
+        return json.dumps({'message': message})
+
+    @expose()
+    def return_branch_product_stock(self, *args, **kwargs):
+        #TESTED TGJ: 20200212
+        client_branch_product_id = kwargs.get('client_branch_product_id', None)
+        if not client_branch_product_id:
+            message = 'No cards moved. Branch Product details missing.'
+            return json.dumps({'success': False,'message': message})
+        client_branch_product = ClientBranchProduct.by_id(client_branch_product_id)
+        if not client_branch_product:
+            message = 'No cards moved. Branch Product details missing.'
+            return json.dumps({'success': False,'message': message})
+        client_branch = ClientBranch.by_id(client_branch_product.client_branch_id)
+        if not client_branch:
+            message = 'No cards moved. Branch details missing.'
+            return json.dumps({'success': False,'message': message})
+        
+        store = DBSession.query(Store).\
+            filter(Store.client_branch_id == client_branch_product.client_branch_id).\
+            first()
+        if not store:
+            message = 'No cards moved. Branch store not found.'
+            return json.dumps({'success': False,'message': message})
+
+        store_location = DBSession.query(StoreLocation).\
+            filter(StoreLocation.store_id == store.id).\
+            first()
+        if not store_location:
+            message = 'No cards moved. Branch store location not found.'
+            return json.dumps({'success': False,'message': message})
+
+        card_list = DBSession.query(Card, PackingDetail).\
+            filter(PackingDetail.id==Card.packing_detail_id).\
+            filter(Card.store_location_id == store_location.id).\
+            filter(Card.product_id == client_branch_product.product_id).\
+            all()
+        if not card_list:
+            # Delete the record.
+            DBSession.delete(client_branch_product)
+            DBSession.flush()
+            message = 'No cards were found or moved from branch '+client_branch.name
+            return json.dumps({'success': True,'message': message})
+
+        return_store_location_id = COMMON.get_return_store_location_id()
+
+        for card, pack in card_list:
+            card.store_location_id = return_store_location_id
+            if pack.store_location_id != return_store_location_id:
+                pack.store_location_id = return_store_location_id
+
+            self.write_card_history(card.id, card.card_status_id, card.store_location_id)
+            DBSession.flush()
+
+        # Delete the record.
+        DBSession.delete(client_branch_product)
+        DBSession.flush()
+        
+        self.rebuild_all_soh(store_location.id)
+        self.rebuild_all_soh(return_store_location_id)
+
+        message = 'Product Cards were moved from branch '+client_branch.name+' to Warehouse Returns Location.'
+        return json.dumps({'success': True, 'message': message})
+
+    @expose()
+    def rebuild_all_soh(self, store_location_id=None, *args, **kwargs):
+        try:
+            usernow = request.identity.get('user', {})
+        except Exception as e:
+            usernow = DBSession.query(User).filter(User.name=='Nobody').first()
+
+        self.ensure_product_store_level()
+
+        if store_location_id:
+            #update  for this location only.
+            DBSession.query(ProductStoreLevel).\
+                filter(ProductStoreLevel.store_location_id == store_location_id).\
+                update({'quantity': 0})
+            DBSession.flush()
+
+            dbase_query = DBSession.query(ProductStoreLevel). \
+                filter(ProductStoreLevel.store_location_id == store_location_id). \
+                all()
+        else:
+            #all locations
+            DBSession.query(ProductStoreLevel).\
+                    update({'quantity': 0})
+            DBSession.flush()
+
+            dbase_query = DBSession.query(ProductStoreLevel).all()
+
+        #step through locations levels and udpate the totals.
+        sold_id = COMMON.get_type_id(CardStatus, 'Sold')
+        destroyed_id = COMMON.get_type_id(CardStatus, 'Destroyed')
+        delivered_id = COMMON.get_type_id(CardStatus, 'Delivered')
+
+        for item in dbase_query:
+            count = DBSession.query(Card). \
+                filter(Card.store_location_id == item.store_location_id). \
+                filter(Card.product_id == item.product_id). \
+                filter(Card.card_status_id.notin_([sold_id, destroyed_id, delivered_id])). \
+                value(func.count(Card.id))
+
+            if count:
+                item.quantity = count
+
+            DBSession.flush()
+
+        return 'true'
+
+    def ensure_product_store_level_OLD_BLAH(self, *args, **kwargs):
+        dbase_query = DBSession.query(ClientBranchProduct.product_id, StoreLocation.store_id, Card.store_location_id). \
+            join(ClientBranch, ClientBranch.id == ClientBranchProduct.client_branch_id).\
+            join(Store, Store.client_branch_id == ClientBranch.id).\
+            join(StoreLocation, StoreLocation.store_id == Store.id).\
+            filter(ClientBranch.is_active == True).\
+            group_by(Card.product_id, StoreLocation.store_id, Card.store_location_id). \
+            order_by(Card.product_id, StoreLocation.store_id, Card.store_location_id). \
+            all()
+
+        try:
+            usernow = request.identity.get('user', {})
+        except Exception as e:
+            usernow = DBSession.query(User).filter(User.name=='Nobody').first()
+
+        for product_id, store_id, store_loc_id in dbase_query:
+            prod_store_level = DBSession.query(ProductStoreLevel). \
+                filter(ProductStoreLevel.product_id == product_id). \
+                filter(ProductStoreLevel.store_location_id == store_loc_id). \
+                first()
+
+            if not prod_store_level:
+                this = ProductStoreLevel()
+                this.product_id = product_id
+                this.store_id = store_id
+                this.store_location_id = store_loc_id
+                this.quantity = 0
+                this.date_time = datetime.now()
+                this.user_id = usernow.id
+                DBSession.add(this)
+                DBSession.flush()
+
+        return
+
+    def ensure_product_store_level(self, *args, **kwargs):
+        try:
+            usernow = request.identity.get('user', {})
+        except Exception as e:
+            usernow = DBSession.query(User).filter(User.name=='Nobody').first()
+
+        branch_list = DBSession.query(ClientBranch). \
+            filter(ClientBranch.is_active == True).\
+            all()
+
+        for branch in branch_list:
+            store = DBSession.query(Store). \
+                filter(Store.client_branch_id==branch.id).\
+                first()
+            if not store: continue
+            
+            store_location = DBSession.query(StoreLocation). \
+                filter(StoreLocation.store_id==store.id).\
+                first()
+            if not store_location: continue
+
+            branch_product_list = DBSession.query(ClientBranchProduct). \
+                filter(ClientBranchProduct.client_branch_id==branch.id).\
+                order_by(ClientBranchProduct.product_id).\
+                all()
+
+            for product in branch_product_list:
+                prod_store_level = DBSession.query(ProductStoreLevel). \
+                    filter(ProductStoreLevel.product_id == product.product_id). \
+                    filter(ProductStoreLevel.store_location_id == store_location.id). \
+                    first()
+
+                if not prod_store_level:
+                    this = ProductStoreLevel()
+                    this.product_id = product.product_id
+                    this.store_id = store.id
+                    this.store_location_id = store_location.id
+                    this.quantity = 0
+                    this.date_time = datetime.now()
+                    this.user_id = usernow.id
+                    DBSession.add(this)
+                    DBSession.flush()
+
+        return
+
+    def write_card_history(self, card_id=None, card_status_id=None, store_location_id=None, *args, **kwargs):
+        #TESTED TGJ: 20200212
+        if not card_id \
+           or not card_status_id \
+           or not store_location_id: return False
+        usernow = request.identity.get('user', {})
+        #write the history
+        this = CardHistory()
+        this.card_id = card_id
+        this.card_status_id = card_status_id
+        this.date_time = datetime.now()
+        this.user_id = usernow.id
+        this.store_location_id = store_location_id
+        DBSession.add(this)
+        DBSession.flush()
+        return True
+
+    def write_client_order_history(self, client_order_id=None, client_order_status_id=None, *args, **kwargs):
+        #TESTED TGJ: 20200212
+        if not client_order_id \
+           or not client_order_status_id: return False
+        usernow = request.identity.get('user', {})
+        this = ClientOrderHistory()
+        this.client_order_id = client_order_id
+        this.client_order_status_id = client_order_status_id
+        this.date_time = datetime.now()
+        this.user_id = usernow.id
+        DBSession.add(this)
+        DBSession.flush()
+        return
+
+    def write_client_order_batch_history(self, client_order_batch_id=None, client_order_batch_status_id=None, *args, **kwargs):
+        #TESTED TGJ: 20200213
+        if not client_order_batch_id \
+           or not client_order_batch_status_id: return False
+        usernow = request.identity.get('user', {})
+        this = ClientOrderBatchHistory()
+        this.client_order_batch_id = client_order_batch_id
+        this.client_order_batch_status_id = client_order_batch_status_id
+        this.date_time = datetime.now()
+        this.user_id = usernow.id
+        DBSession.add(this)
+        DBSession.flush()
+        return
+
+    def get_box_count(self, pallet_id=None, product_id=None, supplier_order_id=None, packing_type_id=None, packing_detail_id=None, *args, **kwargs):
+
+        if not pallet_id: return 0
+        if product_id:
+            product = Product.by_id(product_id)
+        else:
+            product = self.get_product_from_pallet(pallet_id)
+        if not product: return 0
+
+        this_type_id = product.level_1_type_id
+
+        if product.level_3_type_id:
+            this_type_id = product.level_3_type_id
+        elif product.level_2_type_id:
+            this_type_id = product.level_2_type_id
+
+        pack_box_id = COMMON.get_type_id(PackingType, 'Pack')
+        sleeve_box_id = COMMON.get_type_id(PackingType, 'Sleeve')
+        inner_box_id = COMMON.get_type_id(PackingType, 'InnerBox')
+        outer_box_id = COMMON.get_type_id(PackingType, 'OuterBox')
+
+        box_count = 0
+
+        if pallet_id:
+            box_count = DBSession.query(PackingDetail). \
+                filter(PackingDetail.pallet_id == pallet_id). \
+                filter(PackingDetail.packing_type_id == this_type_id). \
+                value(func.count(PackingDetail.id))
+
+        elif supplier_order_id and not packing_type_id:
+            box_count = DBSession.query(PackingDetail). \
+                join(SupplierOrderDetail, SupplierOrderDetail.id == PackingDetail.supplier_order_detail_id). \
+                filter(SupplierOrderDetail.supplier_order_id == supplier_order_id). \
+                filter(PackingDetail.packing_type_id == this_type_id). \
+                value(func.count(PackingDetail.id))
+
+        elif supplier_order_id and packing_type_id:
+            # Was InnerBox, but this cannot be hard coded...Rethink
+            box_count = DBSession.query(PackingDetail). \
+                join(SupplierOrderDetail, SupplierOrderDetail.id == PackingDetail.supplier_order_detail_id). \
+                filter(SupplierOrderDetail.supplier_order_id == supplier_order_id). \
+                filter(PackingDetail.packing_type_id == packing_type_id). \
+                value(func.count(PackingDetail.id))
+
+        elif packing_detail_id:
+            # Was InnerBox, but this cannot be hard coded...Rethink
+            box_count = DBSession.query(PackingDetail). \
+                filter(PackingDetail.outer_pack_id == packing_detail_id). \
+                value(func.count(PackingDetail.id))
+
+        if not box_count: box_count = 0
+        return box_count
+
+    @expose()
+    def archive_all(self, *args, **kwargs):
+        from tanzanite.lib.archive import Archive
+        archive_batch_type_id = COMMON.get_type_id(ArchiveBatchType, 'Manual'),
+
+        ARCHIVE = Archive()
+        ARCHIVE.run_archive(**{'archive_batch_type_id': archive_batch_type_id})
+        return json.dumps({'success': 'true', 'message': 'Archive run successfuly', 'status': 'success'})
+
+    def remove_broken_pallet_link(self, *args, **kwargs):
+        bulk_store_location_id = COMMON.get_bulk_store_location_id()
+        #update  for this location only.
+        
+        pack_list = DBSession.query(PackingDetail).\
+            filter(PackingDetail.store_location_id == bulk_store_location_id).\
+            filter(PackingDetail.outer_pack_id == 0).\
+            filter(PackingDetail.pallet_id != 0).\
+            all()
+        
+        for item in pack_list:
+            pack = DBSession.query(PackingDetail).\
+                filter(PackingDetail.outer_pack_id==item.id).\
+                first()
+            if not pack:
+                DBSession.delete(item)
+        
+        DBSession.flush()
+        return
+
+
+    # def move_inner_box(self, *args, **kwargs):
+    #     packing_detail_id = kwargs.get('packing_detail_id', None)
+    #     store_location_id = kwargs.get('store_location_id', None)
+    #     outer_pack_id = kwargs.get('outer_pack_id', None)
+    #     pallet_id = kwargs.get('pallet_id', None)
+    #     card_status_id = kwargs.get('card_status_id', None)
+
+    #     if not packing_detail_id \
+    #        or not store_location_id:
+    #            return
+
+    #     packing_detail = PackingDetail.by_id(packing_detail_id)
+    #     if not packing_detail: return
+
+    #     if packing_detail.pallet_id != pallet_id:
+    #         self.move_box_pallet(packing_detail.id)
+
+    #     old_outer_pack_id = packing_detail.outer_pack_id
+    #     old_store_location_id = packing_detail.store_location_id
+
+    #     packing_detail.outer_pack_id = outer_pack_id
+    #     packing_detail.store_location_id = store_location_id
+    #     SBSession.flush()
+
+    #     inner_packs = DBSession.query(PackingDetail).\
+    #         filter(PackingDetail.outer_pack_id == packing_detail.id).\
+    #         all()
+
+    #     if inner_packs:
+    #         for inner in inner_packs:
+    #             self.move_packing(**{
+    #                 'packing_detail_id': inner.id,
+    #                 'store_location_id': store_location_id ,
+    #                 'outer_pack_id': inner.outer_pack_id ,
+    #                 'pallet_id': pallet_id ,
+    #                 'card_status_id': card_status_id ,
+    #             })
+
+    #     if not outer_pack_id and outer_pack_id != old_outer_pack_id:
+    #         self.change_content_serial_range(**{
+    #             'old_pack_id': old_outer_pack_id ,
+    #             'new_pack_id': outer_pack_id ,
+    #             'serial': packing_detail.reference_number ,
+    #         })
+    #     message = 'Box with ID '+str(packing_detail.id)+' '+packing_detail.reference_number+' was moved.'
+
+    #     LOGGING.add_audit_log(**{
+    #         'audit_action_id': COMMON.get_type_id(AuditAction, 'Audit'),
+    #         'audit_type_id': COMMON.get_type_id(AuditType, 'GoodsMovement'),
+    #         'key': packing_detail_id,
+    #         'key_auxillary': old_store_location_id,
+    #         'key_auxillary2': store_location_id,
+    #         'message': message,
+    #     })
+
+    #     return
+
+    # def move_outer_box(self, *args, **kwargs):
+    #     packing_detail_id = kwargs.get('packing_detail_id', None)
+    #     store_location_id = kwargs.get('store_location_id', None)
+    #     pallet_id = kwargs.get('pallet_id', None)
+    #     card_status_id = kwargs.get('card_status_id', None)
+
+    #     if not packing_detail_id \
+    #        or not store_location_id:
+    #            return
+
+    #     packing_detail = PackingDetail.by_id(packing_detail_id)
+    #     if not packing_detail: return
+
+    #     if packing_detail.pallet_id != pallet_id:
+    #         self.move_box_pallet(packing_detail.id)
+
+    #     old_store_location_id = packing_detail.store_location_id
+
+    #     packing_detail.store_location_id = store_location_id
+    #     SBSession.flush()
+
+    #     inner_packs = DBSession.query(PackingDetail).\
+    #         filter(PackingDetail.outer_pack_id == packing_detail.id).\
+    #         all()
+
+    #     if inner_packs:
+    #         for inner in inner_packs:
+    #             self.move_inner_box(**{
+    #                 'packing_detail_id': inner.id,
+    #                 'store_location_id': store_location_id ,
+    #                 'outer_pack_id': packing_detail ,
+    #                 'pallet_id': pallet_id ,
+    #                 'card_status_id': card_status_id ,
+    #             })
+
+    #     message = 'Box with ID '+str(packing_detail.id)+' '+packing_detail.reference_number+' was moved.'
+
+    #     LOGGING.add_audit_log(**{
+    #         'audit_action_id': COMMON.get_type_id(AuditAction, 'Audit'),
+    #         'audit_type_id': COMMON.get_type_id(AuditType, 'GoodsMovement'),
+    #         'key': packing_detail_id,
+    #         'packing_detail_id': packing_detail_id,
+    #         'key_auxillary': old_store_location_id,
+    #         'key_auxillary2': store_location_id,
+    #         'message': message,
+    #     })
+
+    #     return
+
+    # def move_packing(self, *args, **kwargs):
+    #     packing_detail_id = kwargs.get('packing_detail_id', None)
+    #     store_location_id = kwargs.get('store_location_id', None)
+    #     outer_pack_id = kwargs.get('outer_pack_id', None)
+    #     pallet_id = kwargs.get('pallet_id', None)
+    #     card_status_id = kwargs.get('card_status_id', None)
+
+    #     if not packing_detail_id \
+    #        or not store_location_id:
+    #            return
+
+    #     packing_detail = PackingDetail.by_id(packing_detail_id)
+    #     if not packing_detail: return
+
+    #     if packing_detail.pallet_id != pallet_id:
+    #         self.move_box_pallet(packing_detail.id)
+
+    #     old_outer_pack_id = packing_detail.outer_pack_id
+    #     old_store_location_id = packing_detail.store_location_id
+
+    #     packing_detail.outer_pack_id = outer_pack_id
+    #     packing_detail.store_location_id = store_location_id
+    #     SBSession.flush()
+
+    #     card_list = DBSession.query(Card).\
+    #         filter(Card.packing_detail_id == packing_detail_id).\
+    #         all()
+
+    #     if card_list:
+    #         for card in card_list:
+    #             self.move_card(**{
+    #                 'card_id': card.id ,
+    #                 'store_location_id': store_location_id ,
+    #                 'card_status_id': card_status_id ,
+    #                 'packing_detail_id': card.packing_detail_id ,
+    #             })
+
+
+    #     if not outer_pack_id and outer_pack_id != old_outer_pack_id:
+    #         self.change_content_serial_range(**{
+    #             'old_pack_id': old_outer_pack_id ,
+    #             'new_pack_id': outer_pack_id ,
+    #             'serial': packing_detail.reference_number ,
+    #         })
+    #     message = 'Box with ID '+str(packing_detail.id)+' '+packing_detail.reference_number+' was moved.'
+
+
+    #     self.rebuild_all_soh(old_store_location_id)
+    #     self.rebuild_all_soh(store_location_id)
+
+    #     LOGGING.add_audit_log(**{
+    #         'audit_action_id': COMMON.get_type_id(AuditAction, 'Audit'),
+    #         'audit_type_id': COMMON.get_type_id(AuditType, 'GoodsMovement'),
+    #         'key': packing_detail_id,
+    #         'key_auxillary': old_store_location_id,
+    #         'key_auxillary2': store_location_id,
+    #         'message': message,
+    #     })
+
+    #     return

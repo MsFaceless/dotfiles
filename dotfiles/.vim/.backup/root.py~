@@ -1,0 +1,128 @@
+#!/bin/python
+# -*- coding: utf-8 -*-
+
+from tg import require, expose, tmpl_context, lurl, request, redirect
+from tg.predicates import not_anonymous
+from tg.exceptions import HTTPFound
+
+from tg.i18n import ugettext as _
+from tg.i18n import lazy_ugettext as l_
+
+from rocket.lib.base import BaseController
+from rocket.lib.call_center import CallCenterUtils
+
+from rocket.controllers.error import ErrorController
+from rocket.controllers.claim import ClaimController
+from rocket.controllers.media import MediaController
+from rocket.controllers.setup import SetupController
+from rocket.controllers.common import CommonController
+from rocket.controllers.entity import EntityController
+from rocket.controllers.policy import PolicyController
+from rocket.controllers.sidebar import SidebarController
+from rocket.controllers.profile import ProfileController
+from rocket.controllers.members import MembersController
+from rocket.controllers.product import ProductController
+from rocket.controllers.reports import ReportsController
+from rocket.controllers.location import LocationController
+from rocket.controllers.campaign import CampaignController
+from rocket.controllers.branding import BrandingController
+from rocket.controllers.useraccess import UserAccessController
+from rocket.controllers.debit_order import DebitOrderController
+from rocket.controllers.collections import CollectionsController
+from rocket.controllers.batchimport import BatchImportController
+from rocket.controllers.appointments import AppointmentController
+from rocket.controllers.intermediary import IntermediaryController
+from rocket.controllers.call_center_management import CallCenterController
+
+class RootController(BaseController):
+
+    claim = ClaimController()
+    media = MediaController()
+    setup = SetupController()
+    common = CommonController()
+    entity = EntityController()
+    policy = PolicyController()
+    sidebar = SidebarController()
+    profile = ProfileController()
+    members = MembersController()
+    product = ProductController()
+    reports = ReportsController()
+    location = LocationController()
+    campaign = CampaignController()
+    branding = BrandingController()
+    useraccess = UserAccessController()
+    debit_order = DebitOrderController()
+    call_center = CallCenterController()
+    collections = CollectionsController()
+    batchimport = BatchImportController()
+    call_center_utils = CallCenterUtils()
+    appointment = AppointmentController()
+    intermediary = IntermediaryController()
+
+    def _before(self, *args, **kw):
+        tmpl_context.project_name = "rocket"
+
+    @expose()
+    def _default(self, *args, **kwargs):
+        return 'This page is not available.'
+
+    @require(not_anonymous())
+    @expose('rocket.templates.generic')
+    def index(self):
+        title = l_('Rocket | Home')
+        html = self.common.get_dashboard_html()
+        return dict(title=title, html=html, javascript='')
+
+    @expose('rocket.templates.login')
+    def login(self, came_from=lurl('/'), failure=None, login=''):
+        login_counter = self.get_int_login_counter()
+        title = l_('Rocket | Login')
+        self.common.audit_visitor()
+        return dict(title=title, login_counter=login_counter, came_from=came_from, login=login)
+
+    @expose()
+    def post_login(self, came_from=lurl('/')):
+        if not request.identity:
+            login_counter = self.get_int_login_counter() + 1
+            redirect('/login', params=dict(came_from=came_from, __logins=login_counter))
+        self.common.audit_login()
+        return HTTPFound(location=came_from)
+
+    def get_int_login_counter(self, *args, **kwargs):
+        try:
+            login_counter = int(request.environ.get('repoze.who.logins', 0))
+        except:
+            login_counter = 0
+        return login_counter
+
+    @expose()
+    def logout(self, came_from=lurl('/logout_handler')):
+        if not request.identity:
+            return HTTPFound(location=came_from)
+        self.common.audit_logout()
+        return HTTPFound(location=came_from)
+
+    @expose()
+    def post_logout(self, came_from=lurl('/')):
+        return HTTPFound(location=came_from)
+
+    @expose('rocket.templates.prelogin')
+    def forgot_password(self, *args, **kwargs):
+        html = self.common.get_forgot_password_html(**kwargs)
+        javascript = self.common.get_forgot_password_javascript(**kwargs)
+        title = l_('Rocket | Forgot Password')
+        return dict(title=title, html=html, javascript=javascript)
+
+    @expose()
+    def reset(self, *args, **kwargs):
+        try:
+            guid = args[0]
+        except Exception as e:
+            redirect('/login')
+        redirect('/useraccess/reset', params={'guid' : guid})
+
+    @expose('rocket.templates.generic')
+    def privacy(self):
+        html = self.common.get_privacy_html()
+        title = l_('Rocket | Privacy')
+        return dict(title=title, html=html, javascript='')

@@ -1,0 +1,357 @@
+# -*- coding: utf-8 -*-
+
+from calabash import model
+from calabash.model import DBSession
+from calabash.model import Wallet, Allocation
+from calabash.lib.sql_crud_utils import Cruds
+from datetime import datetime
+
+from calabash.lib.transaction_message import CreateTransactionDebitMessage, CreateTransactionCreditMessage
+
+
+def make_transaction(**kwargs):
+    transaction_builder = TransactionCrudsBuilder()
+    transaction = transaction_builder \
+        .with_kwargs(kwargs=kwargs) \
+        .with_wallets_and_transactions_to_execute() \
+        .with_create_new_transactions() \
+        .with_update_wallet_balances() \
+        .with_transaction_messages() \
+        .build_transaction()
+    return transaction
+
+class TransactionCrudsBuilder:
+
+    def __init__(self):
+        self.result = None
+        self.kwargs = None
+        self.dictionary_of_transactions_to_make = None
+        self.list_of_wallets_to_update = []
+        self.transactions = None
+
+    def with_kwargs(self, kwargs):
+        if not self.result:
+            self.kwargs = kwargs
+        return self
+
+    def with_wallets_and_transactions_to_execute(self):
+        if not self.result:
+            transaction_allocations = AllocationBuilder() \
+                .with_kwargs(kwargs=self.kwargs) \
+                .with_transaction_amount() \
+                .with_transaction_type_id() \
+                .with_allocation_dbquery() \
+                .with_transaction_dictionary() \
+                .with_allocation_wallets() \
+                .build()
+            if not transaction_allocations:
+                self.result = {'success': False, 'data': 'Allocation builder failed to run'}
+            elif transaction_allocations.get('success', None):
+                self.dictionary_of_transactions_to_make = transaction_allocations['data'].get('transaction_dictionary')
+                self.list_of_wallets_to_update = transaction_allocations['data'].get('list_of_wallets')
+                if not self.list_of_wallets_to_update:
+                    self.result = {'success': False, 'data': 'Could not gather wallet data to update'}
+            else:
+                self.result = transaction_allocations
+        return self
+
+    def with_create_new_transactions(self):
+        if not self.result:
+            transactions = Cruds().create_related_entries(**self.dictionary_of_transactions_to_make)
+            if not transactions:
+                self.result = {'success': False, 'data': 'Could not create any new transactions'}
+            elif not transactions.get('success'):
+                self.result = transactions
+            else:
+                self.transactions = transactions
+        return self
+
+    def with_update_wallet_balances(self):  # TODO add an undo if failed
+        if not self.result:
+            for wallet in self.list_of_wallets_to_update:
+                wallet_id = wallet['wallet_id']
+                amount = wallet['amount']
+
+                this = Wallet.by_id(wallet_id)
+                this.available_balance = float(this.available_balance) + amount
+            DBSession.flush()
+        return self
+
+    def with_transaction_messages(self):
+        if not self.result:
+            for transaction in self.transactions['data']:
+                if transaction.get('table_name', None) == 'TransactionCredit':
+                    credit_id = transaction.get('id', None)
+                    CreateTransactionCreditMessage(**{'transaction_credit_id': credit_id})
+                elif transaction.get('table_name', None) == 'TransactionDebit':
+                    debit_id = transaction.get('id', None)
+                    CreateTransactionDebitMessage(**{'transaction_debit_id': debit_id})
+        return self
+
+    def build_transaction(self):
+        if not self.result:
+            self.result = self.transactions
+        return self.result
+
+
+class WalletBuilder:
+
+    def __init__(self):
+        self.result = {}
+        self.kwargs = None
+        self.wallet_id = None
+        self.username = ''
+        self.catalog_id = None
+        self.wallet_dbquery = None
+        self.wallet_balance_rules = {}
+
+    def with_kwargs(self, kwargs):
+        if not self.result:
+            self.kwargs = kwargs
+        return self
+
+    def with_username(self):
+        if not self.result:
+            username = self.kwargs.get('username', None)
+            if not username:
+                self.result = {'success': False, 'data': 'missing username'}
+            else:
+                self.username = username
+        return self
+
+    def with_catalog_id(self):
+        if not self.result:
+            catalog_id = self.kwargs.get('wallet_catalog_id', None)
+            if not catalog_id:
+                self.result = {'success': False, 'data': 'missing catalog_id'}
+            else:
+                self.catalog_id = catalog_id
+        return self
+
+    def with_wallet_dbquery(self):
+        if not self.result:
+            query_dict = {'username': self.username, 'wallet_catalog_id': self.catalog_id}
+            wallet_db_query = DBSession.query(Wallet).filter_by(**query_dict).first()
+            if not wallet_db_query or not wallet_db_query.active:
+                self.result = {'success': False, 'data': f'Could not find wallet ' +
+                                                         f'with username: {self.username} ' +
+                                                         f'and catalog_id: {self.catalog_id}'}
+            else:
+                self.wallet_dbquery = wallet_db_query
+        return self
+
+    def with_wallet_id(self):
+        if not self.result:
+            wallet_id = self.wallet_dbquery.id
+            self.wallet_id = wallet_id
+        return self
+
+    def with_balance_rules(self):
+        if not self.result:
+            max_transaction_amount = self.wallet_dbquery.max_transaction_amount
+            max_balance = self.wallet_dbquery.max_balance
+            min_balance = self.wallet_dbquery.min_balance
+            available_balance = self.wallet_dbquery.available_balance
+            self.wallet_balance_rules = {
+                'max_transaction_amount': max_transaction_amount,
+                'max_balance': max_balance,
+                'min_balance': min_balance,
+                'available_balance': available_balance}
+        return self
+
+    def build_wallet(self):
+        if not self.result:
+            self.result = {'success': True, 'data': {'wallet_id': self.wallet_id,
+                                                     'balance_rules': self.wallet_balance_rules,
+                                                     }}
+        return self.result
+
+
+class AllocationBuilder:
+
+    def __init__(self):
+        self.result = {}
+        self.kwargs = None
+        self.transaction_type_id = None
+        self.allocation_dbquery = None
+        self.transaction_amount = None
+        self.transaction_dictionary = None
+        self.list_of_wallets = []
+
+    def with_kwargs(self, kwargs):
+        if not self.result:
+            self.kwargs = kwargs
+        return self
+
+    def with_transaction_amount(self):
+        if not self.result:
+            self.transaction_amount = self.kwargs.get('amount', None)
+            if not self.transaction_amount:
+                self.result = {'success': False, 'data': 'Missing amount'}
+        return self
+
+    def with_transaction_type_id(self):
+        if not self.result:
+            transaction_type_id = self.kwargs.get('transaction_type_id', None)
+            if not transaction_type_id:
+                self.result = {'success': False, 'data': 'Missing transaction_type_id'}
+            else:
+                self.transaction_type_id = transaction_type_id
+        return self
+
+    def with_allocation_dbquery(self):
+        if not self.result:
+            query_dict = {'transaction_type_id': self.transaction_type_id}
+            print("%^%^%^%^%^%^%^%^%^%^%^%^%^%^%^%^%", query_dict)
+            print(DBSession.query(Allocation).all())
+            allocation_db_query = DBSession.query(Allocation).filter_by(**query_dict).order_by(Allocation.sequence).all()
+            if not allocation_db_query:
+                self.result = {'success': False, 'data': f'Could not find allocations with '
+                                                         f'transaction_type_id: {self.transaction_type_id}'}
+            else:
+                self.allocation_dbquery = allocation_db_query
+        return self
+
+    def __build_wallet(self, kwargs):
+        wallet_builder = WalletBuilder()
+        wallet = wallet_builder \
+            .with_kwargs(kwargs=kwargs) \
+            .with_username() \
+            .with_catalog_id() \
+            .with_wallet_dbquery() \
+            .with_wallet_id() \
+            .with_balance_rules() \
+            .build_wallet()
+        return wallet
+
+    def __build_payor_wallet(self, dbquery_item):
+        if dbquery_item.payor_type_id == 3:
+            kwargs = {'username': 'client_calabash',
+                      'wallet_catalog_id': 1}
+            payor_wallet = self.__build_wallet(kwargs)
+            return payor_wallet
+        elif dbquery_item.payor_type_id == 4:
+            kwargs = {'username': 'client_eiffelcorp',
+                      'wallet_catalog_id': 1}
+            payor_wallet = self.__build_wallet(kwargs)
+            return payor_wallet
+        elif dbquery_item.payor_type_id == 1 or dbquery_item.payor_type_id == 2:
+            kwargs = {'username': self.kwargs.get('from_wallet_username', None),
+                      'wallet_catalog_id': self.kwargs.get('from_wallet_catalog_id', None)}
+            payor_wallet = self.__build_wallet(kwargs)
+            return payor_wallet
+        else:
+            return None
+
+    def __build_payee_wallet(self, dbquery_item):
+        if dbquery_item.payor_type_id == 3:
+            kwargs = {'username': 'client_calabash',
+                      'wallet_catalog_id': 1}
+            payor_wallet = self.__build_wallet(kwargs)
+            return payor_wallet
+        elif dbquery_item.payor_type_id == 4:
+            kwargs = {'username': 'client_eiffelcorp',
+                      'wallet_catalog_id': 1}
+            payor_wallet = self.__build_wallet(kwargs)
+            return payor_wallet
+        elif dbquery_item.payor_type_id == 1 or dbquery_item.payor_type_id == 2:
+            kwargs = {'username': self.kwargs.get('to_wallet_username', None),
+                      'wallet_catalog_id': self.kwargs.get('to_wallet_catalog_id', None)}
+            payor_wallet = self.__build_wallet(kwargs)
+            return payor_wallet
+        else:
+            return None
+
+    def __check_payee_wallet_balances(self, payee_wallet, amount):
+        max_transaction_amount = payee_wallet['data']['balance_rules'].get('max_transaction_amount')
+        available_balance = payee_wallet['data']['balance_rules'].get('available_balance')
+        min_balance = payee_wallet['data']['balance_rules'].get('min_balance')
+        if amount > float(max_transaction_amount):
+            return {'success': False, 'data': 'Transaction amount exceeds max'}
+        elif amount > (float(available_balance) - float(min_balance)):
+            return {'success': False, 'data': 'Transaction amount exceeds available balance'}
+        else:
+            return {'success': True}
+
+    def __check_payor_wallet_balances(self, payor_wallet, amount):
+        max_transaction_amount = payor_wallet['data']['balance_rules'].get('max_transaction_amount')
+        if amount > float(max_transaction_amount):
+            return {'success': False, 'data': 'Transaction amount exceeds max'}
+        else:
+            return {'success': True}
+
+    def with_transaction_dictionary(self):
+        if not self.result:
+            self.transaction_dictionary = {
+                '_children': [
+                    {
+                        'table_name': 'Transaction',
+                        'transaction_type_id': self.transaction_type_id,
+                        'transaction_status_id': 1,  # TODO this needs to be set somehow
+                        'currency_id': 1,
+                        'amount': self.transaction_amount,
+                        'added_by': 2,  # TODO this needs to be set somehow
+                        '_children': []
+                    }
+                ]
+            }
+        return self
+
+    def with_allocation_wallets(self):  # TODO needs to be refactored
+        if not self.result:
+            pie = self.transaction_amount
+            for item in self.allocation_dbquery:
+                payor_wallet = self.__build_payor_wallet(dbquery_item=item)
+                if not payor_wallet.get('success'):
+                    # self.result = {'success': False, 'data': f'Payor type: {item.payor_type_id} not recognised'}
+                    self.result = payor_wallet
+                    return self
+                payee_wallet = self.__build_payee_wallet(dbquery_item=item)
+                if not payee_wallet.get('success'):
+                    # self.result = {'success': False, 'data': f'Payee type: {item.payee_type_id} not recognised'}
+                    self.result = payee_wallet
+                    return self
+                amount = float(item.percentage) / 100 * pie
+                payee_wallet_check = self.__check_payee_wallet_balances(payee_wallet, amount)
+                if not payee_wallet_check['success']:
+                    self.result = payee_wallet_check
+                    return self
+                payor_wallet_check = self.__check_payor_wallet_balances(payor_wallet, amount)
+                if not payor_wallet_check['success']:
+                    self.result = payor_wallet_check
+                    return self
+                pie = amount
+                payor_wallet_id = payor_wallet['data'].get('wallet_id', None)
+                payee_wallet_id = payee_wallet['data'].get('wallet_id', None)
+                self.list_of_wallets.extend([
+                    {'wallet_id': payor_wallet_id,
+                     'amount': -pie},
+                    {'wallet_id': payee_wallet_id,
+                     'amount': pie}
+                ])
+                self.__update_transaction_dictionary(payor_wallet_id, payee_wallet_id, item.id, pie)
+        return self
+
+    def __update_transaction_dictionary(self, cr_wallet_id: int, dr_wallet_id: int, allocation_id: int, amount: float):
+        self.transaction_dictionary['_children'][0]['_children'].extend([{
+            'table_name': 'TransactionCredit',
+            '_parent_id': 'transaction_id',
+            'allocation_id': allocation_id,
+            'wallet_id': cr_wallet_id,
+            'amount': amount
+        }, {
+            'table_name': 'TransactionDebit',
+            '_parent_id': 'transaction_id',
+            'allocation_id': allocation_id,
+            'wallet_id': dr_wallet_id,
+            'amount': amount
+        }])
+
+    def build(self):
+        if not self.result:
+            self.result = {'success': True, 'data': {'transaction_dictionary': self.transaction_dictionary,
+                                                     'list_of_wallets': self.list_of_wallets}}
+        return self.result
+
+
+

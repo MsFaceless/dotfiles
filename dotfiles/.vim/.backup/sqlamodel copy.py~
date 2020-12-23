@@ -1,0 +1,344 @@
+# -*- coding: utf-8 -*-
+"""Sqlamodel model module."""
+import os
+from hashlib import sha256
+from datetime import datetime
+
+from sqlalchemy import *
+from sqlalchemy import Table, ForeignKey, Column
+from sqlalchemy.types import Integer, Unicode, DateTime, LargeBinary
+from sqlalchemy.orm import relationship, backref, synonym
+from sqlalchemy.ext.declarative import declared_attr
+
+from eiffel_back.model import DeclarativeBase, metadata, DBSession
+from eiffel_back.lib.model_utils import PhatBase, common_columns
+
+
+Splash = type('Splash', (PhatBase, DeclarativeBase), {
+    '__tablename__': 'tbl_splash',
+    'title': common_columns.get('title')(),
+    'desc': common_columns.get('description')(),
+    'about': common_columns.get('longtext')(),
+    })
+
+
+SocialLinks = type('SocialLinks', (PhatBase, DeclarativeBase), {
+    '__tablename__': 'tbl_social',
+    'title': common_columns.get('title')(),
+    'url': common_columns.get('title')(),
+    'icon': common_columns.get('title')(),
+    })
+
+
+SafetyTips = type('SafetyTips', (PhatBase, DeclarativeBase), {
+    '__tablename__': 'tbl_safetytips',
+    'desc': common_columns.get('description')(),
+    })
+
+
+SafetyZones = type('SafetyTips', (PhatBase, DeclarativeBase), {
+    '__tablename__': 'tbl_safetyzones',
+    'desc': common_columns.get('description')(),
+    'location_id': common_columns.get('integer')(),
+    })
+
+
+SupportContact = type('SupportContact', (PhatBase, DeclarativeBase), {
+    '__tablename__': 'tbl_support',
+    'full_name': common_columns.get('title')(),
+    'mobile': common_columns.get('title')(),
+    'email': common_columns.get('title')(),
+    })
+
+
+Category = type('Category', (PhatBase, DeclarativeBase), {
+    '__tablename__': 'tbl_category',
+    'title': common_columns.get('title')(),
+    'count': common_columns.get('integer')(),
+    'icon': common_columns.get('title')(),
+    })
+
+
+Subcategory = type('Subcategory', (PhatBase, DeclarativeBase), {
+    '__tablename__': 'tbl_subcategory',
+    'category_id': common_columns.get('integer')(),
+    'title': common_columns.get('title')(),
+    'count': common_columns.get('integer')(),
+    'icon': common_columns.get('title')(),
+    })
+
+
+Post = type('Post', (PhatBase, DeclarativeBase), {
+    '__tablename__': 'tbl_post',
+    'category_id': common_columns.get('integer')(),
+    'subcategory_id': common_columns.get('integer')(),
+    'title': common_columns.get('title')(),
+    'desc': common_columns.get('hugetext')(),
+    'price': common_columns.get('numeric')(),
+    'isbn': common_columns.get('title')(),
+    'location_id': common_columns.get('integer')(),
+    'post_status_id': common_columns.get('integer')(),
+    'bln_allow_offer': common_columns.get('boolean')(),
+    'bln_featured_ad': common_columns.get('boolean')(),
+    'updated': common_columns.get('datetime')(),
+    'premium_start_date': common_columns.get('datetime')(),
+    })
+
+
+PostImage = type('PostImage', (PhatBase, DeclarativeBase), {
+    '__tablename__': 'tbl_postimage',
+    'post_id': common_columns.get('integer')(),
+    'filepath': common_columns.get('description')(),
+    })
+
+
+PostStatus = type('PostStatus', (PhatBase, DeclarativeBase), {
+    '__tablename__': 'tbl_poststatus',
+    'status': common_columns.get('title')(),
+    'colour': common_columns.get('title')(),
+    })
+
+
+PostSortBy = type('PostSortBy', (PhatBase, DeclarativeBase), {
+    '__tablename__':'tbl_postsortby',
+    'label':common_columns.get('title')(),
+    'col_to_sort':common_columns.get('title')(),
+    'bln_desc':common_columns.get('boolean')(),
+    })
+
+
+Order = type('Order', (PhatBase, DeclarativeBase), {
+    '__tablename__': 'tbl_order',
+    'post_id': common_columns.get('integer')(),
+    'offer_amount': common_columns.get('numeric')(),
+    'bln_offer': common_columns.get('boolean')(),
+    'buyer_id': common_columns.get('integer')(),
+    'buyer_active': common_columns.get('boolean')(),
+    'seller_id': common_columns.get('integer')(),
+    'seller_unread': common_columns.get('boolean')(),
+    'seller_active': common_columns.get('boolean')(),
+    'order_status_id': common_columns.get('integer')(),
+    'updated': common_columns.get('datetime')(),
+    })
+
+
+OrderStatus = type('OrderStatus', (PhatBase, DeclarativeBase), {
+    '__tablename__': 'tbl_orderstatus',
+    'status': common_columns.get('title')(),
+    'colour': common_columns.get('title')(),
+    })
+
+
+Location = type('Location', (PhatBase, DeclarativeBase), {
+    '__tablename__': 'tbl_location',
+    'address1': common_columns.get('description')(),
+    'address2': common_columns.get('description')(),
+    'address3': common_columns.get('description')(),
+    'postal_code': common_columns.get('integer')(),
+    'lat': common_columns.get('title')(),
+    'lng': common_columns.get('title')(),
+    })
+
+
+Notification = type('Notification', (PhatBase, DeclarativeBase), {
+    '__tablename__': 'tbl_notification',
+    'to_student': common_columns.get('integer')(),
+    'order_id': common_columns.get('integer')(),
+    'chat_id': common_columns.get('integer')(),
+    'message': common_columns.get('description')(),
+    'unread': common_columns.get('boolean')(),
+    })
+
+
+ChatMessage = type('ChatMessage', (PhatBase, DeclarativeBase), {
+    '__tablename__': 'tbl_chatmessage',
+    'from_student': common_columns.get('integer')(),
+    'from_student_active': common_columns.get('boolean')(),
+    'to_student': common_columns.get('integer')(),
+    'to_student_unread': common_columns.get('boolean')(),
+    'to_student_active': common_columns.get('boolean')(),
+    'message': common_columns.get('longtext')(),
+    'post_id': common_columns.get('integer')(),
+    'order_id': common_columns.get('integer')(),
+    })
+
+
+"""
+Student = type('Student', (PhatBase, DeclarativeBase), {
+    '__tablename__': 'tbl_student',
+    'student_number': common_columns.get('title')(),
+    'password': common_columns.get('description')(),
+    'display_name': common_columns.get('title')(),
+    'title': common_columns.get('title')(),
+    'name': common_columns.get('title')(),
+    'surname': common_columns.get('title')(),
+    'identity_number': common_columns.get('title')(),
+    'mobile': common_columns.get('title')(),
+    'email': common_columns.get('title')(),
+    'about': common_columns.get('description')(),
+    'location_id': common_columns.get('integer')(),
+    'last_active': common_columns.get('datetime')(),
+    'avg_rating': common_columns.get('integer')(),
+    'filepath': common_columns.get('title')(),
+    })
+"""
+
+StudentStatus = type('StudentStatus', (PhatBase, DeclarativeBase), {
+    '__tablename__':'tbl_studentstatus',
+    'status':common_columns.get('title')(),
+    'colour':common_columns.get('title')(),
+    })
+
+IdNoType = type('IdNoType', (PhatBase, DeclarativeBase), {
+    '__tablename__': 'tbl_idnotype',
+    'ref': common_columns.get('title')(),
+    'type': common_columns.get('title')(),
+    })
+
+class Student(DeclarativeBase):
+    __tablename__ = 'tbl_student'
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    student_number = Column(Unicode(50))
+    _password = Column('password', Unicode(128))
+    display_name = Column(Unicode(255))
+    title = Column(Unicode(50))
+    name = Column(Unicode(50))
+    surname = Column(Unicode(50))
+    id_no_type_id = Column(Integer)
+    identity_number = Column(Unicode(50), nullable=False)
+    mobile = Column(Unicode(50), unique=True, nullable=False)
+    email = Column(Unicode(255), unique=True, nullable=False)
+    alt_email = Column(Unicode(255))
+    about = Column(Unicode(255))
+    location_id = Column(Integer)
+    last_active = Column(DateTime)
+    avg_rating = Column(Integer)
+    filepath = Column(Unicode(255))
+    student_status_id = Column(Integer)
+    added_by = Column(Integer, nullable=False)
+    added = Column(DateTime, default=datetime.now)
+    active = Column(Boolean, default=True)
+
+    def __repr__(self):
+        return '<Student: name=%s, email=%s, display=%s>' % (
+            repr(self.name),
+            repr(self.email),
+            repr(self.display_name)
+        )
+
+    def __unicode__(self):
+        return self.name
+
+    @property
+    def permissions(self):
+        """Return a set with all permissions granted to the user."""
+        perms = set()
+        for g in self.roles:
+            perms = perms | set(g.permissions)
+        return perms
+
+    @classmethod
+    def by_email(cls, email):
+        """Return the user object whose email address is ``email``."""
+        return DBSession.query(cls).filter_by(email=email).first()
+
+    @classmethod
+    def by_id(cls, id):
+        """Return the user object whose id address is ``id``."""
+        return DBSession.query(cls).filter_by(id=id).first()
+
+    @classmethod
+    def by_display_name(cls, display_name):
+        """Return the user object whose user name is ``display_name``."""
+        return DBSession.query(cls).filter_by(display_name=display_name).first()
+
+    @classmethod
+    def get_all(cls, sort_order):
+        return DBSession.query(cls).all()
+
+    @classmethod
+    def _hash_password(cls, password):
+        salt = sha256()
+        salt.update(os.urandom(60))
+        salt = salt.hexdigest()
+
+        hash = sha256()
+        # Make sure password is a str because we cannot hash unicode objects
+        hash.update((password + salt).encode('utf-8'))
+        hash = hash.hexdigest()
+
+        password = salt + hash
+
+
+        return password
+
+    def _set_password(self, password):
+        """Hash ``password`` on the fly and store its hashed version."""
+        self._password = self._hash_password(password)
+
+    def _get_password(self):
+        """Return the hashed version of the password."""
+        return self._password
+
+    password = synonym('_password', descriptor=property(_get_password,
+                                                        _set_password))
+
+    def validate_password(self, password):
+        """
+        Check the password against existing credentials.
+
+        : param password: the password that was provided by the user to
+            try and authenticate. This is the clear text version that we will
+            need to match against the hashed one in the database.
+        : type password: unicode object.
+        : return: Whether the password is valid.
+        : rtype: bool
+
+        """
+        hash = sha256()
+        hash.update((password + self.password[: 64]).encode('utf-8'))
+        return self.password[64: ] == hash.hexdigest()
+
+
+StudentRating = type('StudentRating', (PhatBase, DeclarativeBase), {
+    '__tablename__': 'tbl_studentrating',
+    'student_id': common_columns.get('integer')(),
+    'rating': common_columns.get('integer')(),
+    })
+
+
+Report = type('Report', (PhatBase, DeclarativeBase), {
+    '__tablename__': 'tbl_report',
+    'post_id': common_columns.get('integer')(),
+    'chatmessage_id': common_columns.get('integer')(),
+    'report_type': common_columns.get('integer')(), # Spam, Inappropriate content, Possible Fraud
+    })
+
+
+ReportType = type('ReportType', (PhatBase, DeclarativeBase), {
+    '__tablename__': 'tbl_reporttype',
+    'report_type': common_columns.get('title')(),
+    })
+
+
+ReportNote = type('ReportNote', (PhatBase, DeclarativeBase), {
+    '__tablename__': 'tbl_reportnote',
+    'report_id': common_columns.get('integer')(),
+    'message': common_columns.get('description')(),
+    'is_admin': common_columns.get('boolean')(),
+    })
+
+StudentGuid = type('StudentGuid', (PhatBase, DeclarativeBase), {
+    '__tablename__': 'tbl_studentguid',
+    'student_id': common_columns.get('integer')(),
+    'guid': common_columns.get('title')(),
+    'expires': common_columns.get('datetime')(),
+    })
+
+PasswordHistory = type('PasswordHistory', (PhatBase, DeclarativeBase), {
+    '__tablename__': 'tbl_passwordhistory',
+    'student_id': common_columns.get('integer')(),
+    'password': common_columns.get('description')(),
+    })
+
+

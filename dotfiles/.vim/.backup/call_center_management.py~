@@ -1,0 +1,2209 @@
+# -*- coding: utf-8 -*-
+"""Member controller module"""
+from rocket.lib.call_center import *
+from tg import predicates, require
+from tg import expose, redirect, validate, flash, url, request
+
+from tg.i18n import ugettext as _
+from tg.i18n import lazy_ugettext as l_
+
+from rocket.model import *
+
+from sqlalchemy import func, desc, asc
+
+from rocket.lib.tg_utils import *
+from rocket.lib.base import BaseController
+from rocket.lib.type_utils import TypeDictionary as TypeDict
+from rocket.lib.rsa_luhn_id_algo import get_rsa_id_dict
+from rocket.controllers.common import CommonController
+
+from rocket.controllers.message import MessageController
+
+LIMIT = 20
+TYPEUTIL = TypeDict()
+COMMON = CommonController()
+MESSAGE = MessageController()
+CALL_CENTER = CallCenterUtils()
+
+SEARCHKEY_FAMILY_MEMBER = 'FamilyMember_SearchKeyword'
+SEARCHKEY_CONTACT = 'Contact_SearchKeyword'
+
+IMG_ACTIVE = "<img src='/images/icon_check.png' />"
+IMG_INACTIVE = "<img src='/images/icon_cross.png' />"
+
+
+class CallCenterController(BaseController):
+
+    @expose()
+    def _default(self, *args, **kwargs):
+        return 'This page is not available.'
+
+    @require(predicates.not_anonymous())
+    @expose('rocket.templates.generic')
+    def view(self, *args, **kwargs):
+        workspace_sid = kwargs.get("workspace_sid")
+        worker_id = kwargs.get("worker_id")
+        if not worker_id:
+            redirect('/call_center/index')
+
+        workflow_user = DBSession.query(WorkspaceWorkflowUser). \
+            filter(WorkspaceWorkflowUser.id == worker_id). \
+            first()
+        user = DBSession.query(User). \
+            filter(User.id == workflow_user.user_id). \
+            first()
+
+        html = self.get_view_agent_dashboard_html(**kwargs)
+        javascript = ''
+
+        title = f""" View Agent - {user.username} """
+
+        return dict(title=title, html=html, javascript=javascript)
+
+    def get_view_agent_dashboard_html(self, *args, **kwargs):
+
+        card_header = self.get_view_agent_dashboard_title_html(**kwargs)
+
+        # TAB 1
+        tab_overview_content = self.get_agent_overview_htmltbl(**kwargs)
+
+        # TAB 2
+        tab_agent_history_content = self.get_agent_history_html(**kwargs)
+
+        # TAB 3
+        tab_agent_statistics_content = self.get_agent_statics_html(**kwargs)
+
+        html = f"""
+        {card_header}
+
+      <div class="row">
+            <div class="col-md-12 ml-auto mr-auto">
+                <div class="col-md-12 ml-auto mr-auto">
+                    <ul class="nav nav-pills nav-pills-primary justify-content-center" role="tablist">
+                        <li class="nav-item">
+                            <a class="nav-link" data-toggle="tab" href="#tab_overview_details" role="tablist">
+                                Overview
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" data-toggle="tab" href="#tab_agent_history" role="tablist">
+                                Previous Tasks
+                            </a>
+                        </li>
+
+                         <li class="nav-item">
+                            <a class="nav-link" data-toggle="tab" href="#tab_agent_statistics" role="tablist">
+                                Statistics
+                            </a>
+                        </li>
+                    </ul>
+                </div>
+                <div class="tab-content tab-space tab-subcategories">
+                    <div class="tab-pane active" id="tab_overview_details">
+                        {tab_overview_content}
+                    </div>
+                    <div class="tab-pane" id="tab_agent_history">
+                        {tab_agent_history_content}
+                    </div> 
+                    <div class="tab-pane" id="tab_agent_statistics">
+                        {tab_agent_statistics_content}
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        javascript = """
+        <script nonce='1234'>
+        $('.nav-link').first().click();
+
+        </script>
+        """
+        return html + javascript
+
+    def get_view_agent_dashboard_title_html(self, *args, **kwargs):
+        html = f"""
+         <div class="card">
+             <div class="card-header">
+                 <div class="row d-flex">
+                     <div class="col-md-6">
+                         <h4 class="card-title">Agent Dashboard </h4>
+                     </div>
+                <div class="col-md-6 text-right">
+                        <button class="btn btn-primary ml-auto appointment_back">Back to Dashboard</button>
+                            <button id="create_new_call" class="btn btn-success ml-auto">{_('New Call')}</button>
+                        </div>
+                 </div>
+                 <div class="row d-flex">
+                     <div class="col-md-12">
+                      
+                     </div>
+                 </div>
+             </div>
+         </div>
+         """
+        javascript = """
+         <script nonce='1234'>
+             $('.appointment_back').click(function(){
+                 $.redirect('/appointment/index');
+             });
+            $("#create_new_call").click(function(){
+                          $('#dialogdiv').load('/call_center/get_modal_new_phone_call?', function(data){
+                             return false;
+                          });
+                     });
+         </script>
+         """
+        return html + javascript
+
+    @expose()
+    def get_agent_overview_htmltbl(self, *args, **kwargs):
+        workspace_sid = kwargs.get("workspace_sid")
+        worker_id = kwargs.get("worker_id")
+
+        if not worker_id:
+            redirect('/call_center/index')
+
+        workflow_user = DBSession.query(WorkspaceWorkflowUser). \
+            filter(WorkspaceWorkflowUser.id == worker_id). \
+            first()
+        user = DBSession.query(User). \
+            filter(User.id == workflow_user.user_id). \
+            first()
+        html = f"""
+	<div class="card">
+		<div class="card-header">
+			<div class="row d-flex">
+				<div class="col-md-6">
+					<h4 class="card-title">Agent Details </h4>
+				</div>
+
+      <div class="col-md-6 text-right">
+                   	<button id="btn_online" style="display:none;" class="btn btn-success ml-auto" onclick="goAvailable()">Go Available</button>
+							<button id="btn_offline" class="btn btn-info ml-auto" onclick="goOffline()">Go Offline</button>
+                 </div>
+
+			</div>
+			<div class="row d-flex">
+				<div class="col-md-12">
+					<hr>
+					<div class="card-body">
+
+						<div class="row">
+							<div class="col-md-6">
+								   <div class="col-md-12">
+                                   <div class="form-group row">
+                                       <label class="col-md-4 col-form-label">Worker Name</label>
+                                       <div class="col-md-8">
+                                             <input id="" type="text" name="" value="{user.username}" class="form-control" disabled required='true'>
+
+   <div style='display: none' class="col-md-12">
+                                   <div class="form-group row">
+                                       <label class="col-md-3 col-form-label" required for="organisation_id">Id</label>
+                                       <div class="col-md-9">
+                                         
+                                           <input id="worker_sid" type="text" name="worker_sid" value="{workflow_user.workspace_workflow_user_sid}" class="form-control" required='true'>  
+<input id="workspace_sid" type="text" name="workspace_sid" value="{workspace_sid}" class="form-control" required='true'>
+                                       </div>
+                                   </div>
+                               </div>
+                                       </div>
+                                   </div>
+                                 </div>
+                                   <div class="col-md-12">
+                                   <div class="form-group row">
+                                       <label class="col-md-4 col-form-label">Worker Availability</label>
+                                       <div class="col-md-8">
+                                          <div id="worker_status"></div>
+                                       </div>
+                                   </div>
+                                 </div>    
+                               <div class="col-md-12">
+                                   <div class="form-group row">
+                                       <label class="col-md-4 col-form-label">Last Updated</label>
+                                       <div class="col-md-8">
+                                          <div id="status_update_time"></div>
+                                       </div>
+                                   </div>
+                                 </div>     <div class="col-md-12">
+                                   <div class="form-group row">
+                                       <label class="col-md-4 col-form-label">Skills</label>
+                                       <div class="col-md-8">
+                                          <div id="skills"></div>
+                                       </div>
+                                   </div>
+                                 </div>
+                          <div class="col-md-12">
+                                   <div class="form-group row">
+                                       <label class="col-md-4 col-form-label">Contact Details</label>
+                                       <div class="col-md-8">
+                                       <input id="" type="text" name="" value="{workflow_user.contact}" class="form-control" disabled required='true'>
+                                       </div>
+                                   </div>
+                                 </div>
+							</div>
+							<div class="col-md-6"></div>
+						</div>
+					
+						<div>
+							<br/>
+							<button id="btn_accept" style="display:none;" class="btn btn-primary ml-auto" onclick="acceptReservation()">Accept</button>
+							<button id="btn_reject" style="display:none;" class="btn btn-primary ml-auto" onclick="rejectReservation()">Reject</button>
+							<button id="btn_escalate" style="display:none;" class="btn btn-primary ml-auto" onclick="transferCallBlind_Manager()">Escalate
+							</button>
+							<button id="btn_mute" style="display:none;" class="btn btn-primary ml-auto" onclick="muteCaller()">Mute</button>
+							<button id="btn_unmute" style="display:none;" class="btn btn-primary ml-auto" onclick="unmuteCaller()">Unmute</button>
+							<button id="btn_hangup" style="display:none;" class="btn btn-primary ml-auto" onclick="hangup();">Hangup</button>
+							<button id="btn_hangupManager" style="display:none;" class="btn btn-primary ml-auto" onclick="hangupManager();">Hangup</button>
+						
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+	</div>
+         
+            """
+        javascript = """
+            <script nonce='1234'>
+                $('.appointment_back').click(function(){
+                    $.redirect('/appointment/index');
+                });
+                 var worker_status = document.getElementById('worker_status');          
+                 var ReservationObject;
+        $(document).ready(function() {
+    
+               var worker_sid = $('#worker_sid').val();  
+               var workspace_sid = $('#workspace_sid').val();
+               var kwargs = {'worker_sid':worker_sid, 'workspace_sid':workspace_sid}
+        
+  $.getJSON("/call_center_utils/get_view_agent_details",kwargs)
+    .then(function(data) {
+      // Setup Twilio.Device
+       
+   
+        Twilio.Device.setup(data.token, {debug: true});
+        
+        window.worker = new Twilio.TaskRouter.Worker(data.worker_token);
+        window.activity = data.activity;  
+        window.caller_id = data.caller_id;
+        registerTaskRouterCallbacks();
+
+        Twilio.Device.ready(function (device) {
+            console.log("Client is ready for connections");
+        });
+
+        Twilio.Device.error(function (error) {
+            $("#logger").text("Error: " + error.message);
+        });
+
+        Twilio.Device.connect(function (conn) {
+            $("#logger").text("Successfully established call");
+        });
+
+        Twilio.Device.disconnect(function (conn) {
+            $("#logger").text("Call ended");
+        });
+
+        Twilio.Device.incoming(function (conn) {
+            //$("#logger").text("Incoming connection from " + conn.parameters.From);
+            // accept the incoming connection and start two-way audio
+            conn.accept();
+        });
+    })
+    .catch(function(err){
+      console.log(err);
+      console.log("Could not get a token from server!");
+    })
+});
+     function call() {
+            // get the phone number or client to connect the call to
+            params = {"PhoneNumber": $("#number").val()};
+            Twilio.Device.connect(params);
+        }
+
+        function hangup() {
+            Twilio.Device.disconnectAll();
+            ReservationObject.task.complete();
+
+            worker.update("ActivitySid",  activity['WrapUp'], function (error, worker) {
+                
+                if (error) {
+                    console.log(error.code);
+                    console.log(error.message);
+                } else {
+                    logger(worker.friendlyName + " has ended the call");
+                    console.log(worker.activityName);
+                }
+            });
+        }
+     
+
+
+        function registerTaskRouterCallbacks() {
+            worker.on('ready', function (worker) {
+                updateUIStatus(worker.activityName, worker.available);
+                $("#status_update_time").html(worker.dateUpdated);   
+                var content = ''
+                var skills_list = worker.attributes['skills'];
+                for(var i = 0; i < skills_list.length; i++){
+                   content += skills_list[i] + ',  ';
+                };
+                $('#skills').html(content);
+
+            });
+
+            worker.on('activity.update', function (worker) {
+
+                logger("Worker activity changed to: " + worker.activityName);
+                var workerStatus = worker.activityName;
+                updateUIStatus(worker.activityName, worker.available);
+
+                if (worker.activitySid === "{{ activity['WrapUp'] }}") {
+
+                    if (ReservationObject) {
+                        //console.log("Worker is wrapping up!");
+                        //console.log(ReservationObject);
+                      //  ReservationObject.task.complete();
+                    }
+                }
+
+                if (worker.activityName === "Offline" || worker.activityName === "WrapUp") {
+                    document.getElementById("btn_online").style.display = "inline";
+                    document.getElementById("btn_offline").style.display = "none";
+                }
+            });
+
+            worker.on('reservation.created', function (reservation) {
+                logger("-----");
+                logger("You have been reserved to handle a call!");
+                logger("Call from: " + reservation.task.attributes.from);
+
+                logger("Selected language: " + reservation.task.attributes.selected_language);
+                logger("Customer request: " + reservation.task.attributes.selected_product);
+
+            
+                logger("-----");
+                logger(reservation.sid);
+                ReservationObject = reservation;
+                document.getElementById("btn_accept").style.display = "inline";
+                document.getElementById("btn_reject").style.display = "inline";
+                document.getElementById("btn_offline").style.display = "none";
+            });
+
+            worker.on('reservation.accepted', function (reservation) {
+                logger("Reservation " + reservation.sid + " accepted!");
+                ReservationObject = reservation; // update reservationObject to contain the updated reservation information/task attributes e.g. conference
+            });
+
+            worker.on('reservation.rejected', function (reservation) {
+                logger("Reservation " + reservation.sid + " rejected!");
+            });
+
+            worker.on('reservation.timeout', function (reservation) {
+                logger("Reservation " + reservation.sid + " timed out!");
+            });
+
+            worker.on('reservation.canceled', function (reservation) {
+                logger("Reservation " + reservation.sid + " canceled!");
+            });
+        }
+
+
+        function goAvailable() {
+
+            // update worker's activity to Idle
+            worker.update("ActivitySid", activity['Available'], function (error, worker) {
+                if (error) {
+                    console.log(error.code);
+                    console.log(error.message);
+                } else {
+                    console.log(worker.activityName); // "Available"
+                }
+            });
+
+            document.getElementById("btn_online").style.display = "none";
+            document.getElementById("btn_offline").style.display = "inline";
+        }
+
+        function goOffline() {
+
+            // update worker's activity to Offline
+            worker.update("ActivitySid", activity['Offline'], function (error, worker) {
+                if (error) {
+                    console.log(error.code);
+                    console.log(error.message);
+                } else {
+                    console.log(worker.activityName); // "Offline"
+                }
+            });
+
+            document.getElementById("btn_offline").style.display = "none";
+            document.getElementById("btn_mute").style.display = "none";
+            document.getElementById("btn_unmute").style.display = "none";
+            document.getElementById("btn_escalate").style.display = "none";
+
+        }
+
+        function updateUIStatus(activityName, available) {
+            statusDiv = document.getElementById("worker_status").innerText = activityName;
+            if (available === true) {
+                statusDiv = document.getElementById("worker_status").style.color = "#00BB00";
+            } else {
+                statusDiv = document.getElementById("worker_status").style.color = "#BB0000";
+            }
+            if (activityName === "Offline") {
+                document.getElementById("btn_online").style.display = "inline";
+                document.getElementById("btn_offline").style.display = "none";
+                document.getElementById("btn_hangup").style.display = "none";
+                document.getElementById("btn_mute").style.display = "none";
+                document.getElementById("btn_unmute").style.display = "none";
+                document.getElementById("btn_escalate").style.display = "none";
+            }
+        }
+
+        function acceptReservation() {
+                var options = {
+                    "From": caller_id ,  // CC's phone number
+                    "PostWorkActivitySid": activity['WrapUp'],
+                    "Timeout": "30",
+                    "Record": "true",
+                    "RecordingStatusCallback": window.location.protocol + "//" + window.location.host + "/recording_callback",
+                    "ConferenceStatusCallback": window.location.protocol + "//" + window.location.host + "/conference_callback",
+                    "ConferenceStatusCallbackEvent": "start,end,join,leave"
+                };
+                console.log("Starting conference...");
+                console.log(options);
+
+                ReservationObject.conference(null, null, null, null,
+                    function (error, reservation) {
+                        if (error) {
+                            console.log(error.code);
+                            console.log(error.message);
+                        }
+                    },
+                    options
+                );
+
+                logger("Conference initiated!");
+                document.getElementById("btn_hangup").style.display = "inline";
+
+            document.getElementById("btn_reject").style.display = "none";
+            document.getElementById("btn_accept").style.display = "none";
+            document.getElementById("btn_online").style.display = "none";
+            document.getElementById("btn_offline").style.display = "none";
+            document.getElementById("btn_mute").style.display = "inline";
+            document.getElementById("btn_unmute").style.display = "inline";
+            document.getElementById("btn_escalate").style.display = "inline";
+
+            updateUIStatus("On a call", false);
+        }
+
+        function rejectReservation() {
+            ReservationObject.reject();
+            document.getElementById("btn_reject").style.display = "none";
+            document.getElementById("btn_accept").style.display = "none";
+            document.getElementById("btn_hangup").style.display = "none";
+        }
+
+  
+        function muteCaller() {
+            $.post("/call_center_utils/callmute", {
+                participant: ReservationObject.task.attributes.conference.participants.customer,
+                conference: ReservationObject.task.attributes.conference.sid,
+                muted: "True"
+            });
+        }
+
+        function unmuteCaller(customer) {
+            //post to /callmute end point with the customer callsid and conferenceSID
+            if (customer) {
+                $.post("/call_center_utils/callmute", {
+                    participant: customer,
+                    conference: ReservationObject.task.attributes.conference,
+                    muted: "False"
+                });
+
+            }
+            else {
+                $.post("/callmute", {
+                    participant: ReservationObject.task.attributes.conference.participants.customer,
+                    conference: ReservationObject.task.attributes.conference.sid,
+                    muted: "False"
+                });
+            }
+        }
+
+        function logger(message) {
+           console.log(message);
+        }
+
+            </script>  
+              
+    
+            """
+        return html + javascript
+
+    @expose()
+    def get_agent_history_html(self, *args, **kwargs):
+
+       # dbase_query = CallCenterHistory.get_all('id')
+        dbase_query = CallCenterHistory.get_all('id')
+        outputlist = []
+        for item in dbase_query:
+            outputlist.append({
+                'from': f"<div class='edit' call_history_id='{item.id}'>{item.from_number}</div>",
+                'duration': item.duration,
+                'to': item.to_number,
+                'date_created': item.date_created,
+                'type': item.type
+               })
+        dbcolumnlist = [
+                'from',
+                'to',
+                'duration',
+                'date_created',
+                'type'
+            ]
+        theadlist = [
+                'From',
+                'To Number',
+                'Duration',
+                'Date Created',
+                'Status Type'
+            ]
+        tdclasslist = [
+                '',
+                'text-center',
+                'text-center',
+                'text-right',
+                'text-center',
+            ]
+        htmltbl = build_html_table(outputlist, dbcolumnlist, theadlist, "system_owner_table", tdclasslist)
+
+
+        html = f"""
+               <div class="card">
+                  <div class="card-header">
+                      <div class="row d-flex">
+                          <div class="col-md-8">
+                              <h4 class="card-title">Task History </h4>
+                          </div>
+
+                      </div>
+                      <div class="row d-flex">
+                          <div class="col-md-12">
+                              <hr>
+                          <div class="card-body">
+
+                            {htmltbl}
+      				</div>
+                          </div>
+                      </div>
+                  </div>
+              </div>
+
+
+              """
+        javascript = """
+                <script type="text/javascript">
+                
+                   $('.appointment_back').click(function(){
+                      $.redirect('/appointment/index');
+                  });
+              </script>
+              """
+        return html + javascript
+
+    @expose()
+    def get_agent_statics_html(self, *args, **kwargs):
+
+        html = f"""
+                  <div class="card">
+                     <div class="card-header">
+                         <div class="row d-flex">
+                             <div class="col-md-8">
+                                 <h4 class="card-title">Agent Statistics </h4>
+                             </div>
+
+                         </div>
+                         <div class="row d-flex">
+                             <div class="col-md-12">
+                                 <hr>
+                             <div class="card-body">
+                                  <div class="card" style="width: 20rem;">
+                                         <ul class="list-group list-group-flush">
+                                           <li class="list-group-item">Reservations Timed Out</li>
+                                           <li class="list-group-item">0</li>
+
+                                         </ul>
+                                       </div>
+                                       <div class="card" style="width: 20rem;">
+                                         <ul class="list-group list-group-flush">
+                                           <li class="list-group-item">Reservations Accepted</li>
+                                           <li class="list-group-item">0</li>
+
+                                         </ul>
+                                       </div>
+                                       <div class="card" style="width: 20rem;">
+                                         <ul class="list-group list-group-flush">
+                                           <li class="list-group-item">Reservations Canceled</li>
+                                           <li class="list-group-item">0</li>
+
+                                         </ul>
+                                       </div>
+                                       <div class="card" style="width: 20rem;">
+                                         <ul class="list-group list-group-flush">
+                                           <li class="list-group-item">Reservations Tasks Assigned</li>
+                                           <li class="list-group-item">0</li>
+
+                                         </ul>
+                                       </div>
+                                       <div class="card" style="width: 20rem;">
+                                         <ul class="list-group list-group-flush">
+                                           <li class="list-group-item">Reservations Time Out</li>
+                                           <li class="list-group-item">0</li>
+
+                                         </ul>
+                                       </div>
+                                   </div>
+
+         				</div>
+                             </div>
+                         </div>
+                     </div>
+                 </div>
+
+
+                 """
+        javascript = """
+                 <script nonce='1234'>
+                     $('.appointment_back').click(function(){
+                         $.redirect('/appointment/index');
+                     });
+                 </script>
+                 """
+        return html + javascript
+
+    @require(predicates.not_anonymous())
+    @expose('rocket.templates.generic')
+    def admin(self, *args, **kwargs):
+        html = ''
+        javascript = ''
+        title = _("Call Center Admin")
+        return dict(title=title, html=html, javascript=javascript)
+
+    @require(predicates.not_anonymous())
+    @expose('rocket.templates.generic')
+    def index(self, *args, **kwargs):
+        html = self.get_call_center_dashboard(*args, **kwargs)
+        javascript = self.get_javascript_call_center_index_onload()
+        title = _("Call Center Workflow")
+        return dict(title=title, html=html, javascript=javascript)
+
+    @expose()
+    def get_call_center_dashboard(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+        workspace_table = self.get_workspace_htmltbl(**kwargs)
+        html = f"""
+         <div class="row">
+             <div class="col-md-12">
+                 <div class="card">
+                 <div class="card-header">
+                     <div class="row d-flex">
+                         <div class="col-md-6">
+                             <h4 class="card-title">Call Center</h4>
+                         </div>
+                         <div class="col-md-6 text-right">
+
+      
+                            <button id="create_new_call" class="btn btn-success ml-auto">{_('New Call')}</button>
+                       
+                             <button id="create_workspace" class="btn btn-primary ml-auto">Create New Call Center</button>
+                         </div>
+                     </div>
+                       <div class="row d-flex align-items-center">
+                             <div class="col-md-4">
+                                 <input type="text" class="form-control search" name="searchphrase"  id='searchphrase'  value='' placeholder="Search">
+                             </div>
+                             <div class="col-md-8">
+                                 <button class="btn btn-primary" id='action_search'>Search</button>
+                                 <button class="btn btn-primary" id='btn_reset'>Reset</button>
+                             </div>
+                         </div>
+                     <hr>
+                 </div>
+                 <div class="card-body">
+                     <div class="table-responsive" id="workspace_table">
+                         {workspace_table}
+                     </div>
+                 </div>
+                 </div>
+             </div>
+         """
+        javascript = """
+        <script nonce='1234'>
+              $("#create_workspace").click(function(){
+                 $('#dialogdiv').load('/call_center/get_modal_new_workspace?', function(data){
+                     return false;
+                 });
+             });
+                   $("#create_new_call").click(function(){
+                          $('#dialogdiv').load('/call_center/get_modal_new_phone_call?', function(data){
+                             return false;
+                          });
+                     });
+         </script>
+         """
+        return html + javascript
+
+    @expose()
+    def get_workspace_htmltbl(self, *args, **kwargs):
+        workspace_query = Workspace.get_all('id')
+        outputlist = []
+        for item in workspace_query:
+            outputlist.append({
+                'name': f"<div class='workspace_edit' workspace_sid='{item.workspace_sid}'  workspace_id='{item.id}'>{item.name}</div>",
+                'date_updated': item.added,
+                'prioritize_queue_order': item.prioritize_queue_order,
+                'default_activity_name': item.default_activity_name,
+                'event_callback_url': item.event_callback_url
+
+            })
+        dbcolumnlist = [
+            'name',
+            'date_updated',
+            'default_activity_name',
+            'prioritize_queue_order',
+            'event_callback_url'
+        ]
+        theadlist = [
+            'Name',
+            'Date Created',
+            'Default Activity Name',
+            'Prioritize Queue Order',
+            'Event Callback Url'
+        ]
+        tdclasslist = [
+            'action_link',
+            'text-right',
+            'text-right',
+            'text-right',
+            'text-right',
+        ]
+        html = build_html_table(outputlist, dbcolumnlist, theadlist, "allocations_table", tdclasslist)
+        javascript = """
+            <script nonce='1234'>
+               $(".workspace_edit").click(function(){
+             var workspace_sid = $(this).attr('workspace_sid'); 
+             var workspace_id = $(this).attr('workspace_id');
+            var kwargs = {'workspace_sid' : workspace_sid, 'workspace_id': workspace_id};
+                $.redirect('/call_center/workspace_edit', kwargs);
+             });
+             </script>
+             """
+        return html + javascript
+
+    @expose()
+    def get_javascript_call_center_index_onload(self, *args, **kwargs):
+        javascript = """
+
+
+             """
+        return javascript
+
+    @expose()
+    def get_modal_new_workspace(self, *args, **kwargs):
+        html = """
+             <div class="modal fade" id="dialog_new_workspace" tabindex="-1" role="dialog" aria-labelledby="myallocationsLabel" aria-hidden="true">
+                 <div class="modal-dialog modal-dialog-centered modal-lg">
+                     <div class="modal-content">
+                         <div class="modal-header">
+                             <div class="col-md-6">
+                                 <h4 class="card-title">New Workspace</h4>
+                             </div>
+                         </div>
+                         <div class="modal-body">
+                             <form id='form_new_workspace'>
+                                 <div class="col-md-12">
+                                     <div class="form-group row">
+                                             <label class="col-md-3 col-form-label" required for="name">Name</label>
+                                             <div class="col-md-9">
+                                                     <input id="works_space_name" type="text" name="works_space_name" class="form-control" required='true'>
+                                             </div>
+                                     </div>
+                                 </div>
+                                 <div class="col-md-12">
+                                     <div class="form-group row">
+                                             <label class="col-md-3 col-form-label" required for="name">Call Back Url</label>
+                                             <div class="col-md-9">
+                                                     <input id="callback_url" type="text" name="callback_url" class="form-control" required='true'>
+                                             </div>
+                                     </div>
+                                 </div>
+                             </form>
+                         </div>
+                         <div class="modal-footer">
+                             <button id='save_new_workspace' class="btn btn-primary">Save</button>
+                             <button class="btn btn-outline-primary workspace_back" data-dismiss="modal">Cancel</button>
+                         </div>
+                     </div>
+                 </div>
+             </div>
+             """
+        javascript = """
+         <script nonce='1234'>
+    setFormValidation('#form_new_workspace');
+         $('#save_new_workspace').click(function(){
+              var valid = FormIsValid("#form_new_workspace");
+              if(valid){
+                 var formserial = getFormData('#form_new_workspace');
+                 var data = {data : JSON.stringify(formserial)};
+
+                 $.post('/call_center/save_new_workspace?', data, function(data){
+                     var result = JSON.parse(data);
+                       $('#dialog_new_workspace').modal('hide');
+                 if(result.success ==true){
+                    showNotification(result.status, result.data);
+               location.reload(); 
+                     };
+
+                     return false;
+                 });
+              }
+         });
+         $('.workspace_back').click(function(){
+             $('#dialog_new_workspace').modal('hide');
+         });
+         $('#dialog_new_workspace').modal();
+         </script>
+         """
+        return html + javascript
+
+    @require(predicates.not_anonymous())
+    @expose('rocket.templates.generic')
+    def workspace_edit(self, *args, **kwargs):
+
+        workspace_sid = kwargs.get("workspace_sid")
+        workspace_id = kwargs.get("workspace_id")
+        html = self.get_workspace_edit_html(*args, **kwargs)
+        javascript = self.get_javascript_workspace_edit_onload()
+        title = f"""View Workspace: {workspace_sid}"""
+        return dict(title=title, html=html, javascript=javascript)
+
+    @expose()
+    def get_javascript_workspace_edit_onload(self, *args, **kwargs):
+        javascript = """
+
+               
+             """
+        return javascript
+
+    @expose()
+    def get_modal_new_phone_call(self, *args, **kwargs):
+
+        html = f"""
+                       <div class="modal fade" id="dialog_new_phone_call" tabindex="-1" role="dialog" aria-labelledby="mybank_branchLabel" aria-hidden="true">
+                           <div class="modal-dialog modal-dialog-centered modal-lg">
+                               <div class="modal-content">
+                                   <div class="modal-header">
+                                       <div class="col-md-12">
+                                           <h4 class="card-title">New Phone Call</h4>
+                                       </div>
+                                   </div>
+                                   <div class="modal-body">
+
+
+    <div class="card-body">
+            <div class="form-group row">
+              <label for="call-status" class="col-2 col-form-label">Status</label>
+              <div class="col-10">
+                <input id="call-status" class="form-control" type="text" placeholder="Connecting to Call Center..." readonly>
+              </div>
+            </div>
+  <div class="form-group row">
+    <label for="call-status" class="col-2 col-form-label">Phone Number</label>
+              <div class="col-10">
+                <input  class="form-control" id="phoneNumber" name="phoneNumber" type="text" placeholder="Enter phone number">
+              </div>
+       </div>
+
+            <button class="btn btn-lg btn-primary call-support-button"  id="call_customer" >
+              <span class="glyphicon glyphicon-earphone" aria-hidden="true"></span> Call User
+            </button>
+             <button class="btn btn-lg btn-success answer-button"  disabled>Answer call</button>
+            <button class="btn btn-lg btn-danger hangup-button" disabled onclick="hangUp()">
+              Hang up
+            </button>
+          </div>
+<!--
+<div id="controls">
+             <div id="info">
+               <p class="instructions">Twilio Client</p>
+               <div id="client-name"></div>
+               <div id="output-selection">
+                 <label>Ringtone Devices</label>
+                 <select id="ringtone-devices" multiple></select>
+                 <label>Speaker Devices</label>
+                 <select id="speaker-devices" multiple></select><br/>
+                 <a id="get-devices">Seeing unknown devices?</a>
+               </div>
+             </div>
+             <div id="call-controls">
+               <p class="instructions">Make a Call:</p>
+               <input id="phone-number" type="text" placeholder="Enter a phone # or client name" />
+               <button id="button-call">Call</button>
+         <button class="btn btn-lg btn-danger hangup-button" disabled onclick="hangUp()">Hang up</button>
+               <button id="button-hangup">Hangup</button>
+               <div id="volume-indicators">
+                 <label>Mic Volume</label>
+                 <div id="input-volume"></div><br/><br/>
+                 <label>Speaker Volume</label>
+                 <div id="output-volume"></div>
+               </div>
+             </div>
+                               <div id="log"></div>
+                               </div>
+
+-->
+
+                                   </div>
+                                   <div class="modal-footer">
+                                       <button class="btn btn-outline-primary new_message_back" data-dismiss="modal">Cancel</button>
+                                   </div>
+                               </div>
+                           </div>
+</div>
+                   """
+        javascript = """
+                     <script nonce='1234'>
+                     $('#dialog_new_phone_call').modal();
+
+// Store some selectors for elements we'll reuse
+var callStatus = $("#call-status");
+var answerButton = $(".answer-button");
+var callSupportButton = $(".call-support-button");
+var hangUpButton = $(".hangup-button");
+var callCustomerButtons = $(".call-customer-button");
+
+var device;
+
+/* Helper function to update the call status bar */
+function updateCallStatus(status) {
+  callStatus.attr('placeholder', status);
+}
+
+console.log("Requesting Access Token...");
+
+$(document).ready(function() {
+  $.getJSON("/call_center_utils/get_token")
+    .then(function(data) {
+      // Setup Twilio.Device
+      device = new Twilio.Device(data.token, {
+
+        codecPreferences: ["opus", "pcmu"],
+
+        fakeLocalDTMF: true,
+
+        enableRingingState: true
+      });
+
+      device.on("ready", function(device) {
+        console.log("Twilio.Ready");
+        updateCallStatus("Ready");
+      });
+
+      device.on("error", function(error) {
+        console.log("Twilio.Device Error: " + error.message);
+        updateCallStatus("ERROR: " + error.message);
+      });
+
+      device.on("connect", function(conn) {
+        // Enable the hang up button and disable the call buttons
+        hangUpButton.prop("disabled", false);
+        callCustomerButtons.prop("disabled", true);
+        callSupportButton.prop("disabled", true);
+        answerButton.prop("disabled", true);
+
+        // If phoneNumber is part of the connection, this is a call from a
+        // support agent to a customer's phone
+        if ("phoneNumber" in conn.message) {
+            updateCallStatus("In call with " + conn.message.phoneNumber);
+        } else {
+            // This is a call from a website user to a support agent
+            updateCallStatus("In call with support");
+        }
+      });
+
+      device.on("disconnect", function(conn) {
+        // Disable the hangup button and enable the call buttons
+        hangUpButton.prop("disabled", true);
+        callCustomerButtons.prop("disabled", false);
+        callSupportButton.prop("disabled", false);
+
+        updateCallStatus("Ready");
+      });
+
+      device.on("incoming", function(conn) {
+        updateCallStatus("Incoming support call");
+
+        // Set a callback to be executed when the connection is accepted
+        conn.accept(function() {
+            updateCallStatus("In call with customer");
+        });
+
+        // Set a callback on the answer button and enable it
+        answerButton.click(function() {
+            conn.accept();
+        });
+        answerButton.prop("disabled", false);
+        answerButton.style.display = "inline";
+      });
+
+    })
+    .catch(function(err){
+      console.log(err);
+      console.log("Could not get a token from server!");
+    })
+});
+
+
+/* Call the support_agent from the home page */
+function callSupport() {
+  updateCallStatus("Calling support...");
+  // Our backend will assume that no params means a call to support_agent
+  device.connect();
+}
+/* Call a customer from a form  */
+$("#call_customer").click(function(){
+var phoneNumber = $("#phoneNumber").val();
+updateCallStatus("Calling " + phoneNumber + "...");
+
+  var params = {"phoneNumber": phoneNumber};
+  device.connect(params);          
+});
+
+/* End a call */
+function hangUp() {
+  device.disconnectAll();
+}
+
+                     </script>
+                    """
+        return html + javascript
+
+    @expose()
+    def get_workspace_edit_html(self, *args, **kwargs):
+        # tab_call_center_details = self.get_call_logs_table(*args, **kwargs)
+        #  tab_recorded_calls_details = self.get_recorded_calls_table(*args, **kwargs)
+        tab_workers_details = self.get_workers_list_table(**kwargs)
+        tabs_task_queues = self.get_tasks_queues_list_table(**kwargs)
+        tabs_statistics = self.get_workspace_statics_table(*args, **kwargs)
+        tabs_activitity = self.get_activities_list_table(*args, **kwargs)
+        tab_workflows = self.get_workflow_list_table(**kwargs)
+        html = f"""
+                  <div class="row">
+                      <div class="col-md-12">
+                          <div class="card">
+                              <div class="card-header">
+                                  <div class="row d-flex">
+                                      <div class="col-md-6">
+                                          <h4 class="card-title">{_('Call Center')}</h4>
+                                      </div>
+                               
+                                  </div>
+                                  <hr>
+                              </div>
+
+                          </div>
+                      </div>
+                  </div>
+
+                    <div class="row">
+                    <div class="col-md-12 ml-auto mr-auto">
+                        <div class="col-md-12 ml-auto mr-auto">
+                            <ul class="nav nav-pills nav-pills-primary justify-content-center" role="tablist">
+                                <li class="nav-item">
+                                    <a class="nav-link" data-toggle="tab" href="#tab_activities_details" role="tablist">
+                                      Activities
+                                    </a>
+                                </li>
+                                <li class="nav-item">
+                                    <a class="nav-link " data-toggle="tab" href="#tabs_task_queues" role="tablist">
+                                        Task Queues
+                                    </a>
+                                </li>
+                                <li class="nav-item">
+                                    <a class="nav-link " data-toggle="tab" href="#tabs_workflow" role="tablist">
+                                        Department
+                                    </a>
+                                </li>
+                            <li class="nav-item">
+                                    <a class="nav-link" data-toggle="tab" href="#tab_workers" role="tablist">
+                                        Agents
+                                    </a>
+                                </li>
+                                <li class="nav-item">
+                                    <a class="nav-link " data-toggle="tab" href="#tab_statisticcs" role="tablist">
+                                     Statistics
+                                    </a>
+                                </li>
+
+                            </ul>
+                        </div>
+                        <div class="tab-content tab-space tab-subcategories">
+
+
+                            <div class="tab-pane" id="tab_activities_details">
+                             {tabs_activitity}
+                            </div> 
+                            <div class="tab-pane" id="tabs_task_queues">
+                             {tabs_task_queues}
+                            </div>
+                          <div class="tab-pane" id="tabs_workflow">
+                             {tab_workflows}
+                            </div>
+                            <div class="tab-pane" id="tab_workers">
+                            {tab_workers_details}
+                            </div>
+                            <div class="tab-pane" id="tab_statisticcs">
+                             {tabs_statistics}
+                            </div>
+
+                        </div>
+                    </div>
+                </div>
+                  """
+
+        javascript = """
+             <script nonce='1234'>
+             $('.nav-link').first().click();
+
+             </script>
+             """
+        return html + javascript
+
+    @expose()
+    def get_workspace_statics_table(self, *args, **kwargs):
+        call_log_query = CALL_CENTER.get_workspaces_statistics(**kwargs)
+        html = f"""
+                    <div class="row">
+                        <div class="col-md-12">
+                            <div class="card">
+                            <div class="card-header">
+                                <div class="row d-flex">
+                                    <div class="col-md-6">
+                                        <h4 class="card-title">{_('Workers Statistics')}</h4>
+                                    </div>
+
+                                </div>
+
+                                <hr>
+                            </div>
+                            <div class="card-body">
+                                <div class="card" style="width: 20rem;">
+                                  <ul class="list-group list-group-flush">
+                                    <li class="list-group-item">Reservations Timed Out</li>
+                                    <li class="list-group-item">{call_log_query.cumulative.get('reservations_timed_out')}</li>
+
+                                  </ul>
+                                </div>
+                                <div class="card" style="width: 20rem;">
+                                  <ul class="list-group list-group-flush">
+                                    <li class="list-group-item">Reservations Accepted</li>
+                                    <li class="list-group-item">{call_log_query.cumulative.get('reservations_accepted')}</li>
+
+                                  </ul>
+                                </div>
+                                <div class="card" style="width: 20rem;">
+                                  <ul class="list-group list-group-flush">
+                                    <li class="list-group-item">Reservations Canceled</li>
+                                    <li class="list-group-item">{call_log_query.cumulative.get('reservations_canceled')}</li>
+
+                                  </ul>
+                                </div>
+                                <div class="card" style="width: 20rem;">
+                                  <ul class="list-group list-group-flush">
+                                    <li class="list-group-item">Reservations Tasks Assigned</li>
+                                    <li class="list-group-item">{call_log_query.cumulative.get('tasks_assigned')}</li>
+
+                                  </ul>
+                                </div>
+                                <div class="card" style="width: 20rem;">
+                                  <ul class="list-group list-group-flush">
+                                    <li class="list-group-item">Reservations Time Out</li>
+                                    <li class="list-group-item">{call_log_query.cumulative.get('reservations_timed_out')}</li>
+
+                                  </ul>
+                                </div>
+                            </div>
+                            </div>
+                        </div>
+                    </div>
+                    """
+        return html
+
+    @expose()
+    def get_call_center_details(self, *args, **kwargs):
+
+        html = f"""
+                  <div class="row">
+                      <div class="col-md-12">
+                          <div class="card">
+                              <div class="card-header">
+                                  <div class="row d-flex">
+                                      <div class="col-md-6">
+                                          <h4 class="card-title">{_('Details')}</h4>
+                                      </div>
+
+                                  </div>
+                                  <hr>
+                              </div>
+                              <div class="card-body">
+
+                          </div>
+                      </div>
+                  </div>
+        </div>
+
+
+                  """
+        return html
+
+    @expose()
+    def get_recorded_calls_table(self, *args, **kwargs):
+
+        call_log_query = CALL_CENTER.get_recorded_call_log_details(**kwargs)
+        outputlist = []
+        for item in call_log_query:
+            outputlist.append({
+                'start_time': item.start_time,
+                'date_created': item.date_created,
+                'duration': item.duration,
+                'call_sid': item.call_sid,
+                'status': item.status,
+                'media': f"<audio controls><source src='https://api.twilio.com/2010-04-01/Accounts/" + item.account_sid + "/Recordings/" + item.sid + ".mp3' /></audio>"
+
+            })
+        dbcolumnlist = [
+
+            'start_time',
+            'date_created',
+            'duration',
+            'call_sid',
+            'status',
+            'media'
+        ]
+        theadlist = [
+            'Start Time',
+            'Date Created',
+            'Duration',
+            'Call Sid',
+            'Status',
+            'Audio'
+        ]
+        tdclasslist = [
+            'action_link',
+            'text-right',
+            'text-right',
+            'text-right',
+            'text-right',
+            'text-right',
+        ]
+        call_details_itemtable = build_html_table(outputlist, dbcolumnlist, theadlist, "rate_table_line_item_table",
+                                                  tdclasslist)
+        html = f"""
+                    <div class="row">
+                        <div class="col-md-12">
+                            <div class="card">
+                            <div class="card-header">
+                                <div class="row d-flex">
+                                    <div class="col-md-6">
+                                        <h4 class="card-title">{_('Call Details')}</h4>
+                                    </div>
+
+                                </div>
+                                <hr>
+                            </div>
+                            <div class="card-body">
+                                <div class="table-responsive">
+                                    {call_details_itemtable}
+                                </div>
+                            </div>
+                            </div>
+                        </div>
+                    </div>
+                    """
+        return html
+
+    @expose()
+    def get_call_logs_table(self, *args, **kwargs):
+
+        call_log_query = CALL_CENTER.get_call_log_details(**kwargs)
+        outputlist = []
+        for item in call_log_query:
+            outputlist.append({
+                'caller_name': item.caller_name,
+                'date_created': item.date_created,
+                'duration': item.duration,
+                'from_formatted': item.from_,
+                'status': item.status,
+                'to_formatted': item.to,
+            })
+        dbcolumnlist = [
+
+            'caller_name',
+            'duration',
+            'from_formatted',
+            'to_formatted',
+            'date_created',
+            'status',
+        ]
+        theadlist = [
+
+            'Caller Name',
+            'Duration',
+            'From Number',
+            'To Number',
+            'Date Created',
+            'Status',
+        ]
+        tdclasslist = [
+            'action_link',
+            'text-right',
+            'text-right',
+            'text-right',
+            'text-right',
+            'text-right',
+        ]
+
+        call_details_itemtable = build_html_table(outputlist, dbcolumnlist, theadlist, "rate_table_line_item_table",
+                                                  tdclasslist)
+        html = f"""
+                    <div class="row">
+                        <div class="col-md-12">
+                            <div class="card">
+                            <div class="card-header">
+                                <div class="row d-flex">
+                                    <div class="col-md-6">
+                                        <h4 class="card-title">{_('All Call Details')}</h4>
+                                    </div>
+                                </div>
+                                <hr>
+                            </div>
+                            <div class="card-body">
+                                <div class="table-responsive">
+                                    {call_details_itemtable}
+                                </div>
+                            </div>
+                            </div>
+                        </div>
+                    </div>
+                    """
+        return html
+
+    @expose()
+    def get_workers_list_table(self, *args, **kwargs):
+        workspace_workflow_id = kwargs.get("workspace_workflow_id")
+        workspace_sid = kwargs.get("workspace_sid")
+        workspace_id = kwargs.get("workspace_id")
+        print(kwargs)
+        workers_list = WorkspaceWorkflowUser.by_attr_all('workspace_workflow_id', workspace_workflow_id)
+        outputlist = []
+
+        for item in workers_list:
+
+            user = DBSession.query(User). \
+                filter(User.id == item.user_id). \
+                first()
+            activity = DBSession.query(Activity). \
+                filter(Activity.id == item.activity_id). \
+                first()
+            outputlist.append({
+                'username': f"<div class='edit view_agent' workspace_sid='{workspace_sid}' worker_id='{item.id}'>{user.username}</div>",
+                'available': activity.availablility,
+                'date_created': item.added,
+                'attributes': item.attributes,
+                'contact': item.contact
+            })
+        dbcolumnlist = [
+            'username',
+            'available',
+            'date_created',
+            'attributes',
+            'contact'
+        ]
+        theadlist = [
+            'Worker Name',
+            'Availability',
+            'Date Created',
+            'Skills/Filters',
+            'Contact Details'
+        ]
+        tdclasslist = [
+            'action_link',
+            'text-right',
+            'text-right',
+            'text-right',
+            'text-right',
+        ]
+
+        call_details_itemtable = build_html_table(outputlist, dbcolumnlist, theadlist, "rate_table_line_item_table",
+                                                  tdclasslist)
+        html = f"""
+                    <div class="row">
+                        <div class="col-md-12">
+                            <div class="card">
+                            <div class="card-header">
+                                <div class="row d-flex">
+                                    <div class="col-md-6">
+                                        <h4 class="card-title">{_('Agent Details')}</h4>
+                                    </div>
+                            <div class="col-md-6 text-right">
+                             <button id="create_worker" workspace_sid="{workspace_sid}" workspace_id="{workspace_id}" class="btn btn-primary ml-auto">Create New Worker</button>
+                         </div>
+                                </div>
+                                <hr>
+                            </div>
+                            <div class="card-body">
+                                <div class="table-responsive">
+                                    {call_details_itemtable}
+                                </div>
+                            </div>
+                            </div>
+                        </div>
+                    </div>
+                    """
+
+        javascript = """
+               <script nonce='1234'>
+             $("#create_worker").click(function(){
+           var workspace_sid = $(this).attr('workspace_sid');
+            var workspace_id = $(this).attr('workspace_id');
+            var kwargs = {'workspace_sid' : workspace_sid, 'workspace_id':workspace_id};
+                 $('#dialogdiv').load('/call_center/get_modal_new_worker?',kwargs, function(data){
+                     return false;
+                 });
+             });
+  
+           $(".view_agent").click(function(){
+            var data = {'workspace_sid' : $(this).attr('workspace_sid'), 'worker_id' : $(this).attr('worker_id')};
+            console.log(data);
+            $.redirect('/call_center/view', data);
+        });
+             </script>
+
+        """
+        return html + javascript
+
+    @expose()
+    def get_workflow_list_table(self, *args, **kwargs):
+        workspace_sid = kwargs.get("workspace_sid")
+        workspace_id = kwargs.get("workspace_id")
+        workflow_list = WorkspaceWorkflow.by_attr_all('workspace_id', workspace_id)
+        outputlist = []
+
+        for item in workflow_list:
+            configuration = ""
+            action_button = f"""<button data-workspace_id='{workspace_id}' data-workspace_workflow_id='{item.id}' data-workspace_sid='{workspace_sid}' class="btn btn-outline-primary ml-auto view_workers">View Users</button>"""
+            outputlist.append({
+                'friendly_name': item.name,
+                'date_created': item.added,
+                'timeout': item.timeout_in_minutes,
+                'filters': item.expression_attribute,
+                'view_workers' : action_button
+
+            })
+        dbcolumnlist = [
+            'friendly_name',
+            'date_created',
+            'timeout',
+            'filters',
+            'view_workers'
+        ]
+        theadlist = [
+            'Department Name',
+            'Date Created',
+            'Task Timeout (Minutes)',
+            'Filters',
+            'View'
+        ]
+        tdclasslist = [
+            'action_link',
+            'text-right',
+            'text-right',
+            'text-right',
+            'text-right',
+        ]
+
+        call_details_itemtable = build_html_table(outputlist, dbcolumnlist, theadlist, "rate_table_line_item_table",
+                                                  tdclasslist)
+        html = f"""
+                     <div class="row">
+                         <div class="col-md-12">
+                             <div class="card">
+                             <div class="card-header">
+                                 <div class="row d-flex">
+                                     <div class="col-md-6">
+                                         <h4 class="card-title">{_('Department Details')}</h4>
+                                     </div>
+                             <div class="col-md-6 text-right">
+                              <button id="create_workflow" workspace_sid="{workspace_sid}" workspace_id="{workspace_id}" class="btn btn-primary ml-auto">Create New Department</button>
+                          </div>
+                                 </div>
+                                 <hr>
+                             </div>
+                             <div class="card-body">
+                                 <div class="table-responsive">
+                                     {call_details_itemtable}
+                                 </div>
+                             </div>
+                             </div>
+                         </div>
+                     </div>
+                     """
+
+        javascript = """
+         <script nonce='1234'>
+              $("#create_workflow").click(function(){
+            var workspace_sid = $(this).attr('workspace_sid');           
+             var workspace_id = $(this).attr('workspace_id');
+             var kwargs = {'workspace_sid' : workspace_sid, 'workspace_id':workspace_id};
+                  $('#dialogdiv').load('/call_center/get_modal_new_workflow?',kwargs, function(data){
+                      return false;
+                  });
+              });
+              
+                 $(".view_workers").click(function(){
+                 var kwargs = $(this).data();
+                $('#tab_workers').load('/call_center/get_workers_list_table', kwargs, function(data){
+                        $('.nav-link[href="#tab_workers"]').trigger('click');
+                    return false;
+                });
+            });
+              </script>
+         """
+        return html + javascript
+
+    @expose()
+    def get_activities_list_table(self, *args, **kwargs):
+        workspace_sid = kwargs.get("workspace_sid")
+        workspace_id = kwargs.get("workspace_id")
+
+        task_queues = Activity.by_attr_all('workspace_id', workspace_id)
+        outputlist = []
+
+        for item in task_queues:
+            outputlist.append({
+                'availablility': item.availablility,
+                'date_created': item.added,
+            })
+        dbcolumnlist = [
+            'availablility',
+            'date_created',
+        ]
+        theadlist = [
+            'Activity Name',
+            'Date Created',
+        ]
+        tdclasslist = [
+            'action_link',
+            'text-right',
+        ]
+
+        call_details_itemtable = build_html_table(outputlist, dbcolumnlist, theadlist, "rate_table_line_item_table",
+                                                  tdclasslist)
+        html = f"""
+                    <div class="row">
+                        <div class="col-md-12">
+                            <div class="card">
+                            <div class="card-header">
+                                <div class="row d-flex">
+                                    <div class="col-md-6">
+                                        <h4 class="card-title">{_('Activitity Details')}</h4>
+                                    </div>
+                                </div>
+Activities describe the current status of your Workers which determines whether they are eligible to receive task assignments. Workers are always set to a single Activity. Read more about Activitie
+
+                                <hr>
+                            </div>
+                            <div class="card-body">
+                                <div class="table-responsive">
+                                    {call_details_itemtable}
+                                </div>
+                            </div>
+                            </div>
+                        </div>
+                    </div>
+                    """
+        javascript = """
+               <script nonce='1234'>
+         
+             </script>
+
+        """
+        return html + javascript
+
+    @expose()
+    def get_tasks_queues_list_table(self, *args, **kwargs):
+        workspace_sid = kwargs.get("workspace_sid")
+        workspace_id = kwargs.get("workspace_id")
+
+        task_queues = WorkspaceWorkflowTaskQueue.by_attr_all('workspace_id', workspace_id)
+        outputlist = []
+
+        for item in task_queues:
+            assignment_activity = DBSession.query(Activity). \
+                filter(Activity.id == item.assignment_activity_id). \
+                first()
+            reservation_activity = DBSession.query(Activity). \
+                filter(Activity.id == item.reservation_activity_id). \
+                first()
+
+            outputlist.append({
+                'name': item.name,
+                'queue_expression': item.queue_expression,
+                'assignment_activity': assignment_activity.availablility,
+                'reservation_activity': reservation_activity.availablility,
+                'max_reserved_workers': item.max_reserved_workers,
+                'date_created': item.added,
+            })
+        dbcolumnlist = [
+            'name',
+            'queue_expression',
+            'assignment_activity',
+            'reservation_activity',
+            'max_reserved_workers',
+            'date_created',
+        ]
+        theadlist = [
+            'Task Name',
+            'Queue Expression',
+            'Assignment Activity',
+            'Reservation Activity',
+            'Max Reserved Workers',
+            'Date Created',
+        ]
+        tdclasslist = [
+            'action_link',
+            'text-right',
+            'text-right',
+            'text-right',
+            'text-right',
+            'text-right',
+        ]
+
+        call_details_itemtable = build_html_table(outputlist, dbcolumnlist, theadlist, "rate_table_line_item_table",
+                                                  tdclasslist)
+        html = f"""
+                    <div class="row">
+                        <div class="col-md-12">
+                            <div class="card">
+                            <div class="card-header">
+                                <div class="row d-flex">
+                                    <div class="col-md-6">
+                                        <h4 class="card-title">{_('Task Details')}</h4>
+                                    </div>
+                            <div class="col-md-6 text-right">
+                             <button id="create_task_queue" workspace_sid="{workspace_sid}" workspace_id="{workspace_id}" class="btn btn-primary ml-auto">Create New Task</button>
+                         </div>
+                                </div>
+
+                                <hr>
+                            </div>
+                            <div class="card-body">
+                                <div class="table-responsive">
+                                    {call_details_itemtable}
+                                </div>
+                            </div>
+                            </div>
+                        </div>
+                    </div>
+                    """
+        javascript = """
+               <script nonce='1234'>
+             $("#create_task_queue").click(function(){
+
+           var workspace_sid = $(this).attr('workspace_sid');     
+              var workspace_id = $(this).attr('workspace_id');
+            var kwargs = {'workspace_sid' : workspace_sid,'workspace_id':workspace_id};
+                 $('#dialogdiv').load('/call_center/get_modal_new_task_queue?',kwargs, function(data){
+                     return false;
+                 });
+             });
+             </script>
+
+        """
+        return html + javascript
+
+    @expose()
+    def get_modal_new_worker(self, *args, **kwargs):
+
+        workspace_sid = kwargs.get("workspace_sid")
+        workspace_id = kwargs.get("workspace_id")
+        selectbox_user = self.get_selectbox_user(**kwargs)
+        selectbox_department = self.get_selectbox_department(**kwargs)
+        html = f"""
+             <div class="modal fade" id="dialog_new_worker" tabindex="-1" role="dialog" aria-labelledby="myallocationsLabel" aria-hidden="true">
+                 <div class="modal-dialog modal-dialog-centered modal-lg">
+                     <div class="modal-content">
+                         <div class="modal-header">
+                             <div class="col-md-6">
+                                 <h4 class="card-title">New Agent</h4>
+                             </div>
+                         </div>
+                         <div class="modal-body">
+                             <form id='form_new_worker'>
+                                <input id="workspace_sid" type="hidden" name="workspace_sid" value="{workspace_sid}" class="form-control" required='true'>   
+                                <input id="workspace_id" type="hidden" name="workspace_id" value="{workspace_id}" class="form-control" required='true'>
+                                 <div class="col-md-12">
+                                     <div class="form-group row">
+                                             <label class="col-md-3 col-form-label" required for="name">Name</label>
+                                             <div class="col-md-9">
+                                                {selectbox_user}                   
+                                             </div>
+                                     </div>
+                                 </div>
+                                 <div class="col-md-12">
+                                     <div class="form-group row">
+                                             <label class="col-md-3 col-form-label" required for="name">Department</label>
+                                             <div class="col-md-9">
+                                            {selectbox_department}
+                                             </div>
+                                     </div>
+                                 </div>      <div class="col-md-12">
+                                     <div class="form-group row">
+                                             <label class="col-md-3 col-form-label" required for="name">Mobile</label>
+                                             <div class="col-md-9">
+                                                     <input id="worker_contact" type="text" name="worker_contact" class="form-control" required='true'>
+                                             </div>
+                                     </div>
+                                 </div>
+                             </form>
+                         </div>
+                         <div class="modal-footer">
+                             <button id='save_new_worker' class="btn btn-primary">Save</button>
+                             <button class="btn btn-outline-primary new_worker_cancel" data-dismiss="modal">Cancel</button>
+                         </div>
+                     </div>
+                 </div>
+             </div>
+             """
+        javascript = """
+         <script nonce='1234'>
+             setFormValidation('#form_new_workspace');
+             $('#save_new_worker').click(function(){
+                  var valid = FormIsValid("#form_new_worker");
+                  if(valid){
+                     var formserial = getFormData('#form_new_worker');
+                     var data = {data : JSON.stringify(formserial)};
+
+                     $.post('/call_center/save_new_worker?', data, function(data){
+                         var result = JSON.parse(data);
+                           $('#dialog_new_worker').modal('hide');
+                   	if(result.success){
+					showNotification(result.status, result.data);
+					var kwargs = {'workspace_id' :result.workspace_id, 'workspace_sid': result.workspace_sid};
+					
+					$('#tab_workers').load('/call_center/get_workers_list_table', kwargs, function(data){
+						$('.nav-link[href="#tab_workers"]').trigger('click');
+						return false;
+					});
+				};
+                         return false;
+                     });
+                  }
+             });
+            $('.new_worker_cancel').click(function(){
+                 $('#dialog_new_workspace').modal('hide');
+             });
+             $('#dialog_new_worker').modal();
+         </script>
+         """
+        return html + javascript
+
+    def get_selectbox_user(self, selected=None, *args, **kwargs):
+        dbase_query = DBSession.query(User). \
+            order_by(asc(User.username)). \
+            all()
+        kwargs['id'] = 'user_id'
+        kwargs['selected'] = selected
+        kwargs['outputlist'] = [{'name': m.username, 'id': m.id} for m in dbase_query]
+        return create_selectbox_html(**kwargs)
+
+    @expose()
+    def get_modal_new_workflow(self, *args, **kwargs):
+        workspace_sid = kwargs.get("workspace_sid")
+        workspace_id = kwargs.get("workspace_id")
+        selectbox_task_queues = self.get_selectbox_task_queues(**kwargs)
+        html = f"""
+             <div class="modal fade" id="dialog_new_workflow" tabindex="-1" role="dialog" aria-labelledby="myallocationsLabel" aria-hidden="true">
+                 <div class="modal-dialog modal-dialog-centered modal-lg">
+                     <div class="modal-content">
+                         <div class="modal-header">
+                             <div class="col-md-6">
+                                 <h4 class="card-title">New Department</h4>
+                             </div>
+                         </div>
+                         <div class="modal-body">
+                             <form id='form_new_workflow'>
+                                <input id="workspace_sid" type="hidden" name="workspace_sid" value="{workspace_sid}" class="form-control" required='true'>     
+                                <input id="workspace_id" type="hidden" name="workspace_id" value="{workspace_id}" class="form-control" required='true'>
+                                 <div class="col-md-12">
+                                     <div class="form-group row">
+                                             <label class="col-md-3 col-form-label" required for="name">Name</label>
+                                             <div class="col-md-9">
+                                                     <input id="friendly_name" type="text" name="friendly_name" class="form-control" required='true'>
+                                             </div>
+                                     </div>
+                                 </div>
+                                 <div class="col-md-12">
+                                     <div class="form-group row">
+                                             <label class="col-md-3 col-form-label" required for="name">Expression</label>
+                                             <div class="col-md-9">
+                                                     <input id="expression" type="text" name="expression" class="form-control" required='true'>
+                                             </div>
+                                     </div>
+                                 </div>
+                                <div class="col-md-12">
+                                     <div class="form-group row">
+                                             <label class="col-md-3 col-form-label" required for="name">Callback Url</label>
+                                             <div class="col-md-9">
+                                                     <input id="callback_url" type="text" name="callback_url" class="form-control" required='true'>
+                                             </div>
+                                     </div>
+                                 </div>
+                               <div class="col-md-12">
+                                     <div class="form-group row">
+                                             <label class="col-md-3 col-form-label" required for="name">Task Queue</label>
+                                             <div class="col-md-9">
+                                                  {selectbox_task_queues}
+                                             </div>
+                                     </div>
+                                 </div>
+                             </form>
+                         </div>
+                         <div class="modal-footer">
+                             <button id='save_new_workerflow' class="btn btn-primary">Save</button>
+                             <button class="btn btn-outline-primary new_workerflow_cancel" data-dismiss="modal">Cancel</button>
+                         </div>
+                     </div>
+                 </div>
+             </div>
+             """
+        javascript = """
+         <script nonce='1234'>
+             setFormValidation('#form_new_workflow');
+             $('#save_new_workerflow').click(function(){
+                  var valid = FormIsValid("#form_new_workflow");
+                  if(valid){
+                     var formserial = getFormData('#form_new_workflow');
+                     var data = {data : JSON.stringify(formserial)};
+
+                     $.post('/call_center/save_new_workflow?', data, function(data){
+                         var result = JSON.parse(data);
+                          $('#dialog_new_workflow').modal('hide');
+                         if(result.success){
+                          showNotification(result.status, result.data);
+                         var kwargs = {'workspace_id' :result.workspace_id, 'workspace_sid': result.workspace_sid};
+                     
+                    $('#tabs_workflow').load('/call_center/get_workflow_list_table', kwargs, function(data){
+                       $('.nav-link[href="#tabs_workflow"]').trigger('click');
+                        return false;
+                    });
+                         };
+
+                         return false;
+                     });
+                  }
+             });
+         $('.new_workerflow_cancel').click(function(){
+                 $('#dialog_new_workflow').modal('hide');
+             });
+             $('#dialog_new_workflow').modal();
+         </script>
+         """
+        return html + javascript
+
+    @expose()
+    def get_modal_new_task_queue(self, *args, **kwargs):
+        workspace_sid = kwargs.get("workspace_sid")
+        workspace_id = kwargs.get("workspace_id")
+        selectbox_assignment_activity = self.get_selectbox_assignment_activity_list(**kwargs)
+        selectbox_reservation_activity = self.get_selectbox_reservation_activity_list(**kwargs)
+
+        html = f"""
+             <div class="modal fade" id="dialog_new_task_queue" tabindex="-1" role="dialog" aria-labelledby="myallocationsLabel" aria-hidden="true">
+                 <div class="modal-dialog modal-dialog-centered modal-lg">
+                     <div class="modal-content">
+                         <div class="modal-header">
+                             <div class="col-md-6">
+                                 <h4 class="card-title">New Task Queue</h4>
+                             </div>
+                         </div>
+                         <div class="modal-body">
+                             <form id='form_new_task_queue'>
+                                <input id="workspace_sid" type="hidden" name="workspace_sid" value="{workspace_sid}" class="form-control" required='true'> 
+<input id="workspace_id" type="hidden" name="workspace_id" value="{workspace_id}" class="form-control" required='true'>
+                                 <div class="col-md-12">
+                                     <div class="form-group row">
+                                             <label class="col-md-3 col-form-label" required for="name">Name</label>
+                                             <div class="col-md-9">
+                                                     <input id="friendly_name" type="text" name="friendly_name" class="form-control" required='true'>
+                                             </div>
+                                     </div>
+                                 </div>
+                                 <div class="col-md-12">
+                                     <div class="form-group row">
+                                             <label class="col-md-3 col-form-label" required for="name">Max Reserved Workers</label>
+                                             <div class="col-md-9">
+                                                     <input id="max_reserved_workers" type="number" name="max_reserved_workers" class="form-control" required='true'>
+                                             </div>
+                                     </div>
+                                 </div>      <div class="col-md-12">
+                                     <div class="form-group row">
+                                             <label class="col-md-3 col-form-label" required for="name">Target Worker</label>
+                                             <div class="col-md-9">
+                                                     <input id="target_worker" type="text" name="target_worker" class="form-control" required='true'>
+                                             </div>
+                                     </div>
+                                 </div>
+
+                                 <div class="col-md-12">
+                                     <div class="form-group row">
+                                             <label class="col-md-3 col-form-label" required for="name">Assignment Activity Status</label>
+                                             <div class="col-md-9">
+                                                  {selectbox_assignment_activity}
+                                             </div>
+                                     </div>
+                                 </div>
+                                <div class="col-md-12">
+                                     <div class="form-group row">
+                                             <label class="col-md-3 col-form-label" required for="name">Reservation Activity Status</label>
+                                             <div class="col-md-9">
+                                                  {selectbox_reservation_activity}
+                                             </div>
+                                     </div>
+                                 </div>
+                             </form>
+                         </div>
+                         <div class="modal-footer">
+                             <button id='save_new_task_queue_details' class="btn btn-primary">Save</button>
+                             <button class="btn btn-outline-primary new_task_queue_cancel" data-dismiss="modal">Cancel</button>
+                         </div>
+                     </div>
+                 </div>
+             </div>
+             """
+        javascript = """
+         <script nonce='1234'>
+             setFormValidation('#form_new_workflow');
+             $('#save_new_task_queue_details').click(function(){
+                  var valid = FormIsValid("#form_new_task_queue");
+                  if(valid){
+                     var formserial = getFormData('#form_new_task_queue');
+                     var data = {data : JSON.stringify(formserial)};
+                     $.post('/call_center/save_new_task_queue?', data, function(data){
+                         var result = JSON.parse(data);
+                           $('#dialog_new_task_queue').modal('hide');
+                               
+                         if(result.success){
+                      showNotification(result.status, result.data);
+                         var kwargs = {'workspace_id' :result.workspace_id, 'workspace_sid': result.workspace_sid};
+                         console.log(kwargs);
+                    $('#tabs_task_queues').load('/call_center/get_tasks_queues_list_table', kwargs, function(data){
+                       $('.nav-link[href="#tabs_task_queues"]').trigger('click');
+                        return false;
+                    });
+                         };
+
+                         return false;
+                     });
+                  }
+             });
+         $('.new_task_queue_cancel').click(function(){
+                 $('#dialog_new_task_queue').modal('hide');
+             });
+             $('#dialog_new_task_queue').modal();
+         </script>
+         """
+        return html + javascript
+
+    @expose()
+    def save_new_workspace(self, *args, **kwargs):
+        usernow = request.identity.get('user', None)
+        data = json.loads(kwargs.get('data', json.dumps({})))
+        works_space_name = data.get('works_space_name', None)
+        callback_url = data.get('callback_url', None)
+        worker_dict = {
+            'callback_url': callback_url,
+            'works_space_name': works_space_name,
+        }
+        outputdict = {'success': False}
+        if not works_space_name:
+            return json.dumps({'success': False, 'data': 'Enter worker name', 'status': 'danger'})
+
+        worksapce = CALL_CENTER.create_workspace(**worker_dict)
+
+        if not worksapce:
+            outputdict['success'] = True
+            outputdict['data'] = 'Failed to create workspace.'
+            outputdict['status'] = 'danger'
+            return json.dumps(outputdict)
+
+        outputdict['success'] = True
+        outputdict['workspace_sid'] = worksapce.sid
+        outputdict['status'] = 'success'
+        outputdict['data'] = 'Successfully created workspace'
+
+        return json.dumps(outputdict)
+
+    @expose()
+    def save_new_worker(self, *args, **kwargs):
+        usernow = request.identity.get('user', None)
+        data = json.loads(kwargs.get('data', json.dumps({})))
+
+        worker_contact = data.get('worker_contact', None)
+        workspace_sid = data.get('workspace_sid', None)
+        workspace_workflow_id = data.get('workspace_workflow_id', None)
+        user_id = data.get("user_id", None)
+        workspace_id = data.get('workspace_id')
+        workspace_dict = {
+            'workspace_sid': workspace_sid,
+            'workspace_workflow_id': workspace_workflow_id,
+            'worker_contact': worker_contact,
+            'user_id': user_id
+        }
+
+        outputdict = {'success': False}
+        if not worker_contact:
+            return json.dumps({'success': False, 'data': 'Enter worker name', 'status': 'danger'})
+
+        worker = CALL_CENTER.create_worker(**workspace_dict)
+
+        if not worker:
+            outputdict['success'] = True
+            outputdict['data'] = 'Failed to create worker.'
+            outputdict['status'] = 'danger'
+
+            return json.dumps(outputdict)
+
+        outputdict['success'] = True
+        outputdict['data'] = "Successfully added new worker"
+        outputdict['status'] = 'success'
+        outputdict['workspace_id'] = workspace_id
+        outputdict['workspace_sid'] = workspace_sid
+        return json.dumps(outputdict)
+
+    @expose()
+    def save_new_workflow(self, *args, **kwargs):
+        usernow = request.identity.get('user', None)
+
+        data = json.loads(kwargs.get('data', json.dumps({})))
+
+        friendly_name = data.get('friendly_name')
+        callback_url = data.get('callback_url')
+        workspace_sid = data.get('workspace_sid')
+        workspace_id = data.get('workspace_id')
+        expression = data.get('expression')
+        workspace_workflow_task_queue_id = data.get('workspace_workflow_task_queue_id')
+
+        workspace_dict = {
+            'friendly_name': friendly_name,
+            'callback_url': callback_url,
+            'workspace_sid': workspace_sid,
+            'workspace_id': workspace_id,
+            'expression': expression,
+            'workspace_workflow_task_queue_id': workspace_workflow_task_queue_id,
+        }
+
+        outputdict = {'success': False}
+        if not friendly_name:
+            return json.dumps({'success': False, 'data': 'Enter department name', 'status': 'danger'})
+
+        worker = CALL_CENTER.create_workflow(**workspace_dict)
+
+        if not worker:
+            outputdict['success'] = True
+            outputdict['data'] = 'Failed to create department.'
+            outputdict['status'] = 'danger'
+
+            return json.dumps(outputdict)
+
+        outputdict['success'] = True
+        outputdict['data'] = "Successfully added new workflow added"
+        outputdict['status'] = 'success'
+        outputdict['workspace_id'] = workspace_id
+        outputdict['workspace_sid'] = workspace_sid
+        return json.dumps(outputdict)
+
+    @expose()
+    def save_new_task_queue(self, *args, **kwargs):
+        usernow = request.identity.get('user', None)
+
+        data = json.loads(kwargs.get('data', json.dumps({})))
+
+        friendly_name = data.get('friendly_name')
+        max_reserved_workers = data.get('max_reserved_workers')
+        target_worker = data.get('target_worker')
+        workspace_sid = data.get('workspace_sid')
+        workspace_id = data.get('workspace_id')
+        reservation_activity_sid = data.get('reservation_activity_sid')
+        assignment_activity_sid = data.get('assignment_activity_sid')
+
+        workspace_dict = {
+            'friendly_name': friendly_name,
+            'max_reserved_workers': max_reserved_workers,
+            'target_worker': target_worker,
+            'workspace_sid': workspace_sid,
+            'reservation_activity_sid': reservation_activity_sid,
+            'assignment_activity_sid': assignment_activity_sid
+        }
+
+        outputdict = {'success': False}
+        if not friendly_name:
+            return json.dumps({'success': False, 'data': 'Enter task queue name', 'status': 'danger'})
+
+        worker = CALL_CENTER.create_task_queue(**workspace_dict)
+
+        if not worker:
+            outputdict['success'] = True
+            outputdict['data'] = 'Failed to create task queue.'
+            outputdict['status'] = 'danger'
+
+            return json.dumps(outputdict)
+
+        outputdict['success'] = True
+        outputdict['data'] = "Successfully added new task queue"
+        outputdict['status'] = 'success'
+        outputdict['workspace_id'] = workspace_id
+        outputdict['workspace_sid'] = workspace_sid
+
+        return json.dumps(outputdict)
+
+    def get_selectbox_task_queues(self, *args, **kwargs):
+        workspace_id = kwargs.get("workspace_id")
+        activity_list = WorkspaceWorkflowTaskQueue.by_attr_all('workspace_id', workspace_id)
+        kwargs['id'] = 'workspace_workflow_task_queue_id'
+        kwargs['outputlist'] = [{'name': m.name, 'id': m.id} for m in activity_list]
+        return create_selectbox_html(**kwargs)
+
+    def get_selectbox_department(self, *args, **kwargs):
+        workspace_id = kwargs.get("workspace_id")
+        activity_list = WorkspaceWorkflow.by_attr_all('workspace_id', workspace_id)
+        kwargs['id'] = 'workspace_workflow_id'
+        kwargs['outputlist'] = [{'name': m.name, 'id': m.id} for m in activity_list]
+        return create_selectbox_html(**kwargs)
+
+    def get_selectbox_reservation_activity_list(self, *args, **kwargs):
+        workspace_id = kwargs.get("workspace_id")
+        activity_list = Activity.by_attr_all('workspace_id', workspace_id)
+        kwargs['id'] = 'reservation_activity_sid'
+        kwargs['outputlist'] = [{'name': m.availablility, 'id': m.activity_sid} for m in activity_list]
+        return create_selectbox_html(**kwargs)
+
+    def get_selectbox_assignment_activity_list(self, *args, **kwargs):
+        workspace_id = kwargs.get("workspace_id")
+        activity_list = Activity.by_attr_all('workspace_id', workspace_id)
+        kwargs['id'] = 'assignment_activity_sid'
+        kwargs['outputlist'] = [{'name': m.availablility, 'id': m.activity_sid} for m in activity_list]
+        return create_selectbox_html(**kwargs)

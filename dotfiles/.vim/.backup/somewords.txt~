@@ -1,0 +1,27 @@
+Called inside Eiffel Admin / Back office:
+
+•
+•   Reset password
+•   login
+•   register_user
+•   confirm_mobile_otp
+•   vas/get_airtime_list
+•   vas/get_data_list
+•   vas/purchase_mobile - “amount” "Vodacom airtime" purchase
+
+Called inside Calabash Merchant:
+•   kyc_merchant / PAYPAL EXAMPLE
+•   get_merchant_salesroles
+•   get_user_beneficiaries
+•   register_sales role  - “Users Name” has been assigned a sales role
+•   add_beneficiary -  “Beneficiary Name” has been added as a beneficiary
+•   delete_beneficiary - “Beneficiary Name” has been removed as a beneficiary
+
+
+Wallet services only (mostly called in Mobile but occasionally in Merchant)
+•   refund_user_from_merchant - “amount” received from “merchant name” Ref: Refund
+•   make_merchant_sale - “amount” paid to “merchant name” Ref: “user reference input”
+
+
+•   make_mobile_tranfer- “amount” paid to “ user formal name” Ref: “user reference input”
+•   make_user_transfer - “amount” paid to “ user formal name” Ref: “user reference input”

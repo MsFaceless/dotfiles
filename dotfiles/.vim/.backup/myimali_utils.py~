@@ -1,0 +1,184 @@
+#!/bin/python
+
+import requests
+import logging
+from dotenv import dotenv_values
+
+env_vars = dotenv_values()
+# BASE_URL = env_vars.get('MYIMALI_BASE_URL', None)
+BASE_URL = env_vars.get('CALABASH_BASE_URL', None)
+HEADERS = env_vars.get('HEADERS', None)
+HEADERS = {'DeToken': HEADERS}
+
+log = logging.getLogger(__name__)
+
+def refund_user_from_merchant(data=None):
+    if not data: return None
+    r = requests.post(f"{BASE_URL}/refund_user_from_merchant", data=data, headers=HEADERS)
+    try:
+        options = r.json()
+    except Exception as e:
+        log.warning(e)
+        options = {}
+    return options
+
+def get_transaction_refund_options(transaction_id=None):
+    if not transaction_id: return None
+    params = {'transaction_id' : transaction_id}
+    r = requests.post(f"{BASE_URL}/get_transaction_refund_options", params=params, headers=HEADERS)
+    try:
+        options = r.json()
+    except Exception as e:
+        log.warning(e)
+        options = None
+    return options
+
+def get_balance_by_username(username=None):
+    if not username: return False
+    target = f"{BASE_URL}/get_balance"
+    r = None
+    kwargs = {'username': username}
+    try:
+        r = requests.post(target, params=kwargs, headers=HEADERS)
+    except Exception as e:
+        log.warning(e)
+        return False
+    log.warning(f'get_balance_by_username, {r.text}')
+    try:
+        result = r.json()
+    except Exception as e:
+        log.warning(e)
+        return False
+    if result.get('success', False):
+        data = result.get('data', [])
+        if len(data) == 1:
+            return data[0].get('balance', 0)
+    return False
+
+def get_transaction_history(username=None):
+    log.warning(username)
+    transaction_history = None
+    if not username: return False
+    try:
+        r = requests.post(f"{BASE_URL}/get_transaction_history", params={'username': username}, headers=HEADERS)
+    except Exception as e:
+        log.warning(e)
+        return {}
+    log.warning(f'get_transaction_history, {r.text[:80]}')
+    try: transaction_history = r.json()
+    except: transaction_history = {}
+    return transaction_history
+
+def make_user_transfer(from_user=None, to_user=None, amount=None):
+    if not from_user or not to_user or not amount: return False
+    #NOTE THE AMOUNT POSTED IS ALWAYS IN CENTS
+    params = {
+            "from_user_name": from_user,
+            "to_user_name": to_user,
+            "amount": amount,
+            }
+    r = requests.post(f"{BASE_URL}/make_user_transfer", params=params, headers=HEADERS)
+    try: success_status = r.json()
+    except: success_status = False
+    return success_status
+
+def get_balance(user_name=None):
+    user_balance = None
+    if not user_name: return False
+    r = requests.post(f"{BASE_URL}/get_balance", params={'username': user_name}, headers=HEADERS)
+    try: user_balance = r.json()
+    except: user_balance = None
+    return user_balance
+
+def register_user(user_dict=None):
+    r = requests.post(f"{BASE_URL}/register_user", json=user_dict, headers=HEADERS)
+    try: user = r.json()
+    except: user = None
+    return user
+
+def register_merchant(merchant_dict=None):
+    r = requests.post(f"{BASE_URL}/register_merchant", json=merchant_dict, headers=HEADERS)
+    try: merchant = r.json()
+    except: merchant = None
+    return merchant
+
+def register_salesrole(salesrole_dict=None):
+    r = requests.post(f"{BASE_URL}/register_salesrole", data=salesrole_dict, headers=HEADERS)
+    log.warning(BASE_URL)
+    try: salesrole = r.json()
+    except Exception as e:
+        log.warning(e)
+        salesrole = {}
+    return salesrole
+
+def get_merchant_salesroles(username=None):
+    if not username: return False
+    r = requests.post(f"{BASE_URL}/get_merchant_salesroles", params={'merchant_username': username}, headers=HEADERS)
+    log.warning(r.json())
+    try: salesroles = r.json()
+    except: salesroles = None
+    return salesroles
+
+def add_beneficiary(beneficiary_dict=None):
+    r = requests.post(f"{BASE_URL}/add_beneficiary", params=beneficiary_dict, headers=HEADERS)
+    log.warning(r.text)
+    try: beneficiary = r.json()
+    except Exception as e:
+        log.warning(e)
+        beneficiary = None
+    return beneficiary
+
+def get_beneficiary(username=None):
+    r = requests.post(f"{BASE_URL}/get_user_beneficiaries", params={'username': username}, headers=HEADERS)
+    try: beneficiary = r.json()
+    except: beneficiary = None
+    return beneficiary
+
+def get_user_profile(username=None):
+    r = requests.post(f"{BASE_URL}/get_user_profile", params={'username': username}, headers=HEADERS)
+    try: user_profile = r.json()
+    except: user_profile = None
+    return user_profile
+
+if __name__ == "__main__":
+    """
+    #john20_transaction_history = get_transaction_history(user_name='john20')
+    #log.warning(john20_transaction_history)
+    john20_balance = get_balance(user_name='john20')
+    calabash_balance = get_balance(user_name='calabash')
+    log.warning("Printing John20 balance: ")
+    log.warning(john20_balance)
+​
+    log.warning("Printing Calabash balance: ")
+    log.warning(calabash_balance)
+    money_to_calabash = make_user_transfer(from_user='john20', to_user='calabash', amount='1')
+    log.warning("Printing Transfer Status")
+    log.warning(money_to_calabash)
+​
+    john20_balance = get_balance(user_name='john20')
+    calabash_balance = get_balance(user_name='calabash')
+    log.warning("Printing John20 balance: ")
+    log.warning(john20_balance)
+​
+    log.warning("Printing Calabash balance: ")
+    log.warning(calabash_balance)
+​
+    """
+    merchant_kwargs = {
+        'user_name' : 'pieter',
+        'password' : 'D3v3l0p3r',
+        'email' : 'camillhxxbuys@dotxmltech.com',
+        'mobile_number' : '0737034763',
+        'first_name' : 'Camilla',
+        'surname' : 'Buys',
+    }
+    log.warning(register_merchant(merchant_kwargs))
+    salesrole_kwargs = {
+        'merchant_user_name': 'pieter',
+        'user_name' : 'fsafjklcamelo',
+        'password' : 'D3v3l0p3r',
+        'email' : 'camillhxxbuys@dotxmltech.com',
+        'mobile' : '0737034763',
+        'first_name' : 'Camilla',
+        'surname' : 'Buys',
+    }

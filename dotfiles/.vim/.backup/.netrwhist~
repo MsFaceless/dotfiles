@@ -1,0 +1,5 @@
+let g:netrw_dirhistmax  =10
+let g:netrw_dirhistcnt =3
+let g:netrw_dirhist_3='/home/camilla/enviros/rocket22env/rocket2_2/rocket/lib'
+let g:netrw_dirhist_2='/home/camilla/enviros/olderenvs/rocket_app/rocket_app/public/javascript'
+let g:netrw_dirhist_1='/home/camilla/.vim'

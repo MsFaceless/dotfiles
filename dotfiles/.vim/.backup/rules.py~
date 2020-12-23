@@ -1,0 +1,58 @@
+# -*- coding: utf-8 -*-
+"""Rules controller"""
+
+import requests
+from dotenv import dotenv_values
+
+from tg import request, expose, require, predicates
+from tg.i18n import ugettext as _, lazy_ugettext as l_
+
+from calabash_management.lib.base import BaseController
+
+env_vars = dotenv_values()
+GATEWAY_URL = env_vars.get('GATEWAY_URL', None)
+
+class RulesController(BaseController):
+
+    @require(predicates.has_permission('manage', msg=l_('Only for managers')))
+    @expose('calabash_management.templates.generic')
+    def index(self, *args, **kwargs):
+        html = ""
+        javascript = ""
+        return dict(title='Rules', html=html, javascript=javascript)
+
+    @require(predicates.has_permission('manage', msg=l_('Only for managers')))
+    @expose('calabash_management.templates.generic')
+    def catalogs(self, *args, **kwargs):
+        table = self.get_list_html_from_gateway(**{'table' : 'WalletCatalog'})
+        html = f"""
+        {table}
+        """
+        javascript = ""
+        return dict(title='Catalogs', html=html, javascript=javascript)
+
+    @require(predicates.has_permission('manage', msg=l_('Only for managers')))
+    @expose('calabash_management.templates.generic')
+    def transactions(self, *args, **kwargs):
+        html = self.get_list_html_from_gateway(**{'table' : 'TransactionType'})
+        javascript = ""
+        return dict(title='Transactions', html=html, javascript=javascript)
+
+    @require(predicates.has_permission('manage', msg=l_('Only for managers')))
+    @expose('calabash_management.templates.generic')
+    def allocations(self, *args, **kwargs):
+        html = self.get_list_html_from_gateway(**{'table' : 'Allocation'})
+        javascript = ""
+        return dict(title='Allocations', html=html, javascript=javascript)
+
+    def get_list_html_from_gateway(self, *args, **kwargs):
+        try:
+            r = requests.get(f"{GATEWAY_URL}/mgmt/get_list_html", params=kwargs)
+        except Exception as e:
+            print(e)
+            return ''
+        try:
+            return r.json().get('html', '')
+        except Exception as e:
+            print(e)
+            return ''

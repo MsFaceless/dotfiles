@@ -1,0 +1,682 @@
+# -*- coding: utf-8 -*-
+"""Beneficiary module"""
+
+import logging
+
+from tg import predicates, require, expose, request, redirect
+from tg.i18n import ugettext as _
+from tg.i18n import lazy_ugettext as l_
+
+from rocket.model import *
+
+from rocket.lib.tg_utils import *
+from rocket.lib.base import BaseController
+from rocket.lib.type_utils import TypeDictionary
+
+import rocket.lib.gateway_utils as GATEWAY
+
+from rocket.controllers.common import CommonController
+from rocket.controllers.product import ProductController
+
+from sqlalchemy import func, desc, asc, or_
+
+LOGGER = logging.getLogger(__name__)
+
+TYPEUTIL = TypeDictionary()
+COMMON = CommonController()
+DBQUERY_LIMIT = 15
+
+SEARCHKEY_POLICY_BENEFIT_BENEFICIARY_ENTITY = 'PolicyBenefitBeneficiaryEntity_SearchKeyword'
+
+class BeneficiaryController(BaseController):
+
+    @expose()
+    def _default(self, *args, **kwargs):
+        return 'This page is not available.'
+
+    ###############################################################################
+    # Policy Benefit Beneficiary - List
+    ###############################################################################
+
+    @expose()
+    def get_policy_benefit_beneficiary_table(self, *args, **kwargs):
+        policy_benefit_id = kwargs.get('policy_benefit_id', None)
+        if not policy_benefit_id:
+            log.warning('get_policy_benefit_beneficiary_table: No policy_benefit_id in kwargs')
+            return ''
+
+        dbase_query = PolicyBenefitBeneficiary.by_attr_all('policy_benefit_id', policy_benefit_id)
+
+        outputlist = []
+        for item in dbase_query:
+            # Get Beneficiary Entity
+            entity_id = item.entity_id
+            if not entity_id:
+                log.warning(f"get_policy_benefit_beneficiary_table: Missing entity_id for Beneficiary {item.id} - skipping")
+                continue
+            entity = Entity.by_id(entity_id)
+            if not entity:
+                log.warning(f"get_policy_benefit_beneficiary_table: No entity by id {entity_id} - skipping")
+                continue
+            entity_type_id = entity.entity_type_id
+
+            name = ''
+            identity_number = ''
+
+            # Get Organisation object
+            if entity_type_id == TYPEUTIL.get_id_of_name('entity_type', 'organisation'):
+                organisation = EntityOrganisation.by_attr_first('entity_id', entity_id)
+                if not organisation:
+                    log.warning(f"get_policy_benefit_beneficiary_table: No organisation by id {entity_id}")
+                    continue
+                name = organisation.name
+                identity_number = organisation.registration_number
+
+            # Get Person Object
+            elif entity_type_id == TYPEUTIL.get_id_of_name('entity_type', 'person'):
+                entity_person = EntityPerson.by_attr_first('entity_id', entity_id)
+                if not entity_person:
+                    log.warning(f"get_policy_benefit_beneficiary_table: No Entity Person by entity_id {entity_id} - skipping")
+                    continue
+
+                # Get Person Details
+                first_name = entity_person.name
+                surname = entity_person.surname
+                identity_number = ''
+                name = f"{first_name} {surname}"
+
+            # Get Relationship Type
+            relationship_type_id = item.relationship_type_id
+            if relationship_type_id:
+                relationship_type = TYPEUTIL.get_pretty_name('benefit_insured_life_relationship_type', relationship_type_id)
+            else:
+                relationship_type = ''
+
+            # Get Notification Bool
+            notify_bool = item.notify
+
+            # Get share of sum_insured TODO need to change to sum insured in SQL tables
+            share_sum_insured = item.share_of_sum_assured_percentage
+
+            outputlist.append({
+                'identity_number': f"<div class='edit benefit_beneficiary_edit' policy_benefit_beneficiary_id='{item.id}'>{identity_number}</div>",
+                'name': name,
+                'relationship': relationship_type,
+                'share_sum_insured': share_sum_insured,
+                'deactivate': f"<div class='policy_benefit_beneficiary_deactivate' policy_benefit_beneficiary_id='{item.id}'>Deactivate</div>"
+            })
+        dbcolumnlist = [
+            'identity_number',
+            'name',
+            'relationship',
+            'share_sum_insured',
+            'deactivate',
+        ]
+        theadlist = [
+            'ID/Registration Number',
+            'Name',
+            'Relationship',
+            'Share of Sum Insured',
+            '',
+        ]
+        tdclasslist = [
+            'action_link',
+            '',
+            '',
+            '',
+            'action_link text-right',
+        ]
+        htmltable = build_html_table(outputlist, dbcolumnlist, theadlist, "policy_benefit_beneficiary_table",
+                                     tdclasslist)
+        return htmltable
+
+    @expose()
+    def get_policy_benefit_beneficiary_html(self, *args, **kwargs):
+        entity_person_id = kwargs.get('family_entity_person_id', '')
+        policy_benefit_id = kwargs.get('policy_benefit_id', None)
+        entity_id = ''
+        id_number = ''
+        if entity_person_id:
+            entity_person = EntityPerson.by_id(entity_person_id)
+            if not entity_person:
+                print(f"No EntityPerson by id {entity_person_id} - get_policy_benefit_beneficiary_html")
+            else:
+                entity_id = entity_person.entity_id
+                identity_list = EntityPersonIdentity.by_attr_all('entity_person_id', entity_person_id)
+                if identity_list:
+                    id_number = identity_list[0].get('number', '')
+        htmltable = self.get_policy_benefit_beneficiary_table(**kwargs)
+        html = f"""
+                    <div class="row">
+                        <div class="col-md-12">
+                            <div class="card">
+                                <div class="card-header">
+                                    <div class="row d-flex">
+                                        <div class="col-md-6">
+                                             <h4 class="card-title">{_('Policy Benefit Beneficiaries')}</h4>
+                                        </div>
+                                        <div class="col-md-6 text-right">
+                                            <button id="create_new_policy_benefit_beneficiary" id_number='{id_number}' entity_id='{entity_id}' class="btn btn-primary" policy_benefit_id='{policy_benefit_id}' ml-auto">Add New Benefit Beneficiary</button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="card-body">
+                                    <div id='div_policy_benefit_beneficiary_table' class="table-responsive">
+                                        {htmltable}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                """
+        return html
+
+    @expose()
+    def get_javascript_policy_benefit_beneficiary_onload(self, *args, **kwargs):
+        javascript = """
+                $('#create_new_policy_benefit_beneficiary').click(function(){
+                    var policy_benefit_id = $(this).attr('policy_benefit_id');
+                    var entity_id = $(this).attr('entity_id');
+                    var kwargs = {
+                        'entity_id': entity_id,
+                        'policy_benefit_id': policy_benefit_id,
+                    }
+                    $('#dialogdiv').load('/policy_benefit_beneficiary/get_new_beneficiary_search_modal?', kwargs, function(data) {
+                        return false;
+                    });
+                    return false;
+                });
+                var id_number = $('#create_new_policy_benefit_beneficiary').attr('id_number');
+                if (id_number) {
+                    var policy_benefit_id = $('#create_new_policy_benefit_beneficiary').attr('policy_benefit_id');
+                    var entity_id = $(create_new_policy_benefit_beneficiary).attr('entity_id');
+                    var kwargs = {
+                        'policy_benefit_id': policy_benefit_id,
+                        'searchphrase': id_number,
+                        'entity_id': entity_id,
+                    }
+                    $('#dialogdiv').load('/policy_benefit_beneficiary/get_new_beneficiary_table_modal?', kwargs, function(data) {
+                        return false;
+                    });
+                }
+                """
+        return javascript
+
+    ###############################################################################
+    # Policy Benefit Beneficiary - New
+    ###############################################################################
+
+    @expose()
+    def get_new_beneficiary_search_modal(self, *args, **kwargs):
+        searchphrase = COMMON.get_searchphrase(**kwargs)
+        policy_benefit_id = kwargs.get('policy_benefit_id', None)
+        if not policy_benefit_id:
+            print('No policy_benefit_id from kwargs - get_new_beneficiary_modal')
+            return ''
+
+        html = f"""
+        <div class="modal fade" id="dialog_new_policy_benefit_beneficiary_modal" tabindex="-1" role="dialog" aria-labelledby="mynew_policy_benefit_beneficiaryLabel" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <div class="col-md-12">
+                            <h4 class="card-title">Add Beneficiary</h4>
+                        </div>
+                    </div>
+                    <div class="modal-body">
+                        <form id='form_new_policy_benefit_beneficiary'>
+                            <div class="form-group row">
+                                <label class="col-4 col-form-label" for="active">Organisation?</label>
+                                <div class="col-8">
+                                    <div class="form-check">
+                                        <label class="form-check-label">
+                                            <input class="form-check-input" type="checkbox" name="is_org" id="is_org"/>
+                                            <span class="form-check-sign"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="row d-flex align-items-center">
+                                <div class="col-md-4">
+                                    <input type="text" class="form-control search" name="searchphrase" id='searchphrase' value='{searchphrase}' placeholder="{_('Search by ID/Registration Number')}">
+                                </div>
+                                <div class="col-md-4">
+                                    <button type='button' class="btn btn-primary" policy_benefit_id='{policy_benefit_id}' id='btn_search'>{_('Search')}</button>
+                                    <button type='button' class="btn btn-primary" policy_benefit_id='{policy_benefit_id}' id='btn_reset'>{_('Reset')}</button>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-outline-primary new_policy_benefit_beneficiary_back">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        javascript = """
+            <script src=''>
+                setFormValidation('#form_new_policy_benefit_beneficiary');
+                $('.new_policy_benefit_beneficiary_back').click(function(){
+                    $('#dialog_new_policy_benefit_beneficiary_modal').modal('hide');
+                });
+
+                $('#btn_search').click(function(){
+                    var searchphrase = $('#searchphrase').val();
+                    var is_org = null;
+                    if ($('#is_org').is(':checked')) {
+                        var is_org = $('#is_org').val()
+                    }
+                    console.log(is_org);
+                    var kwargs = {
+                        'searchphrase': searchphrase,
+                        'policy_benefit_id': $(this).attr('policy_benefit_id'),
+                        'is_org': is_org,
+                    }
+                    $('#dialog_new_policy_benefit_beneficiary_modal').modal('hide');
+                    $('#dialog_new_policy_benefit_beneficiary_modal').on('hidden.bs.modal', function (e) {
+                        $('#dialogdiv').load('/policy_benefit_beneficiary/get_new_beneficiary_table_modal', kwargs);
+                    });
+                })
+                $('#btn_reset').click(function(){
+                    $('#searchphrase').val('').focus();
+                });
+                $('#dialog_new_policy_benefit_beneficiary_modal').modal();
+            </script>
+            """
+        return html + javascript
+
+    def get_person_information(self, *args, **kwargs):
+        kwargs['searchkey'] = SEARCHKEY_POLICY_BENEFIT_BENEFICIARY_ENTITY
+        searchphrase = COMMON.get_searchphrase(**kwargs).lower()
+        if searchphrase:
+
+            identity = DBSession.query(EntityPersonIdentity). \
+                    filter(EntityPersonIdentity.value == searchphrase). \
+                    first()
+            if not identity:
+                return {'success': False}
+
+            entity_person = EntityPerson.by_id(identity.entity_person_id)
+            if not entity_person:
+                return {'success': False}
+
+            name = entity_person.firstname
+            surname = entity_person.surname
+            entity_person_id = entity_person.id
+
+            if not name or not surname:
+                return {'success': False}
+            else:
+                return {'success': True, 'name': name, 'surname': surname, 'entity_person_id': entity_person_id}
+        return {'success': False}
+
+    def get_tuple_of_current_beneficiaries_ids(self, *args, **kwargs):
+        policy_benefit_id = kwargs.get('policy_benefit_id', None)
+        if not policy_benefit_id:
+            log.warning('get_tuple_of_current_beneficiaries_ids: No policy_benefit_id in kwargs')
+            return ()
+
+        dbase_query = DBSession.query(PolicyBenefitBeneficiary.entity_id). \
+            filter(PolicyBenefitBeneficiary.policy_benefit_id == policy_benefit_id). \
+            filter(PolicyBenefitBeneficiary.active == True). \
+            distinct()
+        dbase_query = list(zip(*dbase_query))
+        dbase_query = dbase_query[0] if dbase_query else ()
+        return dbase_query
+
+    def get_new_beneficiary_person_table(self, *args, **kwargs):
+        searchphrase = kwargs.get('searchphrase', None)
+        if not searchphrase:
+            log.warning("get_new_beneficiary_person_table: No searchphrase from kwargs")
+            return ''
+        person_name = kwargs.get('person_name', None)
+        if not person_name:
+            log.warning("get_new_beneficiary_person_table: No person_name from kwargs")
+            return ''
+        person_surname = kwargs.get('person_surname', None)
+        if not person_surname:
+            log.warning("get_new_beneficiary_person_table: No person_surname from kwargs")
+            return ''
+        outputlist = [{
+            'id_number': searchphrase,
+            'name': person_name,
+            'surname': person_surname
+        }]
+        dbcolumnlist = [
+            'id_number',
+            'name',
+            'surname',
+        ]
+        theadlist = [
+            'ID Number',
+            'First Name',
+            'Surname'
+        ]
+        tdclasslist = [
+            '',
+            '',
+            ''
+        ]
+        htmltbl = build_html_table(outputlist, dbcolumnlist, theadlist, "person_table_modal", tdclasslist)
+        return htmltbl
+
+    def get_new_beneficiary_organisation_table(self, *args, **kwargs):
+        organisation_name = kwargs.get('organisation_name', None)
+        if not organisation_name:
+            log.warning("get_new_beneficiary_organisation_table: No organisation_name from kwargs")
+            return ''
+        registration_number = kwargs.get('registration_number', None)
+        if not registration_number:
+            log.warning("get_new_beneficiary_organisation_table: No registration_number from kwargs")
+            return ''
+        tax_number = kwargs.get('registration_number', None)
+        if not tax_number:
+            log.warning("get_new_beneficiary_organisation_table: No tax_number from kwargs")
+            return ''
+        outputlist = [{
+            'organisation_name': organisation_name,
+            'registration_number': registration_number,
+            'tax_number': tax_number
+        }]
+        dbcolumnlist = [
+            'organisation_name',
+            'registration_number',
+            'tax_number',
+        ]
+        theadlist = [
+            'Organisation Name',
+            'Registration Number',
+            'Tax Number'
+        ]
+        tdclasslist = [
+            '',
+            '',
+            ''
+        ]
+        htmltbl = build_html_table(outputlist, dbcolumnlist, theadlist, "organisation_table_modal", tdclasslist)
+        return htmltbl
+
+    def get_organisation_information(self, *args, **kwargs):
+        kwargs['searchkey'] = SEARCHKEY_POLICY_BENEFIT_BENEFICIARY_ENTITY
+        searchphrase = COMMON.get_searchphrase(**kwargs).lower()
+        dbase_query = DBSession.query(EntityOrganisation). \
+            filter(EntityOrganisation.active == True). \
+            filter(EntityOrganisation.registration_number.like(searchphrase)). \
+            first()
+        if not dbase_query:
+            return {'success': False}
+        else:
+            organisation_id = dbase_query.id
+            entity_id = dbase_query.entity_id
+            organisation_name = dbase_query.name
+            registration_number = dbase_query.registration_number
+            tax_number = dbase_query.tax_number
+            return {'success': True,
+                    'organisation_id': organisation_id,
+                    'entity_id': entity_id,
+                    'organisation_name': organisation_name,
+                    'registration_number': registration_number,
+                    'tax_number': tax_number,}
+
+    @expose()
+    def get_new_beneficiary_table_modal(self, *args, **kwargs):  # TODO needs major refactor
+        print(kwargs)
+        beneficiary_information = False
+        kwargs['searchkey'] = SEARCHKEY_POLICY_BENEFIT_BENEFICIARY_ENTITY
+        searchphrase = COMMON.get_searchphrase(**kwargs).lower()
+        is_org = kwargs.get('is_org', None)
+        policy_benefit_id = kwargs.get('policy_benefit_id', None)
+        if not policy_benefit_id:
+            log.warning("get_new_beneficiary_table_modal: no policy_benefit_id")
+            return ''
+        entity_id = kwargs.get('entity_id', None)
+        tuple_of_current_beneficiaries = self.get_tuple_of_current_beneficiaries_ids()
+        print(tuple_of_current_beneficiaries)
+        if not is_org:
+            person_name = ''
+            person_surname = ''
+            person_information = self.get_person_information(**kwargs)
+            beneficiary_full_name = ''
+            if person_information.get('success', False):
+                beneficiary_information = True
+                person_name = person_information['name']
+                person_surname = person_information['surname']
+                beneficiary_full_name = f"{person_name} {person_surname}"
+            if entity_id in tuple_of_current_beneficiaries:
+                htmltbl = f"""
+                    <p>{beneficiary_full_name} is already a beneficiary</p>
+                """
+                search_button = ''
+            else:
+                htmltbl = self.get_new_beneficiary_person_table(**{'searchphrase': searchphrase,
+                                                                   'person_name': person_name,
+                                                                   'person_surname': person_surname})
+                search_button = f"""<button type="button" class="btn btn-primary" entity_id="{entity_id}"
+                    policy_benefit_id="{policy_benefit_id}" beneficiary_full_name="{beneficiary_full_name}"
+                    id="btn_continue">{_('Continue')}</button>
+                """
+        else:
+            organisation_object = self.get_organisation_information(**kwargs)
+            if organisation_object.get('success', False):
+                beneficiary_information = True
+                organisation_id = organisation_object.get('organisation_id', '')
+                entity_id = organisation_object.get('entity_id', '')
+                organisation_name = organisation_object.get('organisation_name', '')
+                registration_number = organisation_object.get('registration_number', '')
+                tax_number = organisation_object.get('tax_number', '')
+                beneficiary_full_name = organisation_name
+                if entity_id in tuple_of_current_beneficiaries:
+                    htmltbl = f"""
+                        <p>{beneficiary_full_name} is already a beneficiary</p>
+                    """
+                    search_button = ''
+                else:
+                    search_button = f"""<button type='button' class="btn btn-primary" entity_id='{entity_id}'
+                        policy_benefit_id='{policy_benefit_id}' beneficiary_full_name='{beneficiary_full_name}'
+                        id='btn_continue'>{_('Continue')}</button>
+                    """
+                    htmltbl = self.get_new_beneficiary_organisation_table(**{'organisation_name': organisation_name,
+                                                                    'registration_number': registration_number,
+                                                                    'tax_number': tax_number})
+            else:
+                search_button = ''
+                htmltbl = ''
+        html = f"""
+        <div class="modal fade" id="dialog_new_beneficiary_table_modal" tabindex="-1" role="dialog" aria-labelledby="mynew_beneficiary_tableLabel" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <div class="col-md-12">
+                            <h4 class="card-title">Add Beneficiary</h4>
+                        </div>
+                    </div>
+                    <div class="modal-body">
+                        <form id='form_new_policy_benefit_beneficiary'>
+                            <div class="row d-flex align-items-center">
+                                <div>
+                                    {htmltbl}
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-outline-primary new_beneficiary_table_back" data-dismiss="modal">Cancel</button>
+                        <button type='button' class="btn btn-outline-primary" policy_benefit_id='{policy_benefit_id}' id='btn_reset'>{_('Reset')}</button>
+                        {search_button}
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        if not is_org and not beneficiary_information:
+            javascript = """
+            <script src=''>
+                var came_from = '/policy_benefit_beneficiary/index'
+                $.redirect('/members/new_member', {'redirect_url': came_from});
+            </script>"""
+        elif is_org and not beneficiary_information:
+            javascript = """
+            <script src=''>
+                var came_from = '/policy_benefit_beneficiary/index'
+                $.redirect('/entity/new_entity', {'redirect_url': came_from});
+            </script>"""
+        else:
+            javascript = """
+            <script src=''>
+                setFormValidation('#form_new_policy_benefit_beneficiary');
+                $('.new_beneficiary_table_back').click(function(){
+                    $('#dialog_new_beneficiary_table_modal').modal('hide');
+                });
+                $('#btn_reset').click(function(){
+                    var kwargs = {
+                        'reset': 'true',
+                        'policy_benefit_id': $(this).attr('policy_benefit_id')
+                    }
+                    $('#dialog_new_beneficiary_table_modal').modal('hide');
+                    $('#dialog_new_beneficiary_table_modal').on('hidden.bs.modal', function (e) {
+                        $('#dialogdiv').load('/policy_benefit_beneficiary/get_new_beneficiary_search_modal', kwargs);
+                    });
+                });
+                $('#btn_continue').click(function(){
+                    var kwargs = {
+                        'policy_benefit_id': $(this).attr('policy_benefit_id'),
+                        'entity_id': $(this).attr('entity_id'),
+                        'beneficiary_full_name' : $(this).attr('beneficiary_full_name'),
+                    }
+                    $('#dialog_new_beneficiary_table_modal').modal('hide');
+                    $('#dialog_new_beneficiary_table_modal').on('hidden.bs.modal', function (e) {
+                        $('#dialogdiv').load('/policy_benefit_beneficiary/new_beneficiary_particulars_modal', kwargs);
+                    });
+                });
+                $('#dialog_new_beneficiary_table_modal').modal();
+            </script>
+            """
+        return html + javascript
+
+    @expose()
+    def new_beneficiary_particulars_modal(self, *args, **kwargs):
+        policy_benefit_id = kwargs.get('policy_benefit_id', None)
+        if not policy_benefit_id:
+            log.warning("new_beneficiary_particulars_modal: No policy_benefit_id")
+        entity_id = kwargs.get('entity_id', None)
+        if not entity_id:
+            log.warning("new_beneficiary_particulars_modal: No entity_id")
+        beneficiary_full_name = kwargs.get('beneficiary_full_name', None)
+        if not beneficiary_full_name:
+            log.warning("new_beneficiary_particulars_modal: No beneficiary_full_name")
+        selectbox_beneficiary_relationship_type = self.get_selectbox_beneficiary_relationship_type()
+        html = f"""
+        <div class="modal fade" id="dialog_new_beneficiary_particulars_modal" tabindex="-1" role="dialog" aria-labelledby="mynew_beneficiary_particularsLabel" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <div class="col-md-12">
+                            <h4 class="card-title">Add Beneficiary: {beneficiary_full_name}</h4>
+                        </div>
+                    </div>
+                    <div class="modal-body">
+                        <form id='form_new_beneficiary_particulars'>
+                            <div class="col-md-12">
+                                <div class="form-group row">
+                                    <label class="col-md-4 col-form-label" required>{_('Relationship Type')}</label>
+                                    <div class="col-md-8">
+                                        {selectbox_beneficiary_relationship_type}
+                                    </div>
+                                </div>
+                                <div class="form-group row">
+                                    <label class="col-md-4 col-form-label" required>{_('Share of Sum Insured Percentage')}</label>
+                                    <div class="col-md-8">
+                                        <input id="share_of_sum_insured" type="number" name="share_of_sum_insured" class="form-control" required='true'>
+                                    </div>
+                                </div>
+                                <div class="form-group row">
+                                    <label class="col-md-4 col-form-label" required>{_('Notify')}</label>
+                                    <div class="col-md-8">
+                                        <div class="form-check">
+                                            <label class="form-check-label">
+                                                <input class="form-check-input" type="checkbox" name="notify" id="notify" 'checked'/>
+                                                <span class="form-check-sign"></span>
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-outline-primary new_beneficiary_particulars_back" data-dismiss="modal">Cancel</button>
+                        <button type='button' class="btn btn-primary" entity_id='{entity_id}' policy_benefit_id='{policy_benefit_id}' id='btn_save'>{_('Save')}</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        javascript = """
+        <script src=''>
+            setFormValidation('#dialog_new_beneficiary_particulars_modal');
+            $('.new_beneficiary_particulars_back').click(function(){
+                $('#dialog_new_beneficiary_particulars_modal').modal('hide');
+            });
+            $("#btn_save").click(function(){
+                var valid = FormIsValid("#form_new_beneficiary_particulars");
+                if(valid){
+                    var formserial = $('#form_new_beneficiary_particulars').serialize();
+                    var entity_id = $(this).attr('entity_id')
+                    formserial += '&entity_id='+entity_id;
+                    $.post('/policy_benefit_beneficiary/save_new_beneficiary?', formserial, function(data){
+                        $.redirect('/policy_benefit_beneficiary/index');
+                            return false;
+                    });
+                };
+                return false;
+            });
+            $('#dialog_new_beneficiary_particulars_modal').modal();
+        </script>
+        """
+        return html + javascript
+
+    def get_selectbox_beneficiary_relationship_type(self, *args, **kwargs):
+        kwargs['id'] = 'relationship_type_id'
+        kwargs['outputdict'] = TYPEUTIL.get_dict_of_types("benefit_insured_life_relationship_type")
+        return create_selectbox_html(**kwargs)
+
+    @expose()
+    def save_new_beneficiary(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+        entity_id = kwargs.get('entity_id', None)
+        if not entity_id:
+            log.warning("save_new_beneficiary: No entity_id from kwargs")
+            return json.dumps({'success': False, 'message': 'Please select an Entity before saving', 'status': 'danger'})
+
+        policy_benefit_id = kwargs.get('policy_benefit_id', None)
+        if not policy_benefit_id:
+            log.warning('save_new_beneficiary: No policy_benefit_id in kwargs')
+            return json.dumps({'success': False, 'message': 'Please select a benefit to save the beneficiary against', 'status': 'danger'})
+
+        share_of_sum_insured = kwargs.get('share_of_sum_insured', None)
+        if not share_of_sum_insured:
+            log.warning("save_new_beneficiary: No share_of_sum_insured in formserial")
+            return json.dumps({'success': False, 'message': 'Share of sum assured required', 'status': 'danger'})
+
+        notify = kwargs.get('notify', None)
+        if not notify:
+            notify = False
+        else:
+            notify = True
+        relationship_type_id = kwargs.get('relationship_type_id', None)
+        if not relationship_type_id:
+            log.warning("save_new_beneficiary: No relationship_type_id form kwargs")
+            return json.dumps({'success': False, 'message': 'Please select a relationship type', 'status': 'danger'})
+
+        beneficiary = PolicyBenefitBeneficiary()
+        beneficiary.policy_benefit_id = policy_benefit_id
+        beneficiary.added_by = usernow.id
+        beneficiary.entity_id = entity_id
+        beneficiary.share_of_sum_assured_percentage = share_of_sum_insured
+        beneficiary.notify = notify
+        beneficiary.relationship_type_id = relationship_type_id
+
+        DBSession.add(beneficiary)
+        DBSession.flush()
+        return json.dumps({'success': True, 'message': 'Beneficiary has been added', 'status': 'success'})

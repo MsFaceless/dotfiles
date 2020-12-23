@@ -1,0 +1,1550 @@
+# -*- coding: utf-8 -*-
+"""Wallet Controller"""
+
+import logging
+from tg import expose, request
+
+from calabash import model
+from calabash.model import *
+
+from calabash.lib.html_utils import *
+from calabash.lib.base import BaseController
+from calabash.lib.type_utils import TypeDictionary
+from calabash.lib.tg_decorators import safe_headers, time_it
+from calabash.lib.myimali_api_gateway import MyImaliApiGateway
+from calabash.lib.email_creator import CalabashCampusEmailCreator
+
+from calabash.controllers.registration import RegistrationController
+
+import calabash.lib.vault_utils as VAULT
+import calabash.lib.nchan_utils as NCHAN
+
+MYIMALI = MyImaliApiGateway()
+REGISTRATION = RegistrationController()
+
+TYPEDICT = TypeDictionary()
+ACCEPTED = TYPEDICT.get_id_of_name('notification_type', 'accepted')
+REJECTED = TYPEDICT.get_id_of_name('notification_type', 'rejected')
+MAKE_SALE = TYPEDICT.get_id_of_name('notification_type', 'make_sale')
+FEATURED_AD = TYPEDICT.get_id_of_name('notification_type', 'featured_ad')
+PENDING_SALE = TYPEDICT.get_id_of_name('notification_type', 'pending_sale')
+GROUP_INVITE = TYPEDICT.get_id_of_name('notification_type', 'group_invite')
+
+LOGGER = logging.getLogger(__name__)
+
+class NotificationController(BaseController):
+
+    @safe_headers
+    @expose('json')
+    def get_banking_config(self, *args, **kwargs):
+        result = MYIMALI.get_banking_config(**kwargs)
+        success = result.get('success', False)
+        if not success:
+            return error_response('Could not retrieve banking config.')
+        return result
+
+    @safe_headers
+    @expose('json')
+    def add_banking_details(self, *args, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            return error_response('No username supplied.')
+
+        account = UsernameAccountLink.by_attr_first('username', username)
+        if account:
+            return success_response(str(account.account_id))
+
+        result = MYIMALI.add_banking_details(**kwargs)
+        success = result.get('success', False)
+        if not success:
+            error = result.get('error', '')
+            if not error:
+                error = result.get('message', '')
+            return error_response(error)
+
+        data = result.get('data', {})
+        account_id = data.get('vAccountId', None)
+
+        account = UsernameAccountLink()
+        account.username = username
+        account.account_id = account_id
+        DBSession.add(account)
+        DBSession.flush()
+        return success_response('True')
+
+    @safe_headers
+    @expose('json')
+    def delete_banking_details(self, *args, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            return error_response('No username supplied.')
+
+        account_id = kwargs.get('account_id', None)
+        if not account_id:
+            return error_response('No account_id supplied.')
+
+        result = MYIMALI.delete_banking_details(**kwargs)
+        success = result.get('success', False)
+        if not success:
+            error = result.get('error', '')
+            if not error:
+                error = result.get('message', '')
+            return error_response(error)
+
+        exists = UsernameAccountLink.by_attr_first('account_id', account_id)
+        if exists:
+            exists.active = False
+            DBSession.flush()
+
+        return success_response('True')
+
+    @safe_headers
+    @expose('json')
+    def payout_to_account(self, *args, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            return error_response('No username supplied.')
+
+        account = UsernameAccountLink.by_attr_first('username', username)
+        if not account:
+            return error_response('No account_id for username.')
+
+        kwargs['account_id'] = account.account_id
+        result = MYIMALI.payout_to_account(**kwargs)
+        success = result.get('success', False)
+        if not success:
+            error = result.get('error', '')
+            return error_response(error)
+        result = REGISTRATION.update_transaction_history(username)
+        LOGGER.info(f'update_transaction_history result: {result}')
+        return success_response('True')
+
+    @safe_headers
+    @expose('json')
+    def payout_to_multiple_accounts(self, *args, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            return error_response('No username supplied.')
+
+        data = kwargs.get('data', [])
+        if not data:
+            return error_response('No data supplied.')
+
+        outputlist = []
+        for item in data:
+
+            if isinstance(item, str):
+                continue
+
+            account_id = item.get('account_id', None)
+
+            exists = DBSession.query(UsernameAccountLink). \
+                    filter(UsernameAccountLink.username == username). \
+                    filter(UsernameAccountLink.account_id == account_id). \
+                    filter(UsernameAccountLink.active == True). \
+                    first()
+
+            if not exists:
+                itemdict = {'success' : False,
+                            'account_id' : account_id,
+                            'error' : 'No account for account_id.', }
+
+            else:
+                kwargs = {'username' : username,
+                          'account_id' : account_id,
+                          'amount' : item.get('amount', None), }
+                result = MYIMALI.payout_to_account(**kwargs)
+                success = result.get('success', False)
+                if not success:
+                    error = result.get('error', '')
+                    itemdict = {'success' : False,
+                                'account_id' : account_id,
+                                'error' : error, }
+                else:
+                    itemdict = {'success' : True,
+                                'account_id' : account_id,
+                                'error' : None, }
+            outputlist.append(itemdict)
+        result = REGISTRATION.update_transaction_history(username)
+        LOGGER.info(f'update_transaction_history result: {result}')
+        return success_response(outputlist)
+
+    @safe_headers
+    @expose('json')
+    def get_banking_details(self, *args, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            return error_response('No username supplied.')
+
+        result = MYIMALI.get_banking_details(**kwargs)
+        success = result.pop('success', False)
+        if not success:
+            error = result.get('error', '')
+            transfer_result = REGISTRATION.auto_transfer_user_api_key(error, username)
+            if transfer_result:
+                return self.get_banking_details(kwargs)
+            return error_response(error)
+
+        outputlist = []
+        data = result.get('data', [])
+        for item in data:
+            item.pop('vAPIUsername', '')
+
+            account_id = item.get('vAccountId', None)
+            exists = DBSession.query(UsernameAccountLink). \
+                    filter(UsernameAccountLink.username == username). \
+                    filter(UsernameAccountLink.account_id == account_id). \
+                    filter(UsernameAccountLink.active == True). \
+                    first()
+            if not exists:
+                account = UsernameAccountLink()
+                account.username = username
+                account.account_id = account_id
+                DBSession.add(account)
+                DBSession.flush()
+            outputlist.append(item)
+        return success_response(outputlist)
+
+    @safe_headers
+    @expose('json')
+    def make_mobile_transfer(self, *args, **kwargs):
+        to_mobile_number = kwargs.get('to_mobile_number', None)
+        if not to_mobile_number:
+            return error_response('To mobile number not found.')
+
+        result = VAULT.get_entity_by_mobile({'mobile_number' : to_mobile_number})
+        if not result:
+            return error_response('No username for mobile')
+
+        to_username = None
+        identity_list = result.get('identity_list', [])
+        for identity in identity_list:
+            identity_name = identity.get('identitytype', {}).get('name', '').lower()
+            if str(identity_name) == 'username':
+                to_username = identity.get('value', '')
+
+        if not to_username:
+            return error_response(f'No username for {to_mobile_number}')
+
+        kwargs['to_username'] = to_username
+        result = REGISTRATION.update_transaction_history(to_username)
+        LOGGER.info(f'update_transaction_history result: {result}')
+
+        from_username = kwargs.get('from_username', None)
+        result = REGISTRATION.update_transaction_history(from_username)
+        LOGGER.info(f'update_transaction_history result: {result}')
+
+        return self.make_user_transfer(**kwargs)
+
+    @safe_headers
+    @expose('json')
+    def refund_user_from_merchant(self, *args, **kwargs):
+        from_username = kwargs.get('fromUsername', None)
+        if not from_username:
+            from_username = kwargs.get('merchant_username', None)
+        if not from_username:
+            return error_response('No from username')
+
+        to_username = kwargs.get('toUsername', None)
+        if not to_username:
+            to_username = kwargs.get('refund_username', None)
+        if not to_username:
+            return error_response('No to username')
+
+        result = MYIMALI.user_refund(**kwargs)
+        success = result.get('success', False)
+        if not success:
+            error = result.get('error', '')
+            transfer_result = REGISTRATION.auto_transfer_user_api_key(error, from_username, call_from_refund=True)
+            if transfer_result:
+                return self.refund_user_from_merchant(**kwargs)
+            return error_response(error)
+
+        self.send_refund_success_notification(**kwargs)
+
+        result = REGISTRATION.update_transaction_history(from_username)
+        LOGGER.info(f'update_transaction_history result: {result}')
+
+        result = REGISTRATION.update_transaction_history(to_username)
+        LOGGER.info(f'update_transaction_history result: {result}')
+        return success_response('True')
+
+    @safe_headers
+    @expose('json')
+    def make_user_transfer(self, *args, **kwargs):
+        result = MYIMALI.make_transfer(**kwargs)
+        success = result.get('success', False)
+        if not success:
+            error = result.get('error', '')
+            return error_response(error)
+
+        amount = kwargs.get('amount', '')
+        kwargs['to_fullname'] = self.send_transfer_success_notification(**kwargs)
+        self.send_transfer_success_email(**kwargs)
+
+        from_username = kwargs.get('from_username', None)
+        result = REGISTRATION.update_transaction_history(from_username)
+        LOGGER.info(f'update_transaction_history result: {result}')
+
+        to_username = kwargs.get('to_username', None)
+        result = REGISTRATION.update_transaction_history(to_username)
+        LOGGER.info(f'update_transaction_history result: {result}')
+        return success_response(str(amount))
+
+    @safe_headers
+    @expose('json')
+    def make_merchant_sale(self, *args, **kwargs):
+        reference = kwargs.get('reference', '')
+        merchant_username = kwargs.get('merchant_username', None)
+        if not merchant_username:
+            return error_response('make_merchant_sale failed: merchant_username not found')
+
+        username = kwargs.get('username', None)
+        if not username:
+            return error_response('make_merchant_sale failed: username not found')
+
+        result = MYIMALI.get_balance(**{'username' : username})
+        success = result.get('success', False)
+        if not success:
+            error = result.get('error', '')
+            transfer_result = REGISTRATION.auto_transfer_user_api_key(error, username)
+            if transfer_result:
+                return self.make_merchant_sale(**kwargs)
+            return error_response(error)
+
+        token = None
+        datalist = result.get('data', [])
+        for item in datalist:
+            name = item.get('name', '')
+            name = name.lower()
+            name = str(name)
+            if name == 'imali':
+                token = item.get('token', None)
+
+        if not token:
+            return error_response('make_merchant_sale failed: unable to get token')
+
+        kwargs['token'] = token
+        result = MYIMALI.make_merchant_sale(**kwargs)
+        if not result:
+            return error_response('Something went wrong.')
+
+        success = result.get('success', False)
+        if not success:
+            error = result.get('error', '')
+            transfer_result = REGISTRATION.auto_transfer_user_api_key(error, username)
+            if transfer_result:
+                return self.make_merchant_sale(kwargs)
+            return error_response(error)
+
+        amount = kwargs.get('amount', '')
+        kwargs['merchant_fullname'] = self.send_sale_success_notification(**kwargs)
+        self.send_sale_success_email(**kwargs)
+
+        result = REGISTRATION.update_transaction_history(merchant_username)
+        LOGGER.info(f'update_transaction_history result: {result}')
+
+        result = REGISTRATION.update_transaction_history(username)
+        LOGGER.info(f'update_transaction_history result: {result}')
+        return success_response(str(amount))
+
+    @safe_headers
+    @expose('json')
+    def get_transaction_history(self, *args, **kwargs):
+        kwargs['coupon_type'] = 'iMali'
+        return self.get_generic_transaction_history(**kwargs)
+
+    @safe_headers
+    @expose('json')
+    def get_loyalty_transaction_history(self, *args, **kwargs):
+        kwargs['coupon_type'] = 'iMali-Loyalty'
+        return self.get_generic_transaction_history(**kwargs)
+
+    @safe_headers
+    @expose('json')
+    def get_savings_transaction_history(self, *args, **kwargs):
+        kwargs['coupon_type'] = 'iMali-Savings'
+        return self.get_generic_transaction_history(**kwargs)
+
+    def get_generic_transaction_history(self, *args, **kwargs):
+        coupon_type = kwargs.get('coupon_type', None)
+        if not coupon_type:
+            return error_response('No coupon_type supplied.')
+
+        username = kwargs.get('username', None)
+        if not username:
+            return error_response('No username supplied.')
+
+        limit = kwargs.get('limit', 100)
+        dbase_query = DBSession.query(TransactionHistory). \
+                filter(TransactionHistory.coupon_type == coupon_type). \
+                filter(TransactionHistory.username == username). \
+                order_by(TransactionHistory.datetime.desc()). \
+                limit(limit)
+                #filter(TransactionHistory.amount > 0). \
+
+        outputlist = []
+        for item in dbase_query:
+
+            other = str(item.other).title()
+            if other == 'Imali':
+                other = 'Main'
+            if other == 'Imali-Savings':
+                other = 'Savings'
+            if other == 'Imali-Loyalty':
+                other = 'Loyalty'
+
+            outputdict = {
+                'date' : item.the_date,
+                'type' : item.type,
+                'amount' : int(item.amount),
+                'time' : item.time,
+                'seconds' : item.seconds,
+                'balance' : item.balance,
+                'other' : other,
+                'TrxId' : item.TrxId,
+                'paymentReference' : item.reference,
+            }
+            outputlist.append(outputdict)
+        return success_response(outputlist)
+
+    @time_it
+    def save_transaction_history(self, username='', statement=[], coupon_type=None, *args, **kwargs):
+        if not coupon_type:
+            LOGGER.warning('save_transaction_history FAIL no coupon_type')
+            return False
+
+        if not username:
+            return False
+
+        if not statement:
+            return False
+
+        for hist in statement:
+
+            TrxId = hist.get('TrxId', None)
+            if not TrxId:
+                continue
+
+            other = hist.get('other', None)
+            the_type = hist.get('type', None)
+            the_date = hist.get('date', None)
+            the_time = hist.get('time', None)
+            seconds = hist.get('seconds', None)
+            time = str_to_date(f'{the_time}:{seconds}', '%H:%M:%S')
+            the_datetime = str_to_date(f'{the_date} {the_time}:{seconds}', '%Y%m%d %H:%M:%S')
+            reference = hist.get('paymentReference', None)
+            balance = hist.get('balance', None)
+            date = str_to_date(the_date, '%Y%m%d')
+
+            amount = hist.get('amount', 0)
+            amount = float(amount)
+            is_negative = True if amount <= 0 else False
+
+            exists = DBSession.query(TransactionHistory). \
+                    filter_by(coupon_type=coupon_type). \
+                    filter_by(date=date). \
+                    filter_by(the_date=the_date). \
+                    filter_by(time=time). \
+                    filter_by(the_time=the_time). \
+                    filter_by(seconds=seconds). \
+                    filter_by(datetime=datetime). \
+                    filter_by(type=the_type). \
+                    filter_by(amount=amount). \
+                    filter_by(balance=balance). \
+                    filter_by(other=other). \
+                    filter_by(TrxId=TrxId). \
+                    filter_by(username=username). \
+                    filter_by(is_negative=is_negative). \
+                    filter_by(reference=reference). \
+                    first()
+            if not exists:
+                new = TransactionHistory()
+                new.coupon_type = coupon_type
+                new.date = date
+                new.the_date = the_date
+                new.time = time
+                new.the_time = the_time
+                new.seconds = seconds
+                new.datetime = the_datetime
+                new.type = the_type
+                new.amount = amount
+                new.balance = balance
+                new.other = other
+                new.TrxId = TrxId
+                new.username = username
+                new.is_negative = is_negative
+                new.reference = reference
+                DBSession.add(new)
+                DBSession.flush()
+        return True
+
+    @safe_headers
+    @expose('json')
+    def get_transaction_refund_options(self, *args, **kwargs):
+        result = MYIMALI.get_transaction_refund_options(**kwargs)
+        success = result.get('success', False)
+        if not success:
+            error = result.get('error', '')
+            return error_response(error)
+        return success_response(result)
+
+    @safe_headers
+    @expose('json')
+    def get_balance(self, *args, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            return error_response('get_balance failed: username not found')
+
+        result = MYIMALI.get_balance(**kwargs)
+        success = result.get('success', False)
+        if not success:
+            error = result.get('error', '')
+            transfer_result = REGISTRATION.auto_transfer_user_api_key(error, username)
+            if transfer_result:
+                return self.get_balance(**kwargs)
+            return error_response(error)
+
+        outputdict = {}
+        datalist = result.get('data', [])
+        for item in datalist:
+            name = item.get('name', '')
+            name = name.lower()
+            name = str(name)
+
+            if name == 'imali':
+                balance_in_cents = item.get('balance', 0)
+                balance_in_rands = balance_in_cents / 100
+                balance_in_rands = "{:.2f}".format(balance_in_rands)
+
+                outputdict['balance'] = balance_in_rands
+                outputdict['balance_in_cents'] = balance_in_cents
+
+            if name == 'imali-loyalty':
+                balance_in_cents = item.get('balance', 0)
+                balance_in_rands = balance_in_cents / 100
+                balance_in_rands = "{:.2f}".format(balance_in_rands)
+
+                outputdict['loyalty_balance'] = balance_in_rands
+                outputdict['loyalty_balance_in_cents'] = balance_in_cents
+
+            if name == 'imali-savings':
+                balance_in_cents = item.get('balance', 0)
+                balance_in_rands = balance_in_cents / 100
+                balance_in_rands = "{:.2f}".format(balance_in_rands)
+
+                outputdict['savings_balance'] = balance_in_rands
+                outputdict['savings_balance_in_cents'] = balance_in_cents
+
+        loyalty_balance = outputdict.get('loyalty_balance', None)
+        if not loyalty_balance:
+            outputdict['loyalty_balance'] = '0.00'
+            outputdict['loyalty_balance_in_cents'] = 0
+
+        savings_balance = outputdict.get('savings_balance', None)
+        if not savings_balance:
+            outputdict['savings_balance'] = '0.00'
+            outputdict['savings_balance_in_cents'] = 0
+
+        return success_response([outputdict])
+
+    @safe_headers
+    @expose('json')
+    def transfer_main_to_savings(self, *args, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            return error_response('No username supplied.')
+
+        result = MYIMALI.transfer_main_to_savings(**kwargs)
+        success = result.get('success', False)
+        if not success:
+            error = result.get('error', '')
+            transfer_result = REGISTRATION.auto_transfer_user_api_key(error, username)
+            if transfer_result:
+                return self.transfer_main_to_savings(**kwargs)
+            return error_response(error)
+        transaction_id = result.get('transactionId', None)
+        if not transaction_id:
+            return error_response('Unable to get transaction_id.')
+
+        result = REGISTRATION.update_transaction_history(username, 'iMali')
+        LOGGER.info(f'update_transaction_history result: {result}')
+
+        result = REGISTRATION.update_transaction_history(username, 'iMali-Savings')
+        LOGGER.info(f'update_transaction_history result: {result}')
+
+        return success_response(str(transaction_id))
+
+    @safe_headers
+    @expose('json')
+    def transfer_savings_to_main(self, *args, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            return error_response('No username supplied.')
+
+        result = MYIMALI.transfer_savings_to_main(**kwargs)
+        success = result.get('success', False)
+        if not success:
+            error = result.get('error', '')
+            transfer_result = REGISTRATION.auto_transfer_user_api_key(error, username)
+            if transfer_result:
+                return self.transfer_savings_to_main(**kwargs)
+            return error_response(error)
+        transaction_id = result.get('transactionId', None)
+        if not transaction_id:
+            return error_response('Unable to get transaction_id.')
+
+        result = REGISTRATION.update_transaction_history(username, 'iMali-Savings')
+        LOGGER.info(f'update_transaction_history result: {result}')
+
+        result = REGISTRATION.update_transaction_history(username, 'iMali')
+        LOGGER.info(f'update_transaction_history result: {result}')
+
+        return success_response(str(transaction_id))
+
+    @safe_headers
+    @expose('json')
+    def transfer_loyalty_to_main(self, *args, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            return error_response('No username supplied.')
+
+        result = MYIMALI.transfer_loyalty_to_main(**kwargs)
+        success = result.get('success', False)
+        if not success:
+            error = result.get('error', '')
+            transfer_result = REGISTRATION.auto_transfer_user_api_key(error, username)
+            if transfer_result:
+                return self.transfer_loyalty_to_main(**kwargs)
+            return error_response(error)
+        transaction_id = result.get('transactionId', None)
+        if not transaction_id:
+            return error_response('Unable to get transaction_id.')
+
+        result = REGISTRATION.update_transaction_history(username, 'iMali-Loyalty')
+        LOGGER.info(f'update_transaction_history result: {result}')
+
+        result = REGISTRATION.update_transaction_history(username, 'iMali')
+        LOGGER.info(f'update_transaction_history result: {result}')
+        return success_response(str(transaction_id))
+
+    @safe_headers
+    @expose('json')
+    def transfer_loyalty_to_savings(self, *args, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            return error_response('No username supplied.')
+
+        result = MYIMALI.transfer_loyalty_to_savings(**kwargs)
+        success = result.get('success', False)
+        if not success:
+            error = result.get('error', '')
+            transfer_result = REGISTRATION.auto_transfer_user_api_key(error, username)
+            if transfer_result:
+                return self.transfer_loyalty_to_savings(**kwargs)
+            return error_response(error)
+        transaction_id = result.get('transactionId', None)
+        if not transaction_id:
+            return error_response('Unable to get transaction_id.')
+
+        result = REGISTRATION.update_transaction_history(username, 'iMali-Loyalty')
+        LOGGER.info(f'update_transaction_history result: {result}')
+
+        result = REGISTRATION.update_transaction_history(username, 'iMali-Savings')
+        LOGGER.info(f'update_transaction_history result: {result}')
+
+        return success_response(str(transaction_id))
+
+###############################################################################
+# create_eiffel_make_sale: accept and reject
+###############################################################################
+
+    @safe_headers
+    @expose('json')
+    def create_eiffel_seller_to_buyer_sale_notification(self, *args, **kwargs):
+        LOGGER.info('create_eiffel_seller_to_buyer_sale_notification')
+        LOGGER.info(str(kwargs))
+
+        from_entity_id = kwargs.get('from_entity_id', None)
+        from_wallet = self.get_wallet_by_entity_id(from_entity_id)
+        if not from_wallet:
+            return error_response('No from entity_id to notify')
+
+        to_entity_id = kwargs.get('to_entity_id', None)
+        to_wallet = self.get_wallet_by_entity_id(to_entity_id)
+        if not to_wallet:
+            return error_response('No to entity_id to notify')
+
+        amount = kwargs.get('amount', None)
+        if not amount:
+            return error_response('No amount to notify')
+
+        message = kwargs.get('message', None)
+        if not message:
+            return error_response("No message or notify")
+
+        application = Application.by_attr_first('name', 'Calabash Mobile')
+
+        kwargs['application_id'] = application.id
+        kwargs['to_username'] = to_wallet.username
+        kwargs['from_username'] = from_wallet.username
+        kwargs['notification_type_id'] = MAKE_SALE
+        notification = self.create_notification(**kwargs)
+
+        params = {'id': to_wallet.username}
+        data = self.get_notify_dict_by_notification(notification)
+        result = NCHAN.publish_to_campus(params, data)
+        if result and result.status_code == 200:
+            notification.bln_delivered = True
+            DBSession.flush()
+
+        notification_type = TYPEDICT.get_pretty_name('notification_type', MAKE_SALE)
+        return success_response(str(notification_type))
+
+    @safe_headers
+    @expose('json')
+    def accept_calabash_campus_make_sale_notification(self, *args, **kwargs):
+        LOGGER.info('accept_calabash_campus_make_sale_notification')
+        LOGGER.info(str(kwargs))
+
+        notification_id = kwargs.get('notification_id', None)
+        if not notification_id:
+            return error_response('No notification_id')
+
+        notification = Notification.by_id(notification_id)
+        if not notification:
+            return error_response('No notification for id')
+
+        notification.bln_actioned = True
+        DBSession.flush()
+
+        user_transfer_kwargs = {
+            'from_username' : notification.to_username, # Swapped deliberately
+            'to_username' : notification.from_username, # Swapped deliberately
+            'amount' : notification.amount,
+            'reference' : notification.message,
+        }
+        result = self.make_user_transfer(**user_transfer_kwargs)
+        success = result.get('success', False)
+
+        # As per JP: 30 June 2020
+        to_user = REGISTRATION.get_user_profile(**{'username' : notification.to_username})
+        data = to_user.get('data', {})
+        to_name = data.get('name', '')
+        to_surname = data.get('surname', '')
+
+        if not success:
+            reason = result.get('data', '')
+            buyer_template = MessageTemplate.by_attr_first('usage', 'Mobile Buyer Make Sale Accepted Failure')
+            buyer_message = buyer_template.message.format(**locals())
+
+            seller_template = MessageTemplate.by_attr_first('usage', 'Mobile Seller Make Sale Accepted Failure')
+            seller_message = seller_template.message.format(**locals())
+
+        else:
+            buyer_template = MessageTemplate.by_attr_first('usage', 'Mobile Buyer Make Sale Accepted Success')
+            buyer_message = buyer_template.message.format(**locals())
+
+            seller_template = MessageTemplate.by_attr_first('usage', 'Mobile Seller Make Sale Accepted Success')
+            seller_message = seller_template.message.format(**locals())
+
+        mobile_application = Application.by_attr_first('name', 'Calabash Mobile')
+
+        # Notify the buyer in mobile of the result of accepting
+        kwargs['application_id'] = mobile_application.id
+        kwargs['notification_type_id'] = ACCEPTED
+        kwargs['to_username'] = notification.to_username
+        kwargs['from_username'] = notification.from_username
+        kwargs['message'] = buyer_message # TODO: reject notification message is hardcoded
+        kwargs['amount'] = notification.amount
+        kwargs['actioned_notification_id'] = notification_id
+        buyer_notification = self.create_notification(**kwargs)
+
+        params = {'id': buyer_notification.to_username}
+        data = self.get_notify_dict_by_notification(buyer_notification)
+        result = NCHAN.publish_to_campus(params, data)
+        if result and result.status_code == 200:
+            this.bln_delivered = True
+            DBSession.flush()
+
+        # Notify the seller in mobile of the result of accepting
+        kwargs['notification_type_id'] = ACCEPTED
+        kwargs['to_username'] = notification.from_username # swapping usernames so it notifies the other party
+        kwargs['from_username'] = notification.to_username
+        kwargs['message'] = seller_message # TODO: reject notification message is hardcoded
+        kwargs['amount'] = notification.amount
+        kwargs['actioned_notification_id'] = notification.id
+        seller_notification = self.create_notification(**kwargs)
+
+        params = {'id': seller_notification.to_username}
+        data = self.get_notify_dict_by_notification(seller_notification)
+        result = NCHAN.publish_to_campus(params, data)
+        if result and result.status_code == 200:
+            this.bln_delivered = True
+            DBSession.flush()
+
+        # Notify the seller in eiffel of the result of accepting
+        eiffel_application = Application.by_attr_first('name', 'Eiffel Corp Marketplace')
+        kwargs['application_id'] = eiffel_application.id
+        kwargs['notification_type_id'] = ACCEPTED
+        kwargs['to_username'] = notification.from_username # swapping usernames so it notifies the other party
+        kwargs['from_username'] = notification.to_username
+        kwargs['message'] = seller_message # TODO: reject notification message is hardcoded
+        kwargs['amount'] = notification.amount
+        kwargs['actioned_notification_id'] = notification.id
+        eiffel_notification = self.create_notification(**kwargs)
+
+        params = {'id': eiffel_notification.to_username}
+        data = self.get_notify_dict_by_notification(eiffel_notification)
+        result = NCHAN.publish_to_trading(params, data)
+        if result and result.status_code == 200:
+            this.bln_delivered = True
+            DBSession.flush()
+
+        if not success:
+            return error_response(reason)
+        outputdict = {
+            'notification_id' : eiffel_notification.id,
+            'notification_type' : TYPEDICT.get_pretty_name('notification_type', ACCEPTED),
+        }
+        return success_response(outputdict)
+
+    @safe_headers
+    @expose('json')
+    def reject_calabash_campus_make_sale_notification(self, *args, **kwargs):
+        LOGGER.info('reject_calabash_campus_make_sale_notification')
+        LOGGER.info(str(kwargs))
+
+        notification_id = kwargs.get('notification_id', None)
+        if not notification_id:
+            return error_response('No notification_id')
+
+        notification = Notification.by_id(notification_id)
+        if not notification:
+            return error_response('No notification for id')
+
+        notification.bln_actioned = True
+        DBSession.flush()
+
+        application = Application.by_attr_first('name', 'Eiffel Corp Marketplace')
+
+        # As per JP: 30 June 2020
+        from_user = REGISTRATION.get_user_profile(**{'username' : notification.from_username})
+        data = from_user.get('data', {})
+        from_name = data.get('name', '')
+        from_surname = data.get('surname', '')
+
+        template = MessageTemplate.by_attr_first('usage', 'Marketplace Make Sale Rejected')
+        message = template.message.format(**locals())
+
+        kwargs['application_id'] = application.id
+        kwargs['notification_type_id'] = REJECTED
+        kwargs['to_username'] = notification.from_username # swapping usernames so it notifies the other party
+        kwargs['from_username'] = notification.to_username
+        kwargs['message'] = message
+        kwargs['amount'] = notification.amount
+        kwargs['actioned_notification_id'] = notification.id
+        this = self.create_notification(**kwargs)
+
+        params = {'id': this.to_username}
+        data = self.get_notify_dict_by_notification(this)
+        result = NCHAN.publish_to_trading(params, data)
+        if result and result.status_code == 200:
+            this.bln_delivered = True
+            DBSession.flush()
+        outputdict = {
+            'notification_id' : this.id,
+            'notification_type' : TYPEDICT.get_pretty_name('notification_type', REJECTED),
+        }
+        return success_response(outputdict)
+
+###############################################################################
+# create_eiffel_corp_premium_ad_payment_notification: accept and reject
+###############################################################################
+
+    @safe_headers
+    @expose('json')
+    def create_eiffel_corp_premium_ad_payment_notification(self, *args, **kwargs):
+        LOGGER.info('create_eiffel_corp_premium_ad_payment_notification')
+        LOGGER.info(str(kwargs))
+
+        entity_id = kwargs.get('entity_id', None)
+        if not entity_id:
+            return error_response('No entity_id to notify')
+
+        wallet = Wallet.by_attr_first('entity_id', entity_id)
+        if not wallet:
+            return error_response('Username entity_id not found')
+
+        amount = kwargs.get('amount', None)
+        if not amount:
+            return error_response('No amount to notify')
+
+        message = kwargs.get('message', None)
+        if not message:
+            return error_response("No message or notify")
+
+        application = Application.by_attr_first('name', 'Calabash Mobile')
+
+        kwargs['to_username'] = wallet.username
+        kwargs['from_username'] = wallet.username
+        kwargs['application_id'] = application.id
+        kwargs['notification_type_id'] = FEATURED_AD
+        notification = self.create_notification(**kwargs)
+
+        params = {'id': wallet.username}
+        data = self.get_notify_dict_by_notification(notification)
+        result = NCHAN.publish_to_campus(params, data)
+        if result and result.status_code == 200:
+            notification.bln_delivered = True
+            DBSession.flush()
+        outputdict = {
+            'notification_id' : notification.id,
+            'notification_type' : str(TYPEDICT.get_pretty_name('notification_type', FEATURED_AD)),
+        }
+        return success_response(outputdict)
+
+    @safe_headers
+    @expose('json')
+    def accept_calabash_campus_premium_ad_payment_notification(self, *args, **kwargs):
+        LOGGER.info('accept_calabash_campus_premium_ad_payment_notification')
+        LOGGER.info(str(kwargs))
+
+        notification_id = kwargs.get('notification_id', None)
+        if not notification_id:
+            return error_response('No notification_id')
+
+        notification = Notification.by_id(notification_id)
+        if not notification:
+            return error_response('No notification for id')
+
+        merchant_sale_kwargs = {
+            'merchant_username' : 'calabash pay', # TODO: merchant_username is hardcoded to calabash pay
+            'username' : notification.from_username,
+            'amount' : notification.amount,
+            'reference' : notification.message,
+        }
+        result = self.make_merchant_sale(**merchant_sale_kwargs)
+        if not result:
+            return error_response(f'make_merchant_sale failed: {result}')
+
+        # As per JP: 30 June 2020
+        success = result.get('success', False)
+        if success:
+            template = MessageTemplate.by_attr_first('usage', 'Premium Ad Success')
+            message = template.message.format(**locals())
+        else:
+            reason = result.get('data', '')
+            template = MessageTemplate.by_attr_first('usage', 'Premium Ad Failure')
+            message = template.message.format(**locals())
+
+        notification.bln_actioned = True
+        DBSession.flush()
+
+        application = Application.by_attr_first('name', 'Eiffel Corp Marketplace')
+
+        kwargs['application_id'] = application.id
+        kwargs['notification_type_id'] = ACCEPTED
+        kwargs['to_username'] = notification.to_username
+        kwargs['from_username'] = notification.from_username
+        kwargs['message'] = message
+        kwargs['amount'] = notification.amount
+        kwargs['actioned_notification_id'] = notification_id
+        this = self.create_notification(**kwargs)
+
+        params = {'id': this.to_username}
+        data = self.get_notify_dict_by_notification(this)
+        result = NCHAN.publish_to_trading(params, data)
+        if result and result.status_code == 200:
+            this.bln_delivered = True
+            DBSession.flush()
+
+        if not success:
+            return error_response(reason)
+        return success_response('Premium Ad Posted Successfully.')
+
+    @safe_headers
+    @expose('json')
+    def reject_calabash_campus_premium_ad_payment_notification(self, *args, **kwargs):
+        LOGGER.info('reject_calabash_campus_premium_ad_payment_notification')
+        LOGGER.info(str(kwargs))
+
+        notification_id = kwargs.get('notification_id', None)
+        if not notification_id:
+            return error_response('No notification_id')
+
+        notification = Notification.by_id(notification_id)
+        if not notification:
+            return error_response('No notification for id')
+
+        notification.bln_actioned = True
+        DBSession.flush()
+
+        application = Application.by_attr_first('name', 'Eiffel Corp Marketplace')
+
+        # As per JP: 30 June 2020
+        template = MessageTemplate.by_attr_first('usage', 'Transaction Cancelled')
+        message = template.message.format(**locals())
+
+        kwargs['application_id'] = application.id
+        kwargs['notification_type_id'] = REJECTED
+        kwargs['to_username'] = notification.to_username
+        kwargs['from_username'] = notification.from_username
+        kwargs['message'] = message
+        kwargs['amount'] = notification.amount
+        kwargs['actioned_notification_id'] = notification_id
+        this = self.create_notification(**kwargs)
+
+        params = {'id': this.to_username}
+        data = self.get_notify_dict_by_notification(this)
+        result = NCHAN.publish_to_trading(params, data)
+        if result and result.status_code == 200:
+            this.bln_delivered = True
+            DBSession.flush()
+        outputdict = {
+            'notification_id' : this.id,
+            'notification_type' : TYPEDICT.get_pretty_name('notification_type', REJECTED),
+        }
+        return success_response(outputdict)
+
+###############################################################################
+# check_has_notifications: Calabash Mobile and Eiffel Corp Marketplace
+###############################################################################
+
+    @safe_headers
+    @expose('json')
+    def calabash_campus_check_has_notifications(self, username: str):
+        LOGGER.info('calabash_campus_check_has_notifications')
+        LOGGER.info(f'username: {username}')
+
+        application = Application.by_attr_first('name', 'Calabash Mobile')
+        if not application:
+            return error_response('Calabash Mobile application not found')
+
+        return self.check_has_notifications(username=username, application_id=application.id)
+
+    @safe_headers
+    @expose('json')
+    def eiffel_corp_check_has_notifications(self, entity_id: int):
+        LOGGER.info('eiffel_corp_check_has_notifications')
+        LOGGER.info(f'entity_id: {entity_id}')
+
+        application = Application.by_attr_first('name', 'Eiffel Corp Marketplace')
+        if not application:
+            return error_response('Eiffel Corp Marketplace application not found')
+
+        wallet = Wallet.by_attr_first('entity_id', entity_id)
+        if not wallet:
+            return error_response('Username entity_id not found')
+
+        if wallet.bln_suspended:
+            return error_response('Wallet is suspended.')
+
+        return self.check_has_notifications(username=wallet.username, application_id=application.id)
+
+    def check_has_notifications(self, username: str, application_id: int):
+        notification_count = DBSession.query(Notification). \
+                filter(Notification.active==True). \
+                filter(Notification.bln_deleted==False). \
+                filter(Notification.bln_actioned==False). \
+                filter(Notification.to_username==username). \
+                filter(Notification.application_id==application_id). \
+                count()
+
+        if notification_count > 0:
+            return success_response(str(notification_count))
+        return error_response('0')
+
+###############################################################################
+# get_notifications_list: Calabash Mobile and Eiffel Corp Marketplace
+###############################################################################
+
+    @safe_headers
+    @expose('json')
+    def get_calabash_campus_notifications_list(self, username: str):
+        LOGGER.info('get_calabash_campus_notifications_list')
+        LOGGER.info(f'username: {username}')
+
+        application = Application.by_attr_first('name', 'Calabash Mobile')
+        if not application:
+            return error_response('Calabash Mobile application not found')
+
+        return self.get_notifications_list(username=username, application_id=application.id)
+
+    @safe_headers
+    @expose('json')
+    def get_eiffel_corp_notifications_list(self, entity_id: int):
+        LOGGER.info('get_eiffel_corp_notifications_list')
+        LOGGER.info(f'entity_id: {entity_id}')
+
+        application = Application.by_attr_first('name', 'Eiffel Corp Marketplace')
+        if not application:
+            return error_response('Eiffel Corp Marketplace application not found')
+
+        wallet = Wallet.by_attr_first('entity_id', entity_id)
+        if not wallet:
+            return error_response('Username entity_id not found')
+
+        if wallet.bln_suspended:
+            return error_response('Wallet is suspended.')
+
+        return self.get_notifications_list(username=wallet.username, application_id=application.id)
+
+    def get_notifications_list(self, username: str, application_id: int):
+        dbase_query = DBSession.query(Notification). \
+                filter(Notification.to_username == username). \
+                filter(Notification.application_id == application_id). \
+                filter(Notification.bln_deleted == False). \
+                filter(Notification.bln_actioned == False). \
+                filter(Notification.active == True). \
+                order_by(Notification.added.desc()). \
+                all()
+
+        seenlist, unseenlist = [], []
+        for item in dbase_query:
+            item_dict = self.get_notify_dict_by_notification(item)
+
+            if not item.bln_viewed:
+                item.bln_viewed = True
+                item.bln_delivered = True
+                DBSession.flush()
+                unseenlist.append(item_dict)
+            else:
+                seenlist.append(item_dict)
+
+        #seenlist = sort_dict_list(seenlist, 'added')
+        #unseenlist = sort_dict_list(unseenlist, 'added')
+        return json.dumps({'success': True, 'seen': seenlist, 'unseen': unseenlist})
+
+    def get_featured_actions_list(self, notification_id=None):
+        if not notification_id:
+            return []
+        outputlist = [
+            {'button_text' : 'Accept',
+             'callback_url' : f'/notification/accept_calabash_campus_premium_ad_payment_notification?notification_id={notification_id}', },
+            {'button_text' : 'Reject',
+             'callback_url' : f'/notification/reject_calabash_campus_premium_ad_payment_notification?notification_id={notification_id}', },
+        ]
+        return outputlist
+
+    def get_make_sale_actions_list(self, notification_id=None):
+        if not notification_id:
+            return []
+        outputlist = [
+            {'button_text' : 'Accept',
+             'callback_url' : f'/notification/accept_calabash_campus_make_sale_notification?notification_id={notification_id}', },
+            {'button_text' : 'Reject',
+             'callback_url' : f'/notification/reject_calabash_campus_make_sale_notification?notification_id={notification_id}', },
+        ]
+        return outputlist
+
+    def get_group_invite_actions_list(self, notification_id=None):
+        if not notification_id:
+            return []
+        outputlist = [
+            {'button_text' : 'Accept',
+             'callback_url' : f'/groups/accept_group_invite_notification?notification_id={notification_id}', },
+            {'button_text' : 'Reject',
+             'callback_url' : f'/groups/reject_group_invite_notification?notification_id={notification_id}', },
+        ]
+        return outputlist
+
+    @safe_headers
+    @expose('json')
+    def delete_notification(self, *args, **kwargs):
+        notification_id = kwargs.get('notification_id', None)
+        if not notification_id:
+            return error_response('No notification_id supplied.')
+
+        notification = Notification.by_id(notification_id)
+        if not notification:
+            return error_response('No notification for id.')
+
+        notification.active = False
+        DBSession.flush()
+        return success_response('True')
+
+###############################################################################
+# GENERIC HELPERS
+###############################################################################
+
+    def safe_message(self, message='', *args, **kwargs):
+        message = message.strip()
+        message = message.replace('\r\n', '')
+        message = message.replace('\r', '')
+        message = message.replace('\n', '')
+        return message
+
+    def create_notification(self, *args, **kwargs):
+
+        message = kwargs.get('message', None)
+        message = self.safe_message(message)
+
+        this = Notification()
+        this.amount = kwargs.get('amount', 0)
+        this.message = message
+        this.groupname = kwargs.get('groupname', None)
+
+        to_username = kwargs.get('to_username', None)
+        to_wallet = Wallet.by_attr_first('username', to_username)
+        this.to_username = to_username
+        this.to_entity_id = to_wallet.entity_id
+
+        from_username = kwargs.get('from_username', None)
+        from_wallet = Wallet.by_attr_first('username', from_username)
+        this.from_username = from_username
+        this.from_entity_id = from_wallet.entity_id
+
+        this.application_id = kwargs.get('application_id', None)
+        this.notification_type_id = kwargs.get('notification_type_id', None)
+        this.actioned_notification_id = kwargs.get('actioned_notification_id', None)
+        DBSession.add(this)
+        DBSession.flush()
+
+        notification = Notification.by_id(this.id)
+        return notification
+
+    def get_wallet_by_entity_id(self, entity_id=None, *args, **kwargs):
+        if not entity_id:
+            return False
+        wallet = Wallet.by_attr_first('entity_id', entity_id)
+        if not wallet:
+            return False
+        if wallet.bln_suspended:
+            return False
+        return wallet
+
+    def get_notify_dict_by_notification(self, notification=None):
+        outputdict = {}
+        if not notification:
+            return outputdict
+
+        actionlist = []
+        if not notification.bln_actioned:
+
+            if notification.notification_type_id == FEATURED_AD:
+                actionlist = self.get_featured_actions_list(notification.id)
+
+            if notification.notification_type_id == MAKE_SALE:
+                actionlist = self.get_make_sale_actions_list(notification.id)
+
+            if notification.notification_type_id == GROUP_INVITE:
+                actionlist = self.get_group_invite_actions_list(notification.id)
+
+        outputdict['notification_id'] = notification.id
+        outputdict['amount'] = int(notification.amount)
+        outputdict['message'] = notification.message
+        outputdict['added'] = notification.added.strftime('%d/%m/%Y %H:%M:%S')
+        outputdict['actioned_notification_id'] = notification.actioned_notification_id
+        outputdict['actions'] = actionlist
+        return outputdict
+
+    def send_group_invite_notification(self, *args, **kwargs):
+        username = kwargs.get('username', None)
+        groupname = kwargs.get('groupname', None)
+        to_username = kwargs.get('to_username', None)
+        application = Application.by_attr_first('name', 'Calabash Mobile')
+        template = MessageTemplate.by_attr_first('usage', 'Group Invite')
+        message = template.message.format(**locals())
+
+        kwargs['message'] = message
+        kwargs['application_id'] = application.id
+        kwargs['to_username'] = to_username
+        kwargs['from_username'] = username
+        kwargs['notification_type_id'] = GROUP_INVITE
+        notification = self.create_notification(**kwargs)
+
+        params = {'id': to_username}
+        data = self.get_notify_dict_by_notification(notification)
+        result = NCHAN.publish_to_campus(params, data)
+        if result and result.status_code == 200:
+            notification.bln_delivered = True
+            DBSession.flush()
+
+        try:
+            notification_type = TYPEDICT.get_pretty_name('notification_type', GROUP_INVITE)
+        except TypeError:
+            notification_type = 'Group Invite'
+        return notification.id, notification_type
+
+    def send_refund_success_notification(self, *args, **kwargs):
+        to_username = kwargs.get('toUsername', None)
+        from_username = kwargs.get('fromUsername', None)
+        application = Application.by_attr_first('name', 'Calabash Mobile')
+
+        merchant_profile = REGISTRATION.get_user_profile(**{'username' : from_username})
+        if not merchant_profile:
+            return False
+
+        success = merchant_profile.get('success', False)
+        if not success:
+            return False
+
+        merchant_data = merchant_profile.get('data', {})
+        if not merchant_data:
+            return False
+
+        merchant_name = merchant_data.get('name', None)
+        merchant_surname = merchant_data.get('surname', None)
+        merchant_name = f'{merchant_name} {merchant_surname}'
+
+        amount_in_cents = int(kwargs.get('amount', 0))
+        amount_in_rands = get_currency_by_locale(amount_in_cents)
+        #amount_in_rands = amount_in_cents / 100
+        #amount_in_rands = "{:.2f}".format(amount_in_rands)
+
+        reference = kwargs.get('reference', None)
+        template = MessageTemplate.by_attr_first('usage', 'Refund Success')
+        message = template.message.format(**locals())
+
+        kwargs['message'] = message
+        kwargs['application_id'] = application.id
+        kwargs['to_username'] = to_username
+        kwargs['from_username'] = from_username
+        kwargs['notification_type_id'] = ACCEPTED
+        notification = self.create_notification(**kwargs)
+
+        params = {'id': to_username}
+        data = self.get_notify_dict_by_notification(notification)
+        result = NCHAN.publish_to_campus(params, data)
+        if result and result.status_code == 200:
+            notification.bln_delivered = True
+            DBSession.flush()
+        return True
+
+    def send_sale_success_email(self, *args, **kwargs):
+        kwargs['passthrough'] = True
+        result = REGISTRATION.get_user_profile(**kwargs)
+
+        email_list = []
+        data = result.get('data', {})
+        if isinstance(data, str):
+            return False
+
+        contact_list = data.get('contact_list', [])
+
+        for item in contact_list:
+            contacttype = item.get('contacttype', {})
+            contactname = contacttype.get('name', None)
+            contactname = contactname.lower()
+            contactname = str(contactname)
+
+            if str(contactname) == 'email':
+                email = item.get('value', None)
+                email_list.append(email)
+
+        if not email_list:
+            return False
+
+        amount = kwargs.get('amount', None)
+        amount = get_currency_by_locale(amount)
+        str_datetime = datetime.now().strftime('%a %d %b %Y %H:%M:%S')
+        merchant_fullname = kwargs.get('merchant_fullname', None)
+        reference = kwargs.get('reference', None)
+
+        plain_template = MessageTemplate.by_attr_first('usage', 'Sale Success Email Plain')
+        plain_text = plain_template.message.format(**locals())
+
+        rich_template = MessageTemplate.by_attr_first('usage', 'Sale Success Email Rich')
+        rich_text = rich_template.message.format(**locals())
+
+        for email in email_list:
+            e = CalabashCampusEmailCreator()
+            e.add_subject('Sale | CALABASH CAMPUS')
+            e.add_to_address(email)
+            e.add_plain_text(plain_text)
+            e.add_rich_text(rich_text)
+            e.send(False)
+        return True
+
+    def send_sale_success_notification(self, *args, **kwargs):
+        to_username = kwargs.get('username', None)
+        from_username = kwargs.get('merchant_username', None)
+        application = Application.by_attr_first('name', 'Calabash Mobile')
+
+        merchant_profile = REGISTRATION.get_user_profile(**{'username' : from_username})
+        merchant_data = merchant_profile.get('data', {})
+        merchant_name = merchant_data.get('name', None)
+        merchant_surname = merchant_data.get('surname', None)
+        to_fullname = f'{merchant_name} {merchant_surname}'
+
+        amount_in_cents = int(kwargs.get('amount', 0))
+        amount_in_rands = get_currency_by_locale(amount_in_cents)
+        #amount_in_rands = amount_in_cents / 100
+        #amount_in_rands = "{:.2f}".format(amount_in_rands)
+
+        reference = kwargs.get('reference', None)
+
+        template = MessageTemplate.by_attr_first('usage', 'Sale Success')
+        message = template.message.format(**locals())
+
+        kwargs['message'] = message
+        kwargs['application_id'] = application.id
+        kwargs['to_username'] = to_username
+        kwargs['from_username'] = from_username
+        kwargs['notification_type_id'] = ACCEPTED
+        notification = self.create_notification(**kwargs)
+        print('send_sale_success_notification', notification)
+
+        params = {'id': to_username}
+        data = self.get_notify_dict_by_notification(notification)
+        result = NCHAN.publish_to_campus(params, data)
+        print('NCHAN result', result)
+        if result and result.status_code == 200:
+            notification.bln_delivered = True
+            DBSession.flush()
+        return merchant_name
+
+    def send_transfer_success_email(self, *args, **kwargs):
+        kwargs['passthrough'] = True
+        kwargs['username'] = kwargs.get('from_username', None)
+        result = REGISTRATION.get_user_profile(**kwargs)
+        success = result.get('success', False)
+        if not success:
+            return False
+
+        email_list = []
+        data = result.get('data', {})
+        if isinstance(data, str):
+            return False
+
+        contact_list = data.get('contact_list', [])
+        for item in contact_list:
+            contacttype = item.get('contacttype', {})
+            contactname = contacttype.get('name', None)
+            contactname = contactname.lower()
+            contactname = str(contactname)
+
+            if str(contactname) == 'email':
+                email = item.get('value', None)
+                email_list.append(email)
+
+        if not email_list:
+            return False
+
+        amount = kwargs.get('amount', None)
+        amount = get_currency_by_locale(amount)
+        str_datetime = datetime.now().strftime('%a %d %b %Y %H:%M:%S')
+        to_fullname = kwargs.get('to_fullname', None)
+        reference = kwargs.get('reference', None)
+
+        plain_template = MessageTemplate.by_attr_first('usage', 'Transfer Success Email Plain')
+        plain_text = plain_template.message.format(**locals())
+
+        rich_template = MessageTemplate.by_attr_first('usage', 'Transfer Success Email Rich')
+        rich_text = rich_template.message.format(**locals())
+
+        for email in email_list:
+            e = CalabashCampusEmailCreator()
+            e.add_subject('Transfer | CALABASH CAMPUS')
+            e.add_to_address(email)
+            e.add_plain_text(plain_text)
+            e.add_rich_text(rich_text)
+            e.send(False)
+        return True
+
+    def send_transfer_success_notification(self, *args, **kwargs):
+        to_username = kwargs.get('to_username', None)
+        from_username = kwargs.get('from_username', None)
+        application = Application.by_attr_first('name', 'Calabash Mobile')
+
+        to_profile = REGISTRATION.get_user_profile(**{'username' : to_username})
+        to_data = to_profile.get('data', {})
+        to_name = to_data.get('name', None)
+        to_surname = to_data.get('surname', None)
+        to_fullname = f'{to_name} {to_surname}'
+
+        amount = kwargs.get('amount', 0)
+        try:
+            amount_in_cents = int(amount)
+        except:
+            amount_in_cents = None
+        print('send_transfer_success_notification', amount_in_cents)
+        if not amount_in_cents:
+            return False
+
+        #amount_in_rands = amount_in_cents / 100
+        #amount_in_rands = "{:.2f}".format(amount_in_rands)
+        amount_in_rands = get_currency_by_locale(amount_in_cents)
+
+        reference = kwargs.get('reference', None)
+        template = MessageTemplate.by_attr_first('usage', 'Transfer Success')
+        message = template.message.format(**locals())
+
+        kwargs['message'] = message
+        kwargs['application_id'] = application.id
+        kwargs['to_username'] = from_username # Swapped deliberately, the from_username must get the notification back
+        kwargs['from_username'] = to_username # Swapped deliberately, the to_username must send the notification
+        kwargs['notification_type_id'] = ACCEPTED
+        notification = self.create_notification(**kwargs)
+        print('send_transfer_success_notification', notification)
+
+        params = {'id': from_username}
+        data = self.get_notify_dict_by_notification(notification)
+        result = NCHAN.publish_to_campus(params, data)
+        print('NCHAN result', result)
+        if result and result.status_code == 200:
+            notification.bln_delivered = True
+            DBSession.flush()
+        return to_fullname
+
+    @expose('json')
+    def create_transaction_history(self, *args, **kwargs):
+        coupon_type = kwargs.get('coupon_type', 'iMali')
+        kwargs['limit'] = 5000
+        walletlist = Wallet.get_all('id')
+
+        for wallet in walletlist:
+
+            kwargs['username'] = username = wallet.username
+            LOGGER.info(f'create_transaction_history for {username.upper()}')
+
+            statement = self.get_myimali_transaction_history_list(**kwargs)
+            if not statement:
+                continue
+
+            self.save_transaction_history(username, statement, coupon_type)
+        return True
+
+    def update_transaction_history(self, username=None, coupon_type='iMali', *args, **kwargs):
+        if not username:
+            return False
+
+        kwargs['limit'] = 1
+        kwargs['username'] = username
+        kwargs['coupon_type'] = coupon_type
+        statement = self.get_myimali_transaction_history_list(**kwargs)
+        if not statement:
+            return False
+
+        LOGGER.info(f'update_transaction_history for {username}')
+        return self.save_transaction_history(username, statement, coupon_type)
+
+    def get_myimali_transaction_history_list(self, *args, **kwargs):
+        username = kwargs.get('username', None)
+        outputlist = []
+        result = MYIMALI.get_transaction_history(**kwargs)
+        if not result:
+            LOGGER.warning('no result')
+            return outputlist
+
+        if isinstance(result, list):
+            LOGGER.warning(f'result is a list: {result}')
+            return outputlist
+
+        success = result.get('success', False)
+        if not success:
+            error = result.get('error', '')
+            LOGGER.info(f'get_myimali_transaction_history_list error: {error}')
+            transfer_result = REGISTRATION.auto_transfer_user_api_key(error, username)
+            if transfer_result:
+                return self.get_myimali_transaction_history_list(**kwargs)
+            LOGGER.warning(f'error: {error}')
+            return outputlist
+
+        statement = result.get('statement', [])
+        if not statement:
+            LOGGER.warning('no statement')
+            return outputlist
+
+        return statement

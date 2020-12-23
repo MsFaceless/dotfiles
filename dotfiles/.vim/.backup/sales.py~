@@ -1,0 +1,1061 @@
+# -*- coding: utf-8 -*-
+"""My_sales controller module"""
+import math
+import os, json
+import requests
+from datetime import datetime, timedelta
+from pkg_resources import resource_filename
+from tg import expose, require, request, predicates, redirect, flash
+# from tg.i18n import ugettext as _
+
+from eiffel_front.model import *
+
+from eiffel_front.lib.tg_utils import *
+from eiffel_front.lib.base import BaseController
+from eiffel_front.lib.tg_decorators import *
+from eiffel_front.lib.tgfileuploader import FileUploader
+import eiffel_front.lib.gateway_utils as GATEWAY
+
+from eiffel_front.controllers.common import CommonController
+from eiffel_front.controllers.chat import ChatController
+
+from sqlalchemy import func, desc, asc, or_
+
+FILENAME = os.path.abspath(resource_filename('eiffel_front', 'public'))
+PUBLIC_DIRNAME = os.path.join(FILENAME)
+IMAGES_DIRNAME = os.path.join(PUBLIC_DIRNAME, 'img')
+STUDENT_IMG_DIRNAME = os.path.join(IMAGES_DIRNAME, 'students')
+POSTS_IMG_DIRNAME = os.path.join(IMAGES_DIRNAME, 'posts')
+
+COMMON = CommonController()
+CHAT = ChatController()
+
+PAGINATION_MAX = 5
+DBASE_QUERY_LIMIT = 5
+
+FEATURED_AD_PRICE = 20
+FEATURED_AD_EXPIRY_IN_DAYS = 7
+POST_EXPIRY_IN_DAYS = 14
+EXPIRY_REMINDER_IN_DAYS = 2
+
+MOBILE_BREAK_WIDTH = 680
+PRICE_LIMIT = 999999
+
+STATUS_ID_PENDING = COMMON.get_status_id(SaleStatus, 'pending')
+STATUS_ID_REJECTED = COMMON.get_status_id(SaleStatus, 'rejected')
+STATUS_ID_FAILED = COMMON.get_status_id(SaleStatus, 'failed')
+STATUS_ID_SOLD = COMMON.get_status_id(SaleStatus, 'sold')
+
+class SalesController(BaseController):
+    # Uncomment this line if your controller requires an authenticated user
+    allow_only = CustomNotAnonymous()
+
+    @require(CustomNotAnonymous())
+    @expose('eiffel_front.templates.2_col_med_right')
+    def index(self, *args, **kwargs):
+        left_col = COMMON.get_left_col()
+        right_col = f"""
+            <div class="widget dashboard-container my-adslist">
+                <h3 class="widget-header">Sales Offers</h3>
+                <div id="salesOffersDiv"></div>
+            </div>
+        """
+        javascript = """
+        var kwargs = {
+            'width': $(window).width(),
+        }
+        $('#salesOffersDiv').load('/sales/get_sales_offers', kwargs);
+        $('#mainNav .nav-item').removeClass('active');
+        $('#myAccountLink').addClass('active');
+        """
+        return dict(title='Sales', left_col=left_col, right_col=right_col, javascript=javascript)
+
+    @expose()
+    def get_sales_offers(self, *args, **kwargs):
+        width = str_to_int(kwargs.get('width', MOBILE_BREAK_WIDTH))
+        if width < MOBILE_BREAK_WIDTH:
+            return self.get_mobile_sales_offers()
+        usernow = request.identity.get('user', {})
+        dbase_query = DBSession.query(Post). \
+            join(Order, Order.post_id == Post.id). \
+            filter(Order.seller_active == True). \
+            filter(Post.post_status_id == COMMON.get_post_status_id('active')). \
+            filter(Post.added_by == usernow.id). \
+            filter(Post.active == True). \
+            order_by(desc(Order.updated)). \
+            all()
+        html = ""
+        if dbase_query:
+            html += '<div id="accordion">'
+            for item in dbase_query:
+                sales_order_post = self.get_sales_order_post(**{'post_id': item.id})
+                html += f"""
+                <div class="salesOfferDiv" post_id="{item.id}">
+                    {sales_order_post}
+                </div>
+                """
+        else:
+            html += "No items to show"
+        javascript = """
+        <script>
+          $(document).ready(function(){
+              if ($('.sales_order')){
+                $('.sales_order').first().trigger('click');
+              }
+          });
+        </script>
+        """
+        return html + javascript
+
+    @expose()
+    def get_sales_order_post(self, *args, **kwargs):
+        post_id = kwargs.get('post_id', None)
+        if not post_id: return ""
+
+        item = Post.by_id(post_id)
+        post_status = PostStatus.by_id(item.post_status_id)
+        status = post_status.status.title() if post_status else ""
+        colour = post_status.colour if post_status else "fff"
+        category = Category.by_id(item.category_id)
+        post_image = PostImage.by_attr_all('post_id', item.id)
+        filepath = '/img/placeholder_img.jpg'
+        if post_image:
+            filepath = os.path.join('/img/posts', post_image[0].filepath)
+        offers_table = self.get_sales_offers_table(**{'post_id': post_id})
+        html = f"""
+        <div class="card mb-3">
+            <div id="post{item.id}" class="card-header sales_order collapsed" data-toggle="collapse" data-target="#orders{item.id}" aria-expanded="true" aria-controls="orders{item.id}">
+                <i class="fa fa-angle-up rotate_icon" aria-hidden="true"></i>
+                <table>
+                    <tbody>
+                        <tr>
+                            <td class="sales_order_img text-center">
+                                <img alt='image description' height='auto' src='{filepath}'>
+                            </td>
+                            <td class="post_content pl-3">
+                                <h6 class="title"><a href="/posts?id={item.id}">{item.title}</a></h6>
+                                <div class="order_post_details">
+                                    <div>
+                                        <strong class="order_info_lbl">Posted on: </strong>
+                                        {item.added.strftime('%b %d, %Y')}
+                                    </div>
+                                    <div class="add-id">
+                                        <strong class="order_info_lbl">Listed Price: </strong>
+                                        {get_currency_by_locale(item.price)}
+                                    </div>
+                                    <strong class="order_info_lbl">Status: </strong><span class="status active" style="color: #{colour};">{status}</span>
+                                </div>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <div id="orders{item.id}" class="collapse" aria-labelledby="post{item.id}" data-parent="#accordion">
+                <div class="card-body p-0 salesOfferTableDiv">
+                    {offers_table}
+                </div>
+            </div>
+        </div>
+        """
+        return html
+
+    @expose()
+    def get_sales_offers_table(self, *args, **kwargs):
+        post_id = kwargs.get('post_id', None)
+        if not post_id:
+            return ""
+        outputlist = []
+        dbase_query = DBSession.query(Order). \
+            filter(Order.post_id == post_id). \
+            filter(Order.seller_active == True). \
+            order_by(desc(Order.updated)). \
+            all()
+        record_count = len(dbase_query)
+        sold_status = COMMON.get_order_status_id('sold')
+        decline_status = COMMON.get_order_status_id('declined')
+        for item in dbase_query:
+            buyer = Student.by_id(item.buyer_id)
+            filepath = f"/img/students/{buyer.filepath}" if not buyer.filepath == None else "/img/nouserimage.svg"
+            star_rating = COMMON.get_star_rating(**{'student_id': item.buyer_id})
+            buyer_name = f"""
+                <div class="chat_img mr-2 ml-2"><img class="rounded-circle chat_profile_pic" src="{filepath}"></div>
+                <div>
+                    <a class="display_link" href="/my_account/direct_message?selected_contact={item.buyer_id}"><strong>{buyer.display_name}</strong> <i class="fa fa-comments-o" aria-hidden="true"></i></a></br>
+                    {star_rating}
+                </div>
+            """
+            order_status = OrderStatus.by_id(item.order_status_id)
+            actions = ""
+            if order_status.id == COMMON.get_order_status_id('active'):
+                actions = f"""
+                    <button type="button" class="btn btn-success btn-sm offerBtn"
+                        post_id="{item.post_id}" order_id="{item.id}" status_id="{sold_status}">Accept
+                    </button>
+
+                    <button type="button" class="btn btn-danger btn-sm offerBtn"
+                        post_id="{item.post_id}" order_id="{item.id}" status_id="{decline_status}">Decline
+                    </button>
+                """
+            elif order_status.id == (COMMON.get_order_status_id('cancelled')) or (COMMON.get_order_status_id('declined')):
+                actions = f"""
+                    <button type="button" class="btn btn-danger btn-sm removeOffer"
+                        post_id="{item.post_id}" order_id="{item.id}">Remove
+                    </button>
+                """
+            outputlist.append({
+                'buyer_id' : buyer_name,
+                'offer_amount' : get_currency_by_locale(item.offer_amount),
+                'added' : item.added.strftime('%b %d, %Y'),
+                'status' : f'<span class="status active" style="color: #{order_status.colour};">{order_status.status}</span>',
+                'actions' : actions,
+                             })
+        dbcolumnlist=[
+                'buyer_id',
+                'offer_amount',
+                'added',
+                'status',
+                'actions',
+                    ]
+        theadlist=[
+                'Buyer',
+                'Offer',
+                'Offer Date',
+                'Status',
+                'Actions',
+                ]
+        tdclasslist = [
+            'd-flex',
+            'text-center',
+            'text-center',
+            'text-center',
+            'text-center',
+            ]
+        rowclass = "order_row"
+        javascript = """
+        <script>
+            $('.offerBtn').click(function(e){
+                var status_id = $(this).attr('status_id');
+                var kwargs = {
+                    'post_id': $(this).attr('post_id'),
+                    'order_id': $(this).attr('order_id'),
+                    'status_id': status_id
+                };
+                var salesOfferTableDiv = $(this).closest('.salesOfferTableDiv');
+                $.post('/my_account/update_sales_offer_status?', kwargs, function(data){
+                    var result = JSON.parse(data);
+                    if(result.success === 'true'){
+                        salesOfferTableDiv.load('/my_account/get_sales_offers_table?', kwargs , function(data){
+                            console.log('reload sales orders');
+                            return false;
+                        });
+                        return false;
+                    }
+                    return false;
+                });
+                e.preventDefault();
+                return false;
+            });
+            $('.offerBtn[status_id=4]').click(function(){
+                console.log(this);
+                var kwargs = {
+                    'post_id': $(this).attr('post_id'),
+                };
+                $('#dialogdiv').load('/my_account/accept_offer_options_modal', kwargs, function(data){
+                    $('#salesDiv').load('/my_account/get_sales_overview');
+                    return false;
+                });
+            });
+            $('.removeOffer').click(function(){
+                var kwargs = {
+                    'post_id': $(this).attr('post_id'),
+                    'order_id': $(this).attr('order_id'),
+                    'status_id': $(this).attr('status_id')
+                };
+                $.post('/my_account/remove_seller_offer?', kwargs, function(data){
+                    var result = JSON.parse(data);
+                    if(result.success === 'true'){
+                        $('#salesOffersDiv').load('/my_account/get_sales_offers');
+                    }
+                    return false;
+                });
+            });
+        </script>
+        """
+        return build_html_table(outputlist, dbcolumnlist, theadlist, f"offer_table", tdclasslist, rowclass) + javascript
+
+
+
+
+
+
+
+
+
+    @expose()
+    def update_sales_offer_status(self, *args, **kwargs):
+        status_id = str_to_int(kwargs.get('status_id', None))
+        if not status_id:
+            return json.dumps({'success' : 'false'})
+        order_id = kwargs.get('order_id', None)
+        if not order_id:
+            return json.dumps({'success' : 'false'})
+        this = Order.by_id(order_id)
+        this.order_status_id = status_id
+        this.updated = datetime.now()
+        DBSession.flush()
+        post_item = Post.by_id(this.post_id)
+        if status_id == COMMON.get_order_status_id('declined'):
+            params = {
+                'recipient_id': this.added_by,
+                'message': f"Your offer on '{post_item.title}' has been declined."
+            }
+            CHAT.send_message(**params)
+        if status_id == COMMON.get_order_status_id('sold'):
+            message = f"Automated Message: Your offer on '{post_item.title}' has been accepted, please refer to the Calabash mobile app for payment."
+            params = {
+                'recipient_id': this.added_by,
+                'message' : message,
+            }
+            CHAT.send_message(**params)
+        return json.dumps({'success' : 'true'})
+
+    def handle_sale(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+
+        order_id = kwargs.get('order_id', None)
+        if not order_id:
+            return False
+
+        notification_id = kwargs.get('notification_id', None)
+        if not notification_id:
+            return False
+
+        order_notification = Sale()
+        order_notification.order_id = order_id
+        order_notification.notification_id = notification_id
+        order_notification.sale_status_id = STATUS_ID_PENDING
+        order_notification.added_by = usernow.id
+        DBSession.add(order_notification)
+        DBSession.flush()
+        return True
+
+    def get_safetytips_subtext(self, *args, **kwargs):
+        dbase_query = SafetyTips.get_all()
+        if not dbase_query: return ''
+        safety_tips = f"<br/><small><b>Safety Tips</b>  "
+        for tip in dbase_query:
+            safety_tips += f"{tip.desc} "
+        safety_tips += "</small>"
+        return safety_tips
+
+    @expose()
+    def get_sold_offers_table(self, *args, **kwargs):
+        post_id = kwargs.get('post_id', None)
+        if not post_id:
+            return ""
+        outputlist = []
+        dbase_query = DBSession.query(Order). \
+            filter(Order.post_id == post_id). \
+            filter(Order.order_status_id == COMMON.get_order_status_id('sold')). \
+            filter(Order.seller_active == True). \
+            filter(Order.active == True). \
+            order_by(desc(Order.updated)). \
+            all()
+        record_count = len(dbase_query)
+        sold_status = COMMON.get_order_status_id('sold')
+        decline_status = COMMON.get_order_status_id('declined')
+        for item in dbase_query:
+            buyer = Student.by_id(item.buyer_id)
+            filepath = f"/img/students/{buyer.filepath}" if not buyer.filepath == None else "/img/nouserimage.svg"
+            star_rating = COMMON.get_star_rating(**{'student_id': item.buyer_id})
+            buyer_name = f"""
+                <div class="chat_img mr-2 ml-2"><img class="rounded-circle chat_profile_pic" src="{filepath}"></div>
+                <div>
+                    <a class="display_link" href="/my_account/direct_message?selected_contact={item.buyer_id}"><strong>{buyer.display_name}</strong> <i class="fa fa-comments-o" aria-hidden="true"></i></a></br>
+                    {star_rating}
+                </div>
+            """
+            order_status = OrderStatus.by_id(item.order_status_id)
+            actions = ""
+            if order_status.id == COMMON.get_order_status_id('active'):
+                actions = f"""
+                    <button type="button" class="btn btn-success btn-sm offerBtn"
+                        post_id="{item.post_id}" order_id="{item.id}" status_id="{sold_status}">Accept
+                    </button>
+
+                    <button type="button" class="btn btn-danger btn-sm offerBtn"
+                        post_id="{item.post_id}" order_id="{item.id}" status_id="{decline_status}">Decline
+                    </button>
+                """
+            elif order_status.id == (COMMON.get_order_status_id('cancelled')) or (COMMON.get_order_status_id('declined')):
+                actions = f"""
+                    <button type="button" class="btn btn-danger btn-sm removeOffer"
+                        post_id="{item.post_id}" order_id="{item.id}">Remove
+                    </button>
+                """
+            outputlist.append({
+                'buyer_id' : buyer_name,
+                'offer_amount' : get_currency_by_locale(item.offer_amount),
+                'added' : item.added.strftime('%b %d, %Y'),
+                'status' : f'<span class="status active" style="color: #{order_status.colour};">{order_status.status}</span>',
+                'actions' : actions,
+                             })
+        dbcolumnlist=[
+                'buyer_id',
+                'offer_amount',
+                'added',
+                'status',
+                'actions',
+                    ]
+        theadlist=[
+                'Buyer',
+                'Offer',
+                'Offer Date',
+                'Status',
+                'Actions',
+                ]
+        tdclasslist = [
+            'd-flex',
+            'text-center',
+            'text-center',
+            'text-center',
+            'text-center',
+            ]
+        rowclass = "order_row"
+        javascript = """
+        <script>
+            $('.offerBtn').click(function(e){
+                e.preventDefault();
+                var status_id = $(this).attr('status_id');
+                var kwargs = {
+                    'post_id': $(this).attr('post_id'),
+                    'order_id': $(this).attr('order_id'),
+                    'status_id': status_id
+                };
+                var salesOfferTableDiv = $(this).closest('.soldOfferTableDiv');
+                $.post('/my_account/update_sales_offer_status?', kwargs, function(data){
+                    var result = JSON.parse(data);
+                    if(result.success === 'true'){
+                        salesOfferTableDiv.load('/my_account/get_sales_offers_table?', kwargs , function(data){
+                            console.log('reload sales orders');
+                            return false;
+                        });
+                        return false;
+                    }
+                    return false;
+                });
+                return false;
+            });
+            $('.offerBtn[status_id=4]').click(function(){
+                var kwargs = {
+                    'post_id': $(this).attr('post_id'),
+                };
+                $('#dialogdiv').load('/my_account/accept_offer_options_modal', kwargs, function(data){
+                    return false;
+                });
+            });
+            $('.removeOffer').click(function(){
+                var kwargs = {
+                    'post_id': $(this).attr('post_id'),
+                    'order_id': $(this).attr('order_id'),
+                    'status_id': $(this).attr('status_id')
+                };
+                $.post('/my_account/remove_seller_offer?', kwargs, function(data){
+                    var result = JSON.parse(data);
+                    if(result.success === 'true'){
+                        $('#salesOffersDiv').load('/my_account/get_sales_offers');
+                    }
+                    return false;
+                });
+            });
+        </script>
+        """
+        return build_html_table(outputlist, dbcolumnlist, theadlist, f"offer_table", tdclasslist, rowclass) + javascript
+
+    @expose()
+    def remove_seller_offer(self, *args, **kwargs):
+        order_id = kwargs.get('order_id', None)
+        if not order_id:
+            return json.dumps({'success' : 'false'})
+        this = Order.by_id(order_id)
+        this.seller_active = False
+        this.seller_unread = False
+        this.updated = datetime.now()
+        return json.dumps({'success' : 'true'})
+
+    def create_eiffel_make_sale_notifications(self, *args, **kwargs):
+        post_id = kwargs.get('post_id', None)
+        if not post_id:
+            return False
+
+        post = Post.by_id(post_id)
+        if not post:
+            return False
+
+        order = Order.by_attr_first('post_id', post_id)
+        if not order:
+            return False
+
+        if not order.buyer_id or not order.seller_id:
+            return False
+
+        buyer = Student.by_id(order.buyer_id)
+        seller = Student.by_id(order.seller_id)
+
+        notify_seller_message = f'Digikamva pending payment: Pending receipt for {post.title} of {get_currency_by_locale(order.offer_amount)} from {buyer.formal_name}.'
+        notify_seller_params = {'from_entity_id' : buyer.entity_id,
+                                'to_entity_id' : seller.entity_id,
+                                'amount' : order.offer_amount,
+                                'message' : notify_seller_message, }
+        notify_seller_notification = GATEWAY.create_eiffel_buyer_to_seller_sale_notification(notify_seller_params)
+        success = notify_seller_notification.get('success', False)
+        if not success:
+            False
+        notify_seller_notification_id = notify_seller_notification.get('data', '')
+
+        notify_buyer_message = f'Digikamva payment request: Payment request for {post.title} of {get_currency_by_locale(order.offer_amount)} to {seller.formal_name}.'
+        notify_buyer_params = {'from_entity_id' : seller.entity_id,
+                                'to_entity_id' : buyer.entity_id,
+                                'amount' : order.offer_amount,
+                                'message' : notify_buyer_message, }
+        notify_buyer_notification = GATEWAY.create_eiffel_seller_to_buyer_sale_notification(notify_buyer_params)
+        success = notify_buyer_notification.get('success', False)
+        if not success:
+            False
+
+        success = self.handle_sale(**{'order_id': order.id, 'notification_id' : notify_seller_notification_id})
+        if not success:
+            return False
+
+        return True
+
+    @expose()
+    def accept_offer_options_modal(self, *args, **kwargs):
+        post_id = kwargs.get('post_id', None)
+        # result = self.create_eiffel_make_sale_notifications(**kwargs)
+        html = f"""
+        <div id="offerOptionsModal" class="modal" tabindex="-1" role="dialog">
+            <div class="modal-dialog modal-dialog-centered" role="document">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">Ad options</h5>
+                    </div>
+                    <div class="modal-body">
+                        <h6>Would you like to deactivate this ad?</h6>
+                    </div>
+                    <div class="modal-footer">
+                        <button id="btn_update_post_status_deactivated" type="button" class="btn btn-primary" post_id={post_id}>Deactivate this ad</button>
+                        <button type="button" class="btn btn-outline-primary" data-dismiss="modal">Keep it active</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        javascript = """
+        <script>
+            $('#btn_update_post_status_deactivated').click(function(){
+                var kwargs = 'post_id='+$(this).attr('post_id')
+                $.post('/my_account/update_post_status_deactivated', kwargs, function(data){
+                    var result = JSON.parse(data);
+                    if(result.success === 'true'){
+                        $('#salesOffersDiv').load('/my_account/get_sales_offers');
+                        $('#salesDiv').load('/my_account/get_sales_overview');
+                        $('#offerOptionsModal').modal('hide');
+                    }
+                    return false;
+                });
+            });
+            $('#offerOptionsModal').modal();
+        </script>
+     	"""
+        return html + javascript
+
+    @expose()
+    def get_posts_html_tbl(self, posts_list, **kwargs):
+        if not posts_list: return "No items to show"
+        outputlist = []
+        actions_type = kwargs.get('actions_type', 'my_ads')
+        for item in posts_list:
+            post_status = PostStatus.by_id(item.post_status_id)
+            status = post_status.status.title() if post_status else ""
+            colour = post_status.colour if post_status else "fff"
+            category = Category.by_id(item.category_id)
+            post_image = PostImage.by_attr_all('post_id', item.id)
+            filepath = '/img/placeholder_img.jpg'
+            if post_image:
+                filepath = os.path.join('/img/posts', post_image[0].filepath)
+            product_title = f"""
+            <h6 class="title"><a href="/posts?id={item.id}">{item.title}</a></h6>
+            <span class="add-id">
+                <strong>Ad ID: </strong>
+                {item.id}
+            </span>
+            <span>
+                <strong>Posted on: </strong>
+                {item.added.strftime('%b %d, %Y')}
+            </span>
+            <span class="status active" style="color: #{colour};"><strong>Status: </strong>{status}</span>
+            """
+            actions = self.get_table_actions(**{'post_id': item.id, 'actions_type': actions_type})
+            outputlist.append({
+                'image': f"<img alt='image description' height='auto' src='{filepath}'>",
+                'title': product_title,
+                'category': f"<span class='categories'><a href='/posts/search?id={category.id}'>{category.title}</a></span>",
+                'action': actions,
+                             })
+        dbcolumnlist=[
+                'image',
+                'title',
+                'category',
+                'action',
+                    ]
+        theadlist=[
+                'Image',
+                'Product Title',
+                'Category',
+                'Action',
+                ]
+        tdclasslist=[
+                'product-thumb',
+                'product-details',
+                'product-category',
+                'tbl_actions pl-0 pr-0',
+        ]
+        return build_html_table(outputlist, dbcolumnlist, theadlist, "my_ads_table", tdclasslist)
+
+    def get_table_actions(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+        student_id = Student.by_id(usernow.id)
+        post_id = kwargs.get('post_id', None)
+        if not post_id:
+            return ""
+        actions_type = kwargs.get('actions_type', None)
+        if not actions_type:
+            return ""
+        if actions_type == 'my_ads' or actions_type == 'my_sales' :
+            return self.get_my_ads_actions(**{'post_id': post_id})
+        elif actions_type == 'pending_orders':
+            return self.get_pending_orders_actions(**{'post_id': post_id})
+        elif actions_type == 'purchased_orders':
+            return self.get_purchased_orders_actions(**{'post_id': post_id})
+
+    def get_my_ads_actions(self, *args, **kwargs):
+        post_id = kwargs.get('post_id', None)
+        if not post_id:
+            return ""
+        return f"""
+            <div>
+                <ul class="list-inline">
+                    <li class="list-inline-item">
+                        <a class="action_icon view" href="/posts?id={post_id}">
+                            <i class="fa fa-eye"></i>
+                        </a>
+                    </li>
+                    <li class="list-inline-item">
+                        <a class="action_icon edit" href="/my_account/edit_ad?id={post_id}">
+                            <i class="fa fa-pencil"></i>
+                        </a>
+                    </li>
+                    <li class="list-inline-item">
+                        <div class="action_icon delete update_post_status_deactivated" post_id="{post_id}">
+                            <i class="fa fa-trash"></i>
+                        </div>
+                    </li>
+                </ul>
+            </div>
+        """
+
+    def get_pending_orders_actions(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+        student = Student.by_id(usernow.id)
+        post_id = kwargs.get('post_id', None)
+        if not post_id:
+            return ""
+        order_item = DBSession.query(Order). \
+            filter(Order.buyer_id == student.id). \
+            filter(Order.post_id == post_id). \
+            filter(Order.order_status_id == COMMON.get_order_status_id('active')). \
+            filter(Order.active == True). \
+            first()
+        order_id = order_item.id
+        return f"""
+            <div>
+                <ul class="list-inline">
+                    <li class="list-inline-item">
+                        <a class="action_icon view" href="/posts?id={post_id}">
+                            <i class="fa fa-eye"></i>
+                        </a>
+                    </li>
+                    <li class="list-inline-item">
+                        <div class="action_icon delete cancel_order" order_id="{order_id}">
+                            <i class="fa fa-trash"></i>
+                        </div>
+                    </li>
+                </ul>
+            </div>
+        """
+
+    def get_purchased_orders_actions(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+        student = Student.by_id(usernow.id)
+        post_id = kwargs.get('post_id', None)
+        if not post_id:
+            return ""
+        order_item = DBSession.query(Order). \
+            filter(Order.buyer_id == student.id). \
+            filter(Order.post_id == post_id). \
+            filter(Order.order_status_id == COMMON.get_order_status_id('sold')). \
+            filter(Order.active == True). \
+            first()
+        order_id = order_item.id
+        return f"""
+            <div>
+                <ul class="list-inline">
+                    <li class="list-inline-item">
+                        <div class="action_icon delete delete_sold_order" order_id="{order_id}">
+                            <i class="fa fa-trash"></i>
+                        </div>
+                    </li>
+                </ul>
+            </div>
+        """
+
+
+
+
+    @expose()
+    def get_mobile_sales_offers(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+        dbase_query = DBSession.query(Post). \
+            join(Order, Order.post_id == Post.id). \
+            filter(Order.order_status_id != COMMON.get_order_status_id('sold')). \
+            filter(Order.seller_active == True). \
+            filter(Post.post_status_id == COMMON.get_post_status_id('active')). \
+            filter(Post.added_by == usernow.id). \
+            filter(Post.active == True). \
+            order_by(desc(Order.updated)). \
+            all()
+        html = ""
+        for item in dbase_query:
+            post_image = PostImage.by_attr_all('post_id', item.id)
+            filepath = '/img/placeholder_img.jpg'
+            if post_image:
+                filepath = os.path.join('/img/posts', post_image[0].filepath)
+            count = DBSession.query(Order). \
+                filter(Order.post_id == item.id). \
+                filter(Order.seller_active == True). \
+                filter(Order.active == True). \
+                value(func.count(Order.id))
+            offer_cards = self.get_mobile_offer_cards(**{'post_id': item.id})
+            html += f"""
+                <div class="card card-background mt-2" data-toggle="collapse"
+                        href="#post{item.id}" role="button" aria-expanded="false" aria-controls="post{item.id}">
+                    <div class="image" style="background-image: url(&quot;{filepath}&quot;); background-position: center center; background-size: cover;">
+                        <div class="filter"></div>
+                    </div>
+                    <div class="content">
+                        <div class="mx-3 mt-3">
+                            <h4 class="title ">{item.title}</h4>
+                            <h4 class="text-white">{get_currency_by_locale(item.price)}</h4>
+                        </div>
+                    </div>
+                    <div class="card_footer row">
+
+                        <span class="ml-3">Posted: {item.added.strftime('%b %d, %Y')}</span>
+                        <span class="ml-auto">{count} Offers</span>
+                    </div>
+                </div>
+                <div class="collapse pt-2" id="post{item.id}">
+                    {offer_cards}
+                </div>
+            """
+        return html
+
+    def get_mobile_offer_cards(self, *args, **kwargs):
+        post_id = kwargs.get('post_id', None)
+        if not post_id: return ''
+        dbase_query = DBSession.query(Order). \
+            filter(Order.post_id == post_id). \
+            filter(Order.active == True). \
+            filter(Order.seller_active == True). \
+            order_by(Order.added.asc()). \
+            all()
+        html = ""
+        for item in dbase_query:
+            student  = Student.by_id(item.buyer_id)
+            if not student: continue
+            filepath = os.path.join('/img/students', student.filepath)
+            star_rating = COMMON.get_star_rating(**{'student_id': item.buyer_id})
+            order_status = OrderStatus.by_id(item.order_status_id)
+            html += f"""
+            <div class="card card-body mb-2">
+                <div class="d-flex align-items-center">
+                    <img src="{filepath}" class="rounded-circle chat_profile_pic mr-3">
+                    <div>
+                        <span>{student.formal_name}</span>
+                        {star_rating}
+                    </div>
+                    <span class="status active ml-auto align-self-start" style="color: #{order_status.colour};">{order_status.status}</span>
+                </div>
+                <div class="mt-2 d-flex justify-content-between">
+                    <div>
+                        <span class="subtext">Offer</span>
+                        <h4 class="mb-0">{get_currency_by_locale(item.offer_amount)}</h4>
+                    </div>
+                    <div class="text-right">
+                        <span class="subtext">Offer Date</span>
+                        <h4 class="mb-0">{item.added.strftime('%b %d, %Y')}</h4>
+                    </div>
+                </div>
+            </div>
+            """
+        return html
+
+    @expose()
+    def get_mobile_sales_order_post(self, *args, **kwargs):
+        post_id = kwargs.get('post_id', None)
+        if not post_id: return ""
+
+        item = Post.by_id(post_id)
+        post_status = PostStatus.by_id(item.post_status_id)
+        status = post_status.status.title() if post_status else ""
+        colour = post_status.colour if post_status else "fff"
+        category = Category.by_id(item.category_id)
+        post_image = PostImage.by_attr_all('post_id', item.id)
+        filepath = '/img/placeholder_img.jpg'
+        if post_image:
+            filepath = os.path.join('/img/posts', post_image[0].filepath)
+        html = f"""
+        <div class="card mb-3">
+            <div id="post{item.id}" class="card-header sales_order collapsed" data-toggle="collapse" data-target="#orders{item.id}" aria-expanded="true" aria-controls="orders{item.id}">
+                <i class="fa fa-angle-up rotate_icon" aria-hidden="true"></i>
+                <table>
+                    <tbody>
+                        <tr>
+                            <td class="sales_order_img text-center">
+                                <img alt='image description' height='auto' src='{filepath}'>
+                            </td>
+                            <td class="post_content pl-3">
+                                <div class="col-md-12">
+                                    <div class="card card-background">
+                                        <div class="image">
+                                            <img src="{filepath}" alt="..." />
+                                            <div class="filter"></div>
+                                        </div>
+                                            <div class="content">
+                                            <h5 class="price">&euro; 129, 00
+                                                    <a href="#" class="pull-right">
+                                                    <i class="fa fa-heart"></i>
+                                                    </a>
+                                                </h5>
+                                            <a href="#"><br>
+                                                <h4 class="title">{item.title}</h4>
+
+                                            </a>
+                                        </div>
+                                        <div class="footer">
+                                            <div class="stats pull-right">
+                                                <i class="fa fa-comment"></i>  {status}
+                                            </div>
+                                        </div>
+                                    </div> <!-- end card -->
+                                </div>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <div id="orders{item.id}" class="collapse" aria-labelledby="post{item.id}" data-parent="#accordion">
+                <div class="card-body p-0 salesOfferTableDiv">
+                    Content for accordion item goes here
+                </div>
+            </div>
+        </div>
+        """
+        return html
+
+    @expose()
+    def get_sales_overview(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+        dbase_query = DBSession.query(Post). \
+            join(Order, Order.post_id == Post.id). \
+            filter(Order.order_status_id == COMMON.get_order_status_id('sold')). \
+            filter(Order.seller_active == True). \
+            filter(Order.active == True). \
+            filter(Post.added_by == usernow.id). \
+            filter(Post.active == True). \
+            order_by(desc(Post.added))
+        row_count = dbase_query.count()
+        dbase_query = dbase_query.all()
+        html = f"""
+        <div class="widget dashboard-container my-adslist">
+            <h3 class="widget-header">Sales Overview</h3>
+        """
+        if dbase_query:
+            html += '<div id="soldAccordion">'
+            index = 0
+            for item in dbase_query:
+                sales_order_post = self.get_sold_order_post(**{'post_id': item.id, 'table_type': 'sale', 'row_count': row_count})
+                html += f"""
+                <div class="salesOverviewDiv" post_id="{item.id}">
+                    {sales_order_post}
+                </div>
+                """
+                index += 1
+        else:
+            html += "No items to show"
+
+        html += f"""
+            </div>
+        </div>
+        """
+        javascript = """
+        <script>
+        $(document).ready(function(){
+            $('.salesOverviewDiv').click(function(){
+                $('.salesOfferTableDiv').empty();
+                var post_id = $(this).attr('post_id');
+                var kwargs = {
+                    'post_id': post_id,
+                };
+                var collapseDiv = $(this).find('.collapse');
+                var soldOfferTableDiv = $(this).find('.soldOfferTableDiv');
+                soldOfferTableDiv.load('/my_account/get_sold_offers_table', kwargs, function(data){
+                    $('#soldOrders'+post_id).collapse('toggle');
+                });
+
+            });
+        });
+        </script>
+        """
+        return html
+
+    @expose()
+    def get_sold_order_post(self, *args, **kwargs):
+        post_id = kwargs.get('post_id', None)
+        if not post_id:
+            return ""
+        row_count = kwargs.get('row_count', 0)
+        if row_count < 1:
+            return "No items to show"
+
+        item = Post.by_id(post_id)
+        row_index = kwargs.get('row_index', 1)
+        post_status = PostStatus.by_id(item.post_status_id)
+        status = post_status.status.title() if post_status else ""
+        colour = post_status.colour if post_status else "fff"
+        category = Category.by_id(item.category_id)
+        post_image = PostImage.by_attr_all('post_id', item.id)
+        filepath = '/img/placeholder_img.jpg'
+        if post_image:
+            filepath = os.path.join('/img/posts', post_image[0].filepath)
+        sold_table = self.get_sold_offers_table(**{'post_id': post_id})
+        html = f"""
+        <div class="card mb-3">
+            <div id="post{item.id}" class="card-header sales_order collapsed" data-toggle="collapse" data-target="#soldOrders{item.id}" aria-expanded="true" aria-controls="soldOrders{item.id}">
+                <i class="fa fa-angle-up rotate_icon" aria-hidden="true"></i>
+                <table>
+                    <tbody>
+                        <tr>
+                            <td class="sales_order_img text-center">
+                                <img alt='image description' height='auto' src='{filepath}'>
+                            </td>
+                            <td class="post_content pl-3">
+                                <h6 class="title"><a href="/posts?id={item.id}">{item.title}</a></h6>
+                                <div class="order_post_details">
+                                    <div>
+                                        <strong class="order_info_lbl">Posted on: </strong>
+                                        {item.added.strftime('%b %d, %Y')}
+                                    </div>
+                                    <div class="add-id">
+                                        <strong class="order_info_lbl">Listed Price: </strong>
+                                        {get_currency_by_locale(item.price)}
+                                    </div>
+                                    <strong class="order_info_lbl">Status: </strong><span class="status active" style="color: #{colour};">{status}</span>
+                                </div>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <div id="soldOrders{item.id}" class="collapse" aria-labelledby="post{item.id}" data-parent="#soldAccordion">
+                <div class="card-body p-0 soldOfferTableDiv">
+                    {sold_table}
+                </div>
+            </div>
+        </div>
+        """
+        return html
+
+    @require(CustomNotAnonymous())
+    @expose('eiffel_front.templates.2_col_med_right')
+    def direct_message(self, *args, **kwargs):
+        chat = CHAT.get_chat()
+        left_col = self.get_left_col()
+        right_col = f'<div class="chat-wrapper">{chat}</div>'
+        javascript = """
+        $('.user_info_div').load('/my_account/get_user_info_html');
+        $('#mainNav .nav-item').removeClass('active');
+        $('#myAccountLink').addClass('active');
+        """
+        return dict(title='My Account', left_col=left_col, right_col=right_col, javascript=javascript)
+
+    @expose()
+    def get_rating_modal(self, *args, **kwargs):
+        post_id = kwargs.get('post_id', None)
+        if not post_id:
+            return ''
+        post = Post.by_id(post_id)
+        star_rating = COMMON.get_star_rating(**{'student_id': post.added_by, 'star_class': 'fs-40 text-center'})
+        html = f"""
+        <div id="ratingModal" class="modal" tabindex="-1" role="dialog">
+            <div class="modal-dialog modal-dialog-centered" role="document">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">Feedback on transaction</h5>
+                    </div>
+                    <div class="modal-body">
+                        <p>Your feedback will help others.</p>
+                        <p>We would appreciate your input regarding the transaction that you concluded for: </p>
+                        <h6>"{post.title}"</p>
+                        <p>How would you rate your experience?</p>
+                        {star_rating}
+                    </div>
+                    <div class="modal-footer">
+                        <button id="ratingSubmitBtn" type="button" class="btn btn-primary">Submit</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        javascript = """
+        <script>
+            $('#ratingSubmitBtn').click(function(){
+                if ($('.star-set').data('submitted') == 'True'){
+                    $('#ratingModal').modal('hide');
+                } else {
+                    showNotification('warning', 'Please select a star rating for this transaction.');
+                }
+                return false;
+            });
+            $('#ratingModal').modal();
+        </script>
+     	"""
+        return html + javascript
+
+    def update_session_student_dict(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+
+        result = GATEWAY.get_user_profile({'entity_id' : usernow.entity_id, 'passthrough': True})
+
+        success = result.get('success', False)
+        if not success:
+            return False
+
+        data = result.get('data', {})
+        if not data:
+            return False
+
+        session['student_dict'] = data
+        session.save()
+        return True

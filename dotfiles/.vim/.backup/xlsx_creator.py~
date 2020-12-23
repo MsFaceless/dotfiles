@@ -1,0 +1,58 @@
+import os
+import xlsxwriter
+
+class ExcelWriter():
+    def __init__(self, *args, **kwargs):
+
+        self.filepath = kwargs.get('filepath', None)
+        self.headers = kwargs.get('headers', None)
+        self.records = kwargs.get('records', [])
+        requireds = ['filepath', 'headers']
+        for require in requireds:
+            if not getattr(self, require): raise Exception
+        self.workbook = xlsxwriter.Workbook(self.filepath)
+        self.worksheet = self.workbook.add_worksheet()
+
+    def validate_records(self):
+        for header in self.headers:
+            for record in self.records:
+                if header.lower().replace(" ", "_") not in record.keys(): return f"Record Validation Failed - missing header '{header}': {record}"
+        return True
+
+    def generate_file(self):
+        if not self.validate_records(): return False
+
+        for col in range(len(self.headers)):
+            header = self.headers[col]
+            header_key = self.headers[col].lower().replace(" ", "_")
+
+            self.worksheet.write(0, col, header)
+
+            for row in range(len(self.records)):
+                rowitem = self.records[row][header_key]
+                self.worksheet.write(row + 1, col, rowitem)
+        self.workbook.close()
+        return True
+
+
+
+if __name__ == "__main__":
+    curdir = os.path.abspath(os.path.curdir)
+    source_dir = os.path.split(curdir)[0]
+    public_dir = os.path.join(source_dir, 'public')
+    excel_dir = os.path.join(public_dir, 'excel')
+    generated_dir = os.path.join(excel_dir, 'generated')
+    if not os.path.exists(generated_dir): os.mkdir(generated_dir)
+    filepath = os.path.join(generated_dir, 'testoutfile.xlsx')
+    writer_payload = {
+            'filepath':filepath,
+            'headers':['Code', 'Description', 'Purchase Method', 'Count'],
+            'records':[
+                {'code':'bewim','description':'bewim', 'purchase_method':'Batch Import', 'count':17},
+                {'code':'bnwgd','description':'bnwgd', 'purchase_method':'Batch Import', 'count':14},
+                {'code':'bnzyy','description':'bnzyy', 'purchase_method':'Batch Import', 'count':17},
+                {'code':'clzrz','description':'clzrz', 'purchase_method':'Batch Import', 'count':17},
+                ],
+            }
+    writer = ExcelWriter(**writer_payload)
+    filecreated = writer.generate_file()

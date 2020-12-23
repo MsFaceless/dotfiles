@@ -1,0 +1,242 @@
+#!/bin/python
+# -*- coding: utf-8 -*-
+
+import re
+import os
+import transaction
+from tg import request
+from pkg_resources import resource_filename
+
+from rocket.model import *
+from rocket.lib.tg_utils import *
+from rocket.lib.batch_import import ImportHandler
+import pandas as pd
+
+FILENAME = os.path.abspath(resource_filename('rocket', 'public'))
+PUBLIC_DIRNAME = os.path.join(FILENAME)
+EXCEL_DIRNAME = os.path.join(PUBLIC_DIRNAME, 'excel')
+
+__all__ = [ 'FamilyImport', 'FamilyImportRecovery', ]
+
+class FamilyImport(ImportHandler):
+
+    def __repr__(self):
+        return f'<FamilyImport: filename={self.filename}>'
+
+    def __init__(self, *args, **kwargs):
+        super(FamilyImport, self).__init__(**kwargs)
+        self.product_id = None
+
+    def start_import(self, *args, **kwargs):
+        start = datetime.now()
+        self.create_batch_import()
+        self.new_batch_import_audit(f'Family import starting for {self.sane_filename}')
+        parse_result = self.run_parse()
+        if parse_result:
+            import_result = self.run_import()
+            if import_result:
+                self.run_complete()
+        self.new_batch_import_audit(f'Family import ending for {self.sane_filename}. Duration: {datetime.now() - start}')
+        return 'true'
+
+    def run_parse(self, *args, **kwargs):
+        start = datetime.now()
+        self.new_batch_import_audit(f'Parse starting for {self.sane_filename}')
+
+        rejected_count = 0
+        accepted_count = 0
+        fileobject = self.get_file_from_pandas()
+
+        for i, row in fileobject.iterrows():
+
+            if not self.confirm_parse_family(row):
+                rejected_count += 1
+                self.new_batch_import_error(f'Missing family information for row {i+1}')
+                continue
+
+            if FamilyRequest.by_batch_id_number(self.batch_import_id, row.get('MemberIDNumber'), row.get('IDNumber')):
+                rejected_count += 1
+                self.new_batch_import_error(f'Duplicate family request for row {i+1}')
+                continue
+
+            self.save_family_request(row)
+            accepted_count += 1
+
+        this = BatchImport.by_id(self.batch_import_id)
+        this.notes = 'Start=>Parse'
+        this.total_count = fileobject.shape[0]
+        this.rejected_count = rejected_count
+        this.accepted_count =  0
+        DBSession.flush()
+        transaction.commit()
+
+        self.new_batch_import_audit(f'Parse ending for {self.sane_filename}. Duration: {datetime.now() - start}')
+        return True
+
+    def run_import(self, *args, **kwargs):
+        start = datetime.now()
+        self.delete_import_file()
+        self.new_batch_import_audit(f'Import starting for {self.sane_filename}')
+
+        this = BatchImport.by_id(self.batch_import_id)
+        this.notes = 'Start=>Parse=>Import'
+        this.is_complete_load = False
+        this.is_complete_update = False
+        this.is_successful = False
+        rejected_count = this.rejected_count
+        DBSession.flush()
+        transaction.commit()
+
+        requestlist = FamilyRequest.by_batch_id(self.batch_import_id)
+        for req in requestlist:
+            member_dict = self.fetch_member(req.member_id_number)
+            if not member_dict:
+                rejected_count += 1
+                self.new_batch_import_error(f'Member not found for record {req.id}')
+                continue
+
+            family_dict = self.confirm_member(req.id_number, req.first_name, req.surname, req.mobile, get_id_from_enum_name(Gender, req.gender), req.date_of_birth)
+            if not family_dict:
+                rejected_count += 1
+                self.new_batch_import_error(f'Family member record creation failed for MemberRequest {req.id}')
+                continue
+
+            member_id = member_dict.get('member').id
+            family_member_id = family_dict.get('member').id
+            if not self.confirm_family_member(member_id, family_member_id, req.relationship):
+                rejected_count += 1
+                self.new_batch_import_error(f'Unable to create relationship {req.id}')
+                DBSession.delete(req)
+                continue
+
+            DBSession.delete(req)
+
+        this = BatchImport.by_id(self.batch_import_id)
+        this.rejected_count = rejected_count
+        this.accepted_count = (this.total_count - this.rejected_count) if (this.total_count >= this.rejected_count) else 0
+        this.is_complete_load = True
+        this.is_complete_update = False
+        this.is_successful = False
+        DBSession.flush()
+        transaction.commit()
+
+        self.new_batch_import_audit(f'Import ending for {self.sane_filename}. Duration: {datetime.now() - start}')
+        return True
+
+    def run_complete(self, *args, **kwargs):
+        start = datetime.now()
+        self.new_batch_import_audit(f'Complete starting for {self.sane_filename}')
+
+        requestlist = FamilyRequest.by_batch_id(self.batch_import_id)
+        if requestlist:
+            len_requestlist = len([x for x in requestlist])
+            self.new_batch_import_error(f'{len_requestlist} FamilyRequests still exist for {self.sane_filename}')
+
+        this = BatchImport.by_id(self.batch_import_id)
+        this.notes = 'Start=>Parse=>Import=>Complete'
+        this.is_complete_load = True
+        this.is_complete_update = True
+        this.is_successful = True
+        this.accepted_count = this.total_count - this.rejected_count if this.total_count >= this.rejected_count else 0
+        DBSession.flush()
+        transaction.commit()
+
+        self.new_batch_import_audit(f'Complete ending for {self.sane_filename}. Duration: {datetime.now() - start}')
+        return True
+
+    def fetch_member(self, id_number):
+        member = COMMONORC.get_member_by_id_number(**{'id_number' : id_number})
+        if not member: return False
+        return member
+
+    def confirm_parse_family(self, row):
+        member_id_number = row.get('MemberIDNumber', None)
+        relationship = row.get('Relationship', None)
+        id_number = row.get('IDNumber', None)
+        name = row.get('Name', None)
+        surname = row.get('Surname', None)
+        return all([member_id_number, relationship, id_number, name, surname])
+
+    def save_family_request(self, row):
+        this = FamilyRequest()
+        this.batch_import_id = self.batch_import_id
+        this.group_id = self.group_id
+        this.member_id_number = row.get('MemberIDNumber', None)
+        this.relationship = row.get('Relationship', None)
+        this.id_number = row.get('IDNumber', None)
+        this.first_name = row.get('Name', None)
+        this.surname = row.get('Surname', None)
+        this.mobile = row.get('MobileNumber', None)
+        this.gender = row.get('Gender', None)
+        this.date_of_birth = sane_date(row.get('DOB', None))
+        this.added_by = self.usernow.id
+        DBSession.add(this)
+        DBSession.flush()
+
+    def confirm_family_member(self, member_id, family_member_id, relationship):
+        if relationship.upper() == 'SELF': return True
+        memberfamily = EntityPersonFamily.by_member_and_family_id(member_id, family_member_id)
+        if not memberfamily:
+            memberfamily = EntityPersonFamily()
+            memberfamily.member_id = member_id
+            memberfamily.family_member_id = family_member_id
+            memberfamily.relationship_type_id = get_id_from_enum_name(Relationship, relationship.title())
+            memberfamily.added_by = self.usernow.id
+            DBSession.add(memberfamily)
+            DBSession.flush()
+        return True
+
+class FamilyImportRecovery(FamilyImport):
+
+    def __repr__(self):
+        return f'<FamilyImportRecovery: filename={self.filename}>'
+
+    def __init__(self, *args, **kwargs):
+        self.batch_import_id = kwargs.get('batch_import_id', None)
+        batchimport = BatchImport.by_id(self.batch_import_id)
+        self.group_id = batchimport.group_id
+        self.product_id = batchimport.product_id
+        self.filename = batchimport.filename
+        self.import_type_id = batchimport.import_type_id
+        self.usernow = request.identity.get('user', {})
+        self.sane_filename = remove_hash_from_filename(self.filename)
+        self.accepted_count = batchimport.accepted_count
+        self.rejected_count = batchimport.rejected_count
+        self.total_count = batchimport.total_count
+        self.restart_import()
+
+    def restart_import(self, *args, **kwargs):
+        start = datetime.now()
+        if not self.batch_import_id: return False
+        batch_import = BatchImport.by_id(self.batch_import_id)
+        if not batch_import: return False
+        if batch_import.is_complete_load and batch_import.is_complete_update:
+            batch_import.is_successful = True
+            DBSession.flush()
+            transaction.commit()
+            return True
+
+        self.new_batch_import_audit(f'Family import recovery started for {self.sane_filename}')
+        filepath = os.path.join(EXCEL_DIRNAME, self.filename)
+        if os.path.isfile(filepath):
+            parse_result = self.run_parse()
+            if not parse_result:
+                self.new_batch_import_audit(f'Family import recovery failed. (Parse) Duration: {datetime.now() - start}')
+                return False
+
+        if not batch_import.is_complete_load and batch_import.is_complete_update: batch_import.is_complete_update = False
+        if not batch_import.is_complete_load:
+            import_result = self.run_import()
+            if not import_result:
+                self.new_batch_import_audit(f'Family import recovery failed. (Import) Duration: {datetime.now() - start}')
+                return False
+
+        batch_import = BatchImport.by_id(self.batch_import_id)
+        if not batch_import.is_complete_update:
+            complete_result = self.run_complete()
+            if not complete_result:
+                self.new_batch_import_audit(f'Family import recovery failed. (Complete]) Duration: {datetime.now() - start}')
+                return False
+
+        self.new_batch_import_audit(f'Family import recovery completed for {self.sane_filename}. Duration: {datetime.now() - start}')
+        return True

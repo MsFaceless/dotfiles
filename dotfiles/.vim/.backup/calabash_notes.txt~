@@ -1,0 +1,71 @@
+def check_has_notifications(self, *args, **kwargs):
+    input (either but not both)
+    entity id
+    username
+
+    output
+    success bln
+
+
+def get_notifications_list(self, *args, **kwargs):
+    input (either but not both)
+    entity id
+    username
+
+    output
+    success bln
+    seen []
+    unseen []
+
+    notifications dict
+        message
+        notification id
+        success bln
+        actions
+            endpoint + kwargs
+
+tjaart posts this from eiffel
+def create_eiffelcorp_premium_ad_payment_notification(self, *args, **kwargs):
+    input
+    seller entity id
+    amount
+    post id (response)
+    message str
+
+    output
+    success bln
+    notification id
+
+    #transaction type (hardcoded into endpoint) - NOT MVP
+
+tafadzwa knows this from the endpoints in the actions list
+def create_calabash_mobile_premium_ad_payment_notification(self, *args, **kwargs):
+    input
+    notification id
+    accepted bln
+    transaction type (hardcoded into endpoint)
+
+    output
+    success bln
+    notification id
+
+
+
+_______________________________________________________________________________
+#
+# FOR TOMORROW
+#______________________________________________________________________________
+
+notifications/create eiffel transaction
+    input
+
+NOT MVP
+notifications/set notification viewed
+    input notification id
+    output success bln
+
+NOT MVP
+notifications/set notification deleted
+    input notification id
+    output success bln
+

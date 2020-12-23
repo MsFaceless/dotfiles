@@ -1,0 +1,30 @@
+# -*- coding: utf-8 -*-
+
+from wordcloud import WordCloud
+
+class MediaWordCloud:
+
+    def __init__(self, *args, **kwargs):
+        self.text = kwargs.get('text', None)
+        self.file_path = kwargs.get('file_path', None)
+        self.stopwords = kwargs.get('stopwords', None)
+
+    def generate_image(self, *args, **kwargs):
+        if not self.text:
+            return False
+
+        if not self.file_path:
+            return False
+
+        wc = WordCloud()
+        wc.generate_from_text(self.text).to_file(self.file_path)
+        print('image')
+
+if __name__ == "__main__":
+
+    kwargs = {
+        'text' : 'this is a texty text text test',
+        'file_path' : 'wordcloud.png',
+    }
+    mwc = MediaWordCloud(**kwargs)
+    mwc.generate_image()

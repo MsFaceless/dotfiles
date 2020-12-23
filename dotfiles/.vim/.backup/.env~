@@ -1,0 +1,20 @@
+VAULT_BASE_URL='http://vault.calabashpay.co.za'
+#GATEWAY_BASE_URL='http://gateway.calabashpay.co.za'
+GATEWAY_BASE_URL='https://gateway.calabashpay.co.za'
+
+NETCASH_BASE_URL='https://paynow.netcash.co.za/Site/PayNowQR.aspx?'
+NETCASH_KEY='ag5zfm15LWltYWxpLXZhc3IUCxIHQXBpS2V5cxiAgIDWz5-bCgw'
+
+MYIMALI_BASE_URL='https://my-imali-testing.appspot.com'
+CALABASH_KEY='ahJzfm15LWltYWxpLXRlc3RpbmdyFAsSB0FwaUtleXMYgICArLCahwoM'
+EIFFEL_KEY='ahJzfm15LWltYWxpLXRlc3RpbmdyFAsSB0FwaUtleXMYgICAvMHFpwoM'
+CALLBACK_URL='https://gateway.calabashpay.co.za/receive_callback?'
+EMAIL_FROM_ADDRESS='developer@dotxmltech.com'
+EMAIL_PASSWORD='ntfgivrkryxrunny'
+
+# TWILIO - Calabash Campus
+ACCOUNT_SID='AC83724059b301018de02caea36671ca70'
+AUTH_TOKEN='65ed344f19a4666af9a14425109ce515'
+MESSAGING_SID='MGee15989cd586b31283cff93ab6c632e7'
+TWILIO_NUMBER='+12562428083'
+WHATSAPP_NUMBER='+14155238886'

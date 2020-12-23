@@ -1,0 +1,1021 @@
+# -*- coding: utf-8 -*-
+"""Home controller module"""
+
+import string
+import logging
+import transaction
+import humanize
+from datetime import datetime, timedelta, time
+
+from tg import predicates, expose, require, redirect, validate, \
+        flash, url, request, response, predicates, session
+
+from calmerchant_app.model import *
+from calmerchant_app.lib.base import BaseController
+from calmerchant_app.lib.tg_utils import *
+from calmerchant_app.lib.gateway_utils import *
+from calmerchant_app.lib.phos.phos_requests import *
+from calmerchant_app.lib.tg_decorators import time_it, CustomNotAnonymous
+from calmerchant_app.controllers.common import CommonController
+
+from sqlalchemy import func, desc, asc ,  or_
+
+COMMON = CommonController()
+
+TIMEOUT_WAIT_IN_MINS = 0
+PAGE_SIZE_LIMIT = 10000
+
+log = logging.getLogger(__name__)
+
+class HomeController(BaseController):
+
+###############################################################################
+# Dashboard
+###############################################################################
+
+    @expose()
+    def get_footer_html(self, *args, **kwargs):
+        current_year = datetime.now().strftime('%Y')
+        html = f"""
+        <div class="container-fluid">
+            <div class="row">
+                <div class="credits ml-auto">
+                    <span class="copyright">
+                        &copy; {current_year} by CΛLΛBΛSH
+                    </span>
+                </div>
+            </div>
+        </div>
+        """
+        return html
+
+    @expose()
+    def get_navbar_html(self, *args, **kwargs):
+        if not request.identity:
+            return ''
+
+        usernow = request.identity.get('user', {})
+        profile_html = ''
+        if usernow.bln_kyced:
+            profile_html = f"""
+            <li class="nav-item dropdown">
+                <a class="nav-link dropdown-toggle" id="navbarDropdownMenuLink" data-toggle="dropdown" aria-haspopup="true"
+                    aria-expanded="false">
+                    <i class="fas fa-user mr-1"></i>
+                        {usernow.display_name}
+                    <p>
+                    <span class="d-lg-none d-md-block"></span>
+                    </p>
+                </a>
+                <div class="dropdown-menu dropdown-menu-right" aria-labelledby="navbarDropdownMenuLink">
+                    <a class="dropdown-item" href="/profile">My Profile</a>
+                </div>
+            </li>
+            """
+
+        html = f"""
+        <div class="container-fluid">
+            <div class="navbar-wrapper">
+                <div class="navbar-toggle">
+                    <button type="button" class="navbar-toggler">
+                        <span class="navbar-toggler-bar bar1"></span>
+                        <span class="navbar-toggler-bar bar2"></span>
+                        <span class="navbar-toggler-bar bar3"></span>
+                    </button>
+                </div>
+                <a class="navbar-brand" href="">My Business | Dashboard</a>
+            </div>
+            <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navigation"
+                aria-controls="navigation-index" aria-expanded="false" aria-label="Toggle navigation">
+                <span class="navbar-toggler-bar navbar-kebab"></span>
+                <span class="navbar-toggler-bar navbar-kebab"></span>
+                <span class="navbar-toggler-bar navbar-kebab"></span>
+            </button>
+            <div class="collapse navbar-collapse justify-content-end" id="navigation">
+                <ul class="navbar-nav">
+                    {profile_html}
+                    <li class="nav-item">
+                        <a class="nav-link" href="/logout_handler">
+                            <i class="fas fa-sign-out-alt"></i>
+                            <p>
+                            <span class="d-lg-none d-md-block">Sign out</span>
+                            </p>
+                        </a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+        """
+        return html
+
+    @expose()
+    def get_sidebar_html(self, *args, **kwargs):
+        user_img = '/img/default-avatar.png'
+        nav_items = self.get_nav_items_html()
+        html = f"""
+        <div class="sidebar">
+            <div class="logo">
+                <a href="/" class="simple-text logo-mini">
+                    <div class="logo-image-small">
+                        CΛ
+                    </div>
+                </a>
+                <a href="/" class="simple-text logo-normal">
+                    <img src="/img/calabash_logo_white.svg" class="image" alt="Brand Logo">
+                </a>
+            </div>
+            <div class="sidebar-wrapper">
+                <ul class="nav">
+                    {nav_items}
+                </ul>
+            </div>
+        </div>
+        """
+        javascript = """
+        <script>
+            var origin = window.location.origin;
+            var url = window.location.href.replace(origin, '');
+            $('.sidebar-wrapper a').each(function(){
+                var href = $(this).attr('href');
+                if(href === url){
+                    $(this).closest('li').addClass('active');
+                    $(this).closest('li').parent().closest('div').addClass('show');
+                    $(this).closest('li').parent().closest('li').addClass('active');
+                    $(this).closest('li').parent().closest('a').attr('aria-expanded', true);
+                };
+            });
+            /*
+            $.post('/home/run_update_balance_and_history?', function(data){
+                return false;
+            });
+            */
+        </script>
+        """
+        return html + javascript
+
+    def get_nav_items_html(self, *args, **kwargs):
+        if not request.identity:
+            return ''
+        usernow = request.identity.get('user', {})
+        step = COMMON.get_registration_stage()
+        step_display = 'Complete' if step == 4 else f'(step {step}/4)'
+        nav_items_list = [
+            {'destination': '/register', 'icon': 'fas fa-tasks', 'title': f'Registration {step_display}'},
+        ]
+        if step >= 2:
+            reg_steps = {}
+            if step < 4:
+                reg_steps = {'destination': '/register/wizard', 'icon': 'fas fa-tasks', 'title': f'Registration {step_display}'}
+            nav_items_list = [
+                reg_steps,
+                {'destination': '/', 'icon': 'fas fa-university', 'title': 'Dashboard'},
+                {'destination': '/transaction', 'icon': 'fas fa-file-alt', 'title': 'My Transactions'},
+                {'destination': '/payment/payout', 'icon': 'fas fa-exchange-alt', 'title': 'Payout'},
+                {'destination': '/profile', 'icon': 'fas fa-user', 'title': 'My Profile'},
+                {'destination': '/profile/my_business', 'icon': 'fas fa-store', 'title': 'My Business'},
+                {'destination': '/logout_handler', 'icon': 'fas fa-sign-out-alt', 'title': 'Logout'},
+
+                # Agents hidden until we can make payments to them 4 Aug 2020
+                # {'destination': '/agent', 'icon': 'fas fa-users', 'title': 'Sales Agents'},
+
+                # Beneficiaries hidden because they are intended for customers not merchants 4 Aug 2020
+                # {'destination': '/beneficiary', 'icon': 'fas fa-user-friends', 'title': 'My Beneficiaries'},
+
+                # {'destination': '/card', 'icon': 'fas fa-credit-card', 'title': 'My Cards'},
+                # {'destination': '/device', 'icon': 'fas fa-mobile-alt', 'title': 'My Devices'},
+                # {'destination': '/payment', 'icon': 'fas fa-money-bill-alt', 'title': 'Payments'},
+            ]
+        nav_items = ''
+        for item in nav_items_list:
+            if not item:
+                continue
+            nav_items += f"""
+            <li>
+                <a href="{item.get('destination', '/')}">
+                    <i class="{item.get('icon', 'fas fa-university')}"></i>
+                    <p>{item.get('title', 'Dashboard')}</p>
+                </a>
+            </li>
+            """
+        return nav_items
+
+    @expose()
+    def get_notifications_html(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+        stage = COMMON.get_registration_stage()
+        if stage < 4:
+            return COMMON.get_progress_card()
+
+    @require(CustomNotAnonymous())
+    def get_home_html(self, *args, **kwargs):
+        today_card = self.get_today_sales_html()
+        week_card = self.get_week_sales_html()
+        month_card = self.get_month_sales_html()
+        balance_card = self.get_balance_html()
+        html = f"""
+        <div class="row">
+            {today_card}
+            {week_card}
+            {month_card}
+            {balance_card}
+        </div>
+        <div class="row">
+            <div id='div_table' class="col-lg-5 col-md-12">
+            </div>
+            <div id='div_chart' class="col-lg-7 col-md-12">
+            </div>
+        </div>
+        """
+        javascript = """
+        <script>
+            $('#div_balance .fa-refresh').click(function(e){
+                e.preventDefault();
+                $(this).addClass('fa-spin');
+                $.post('/home/run_update_balance_and_history?', function(data){
+                    location.reload();
+                    return false;
+                });
+            });
+
+            $('#div_today').click(function(){
+                $('.card-stats').removeClass('active');
+                $(this).children('.card-stats').addClass('active');
+                loadTableAndChart('/home/get_today_table_html', '/home/get_today_chart_html');
+            });
+            $('#div_today').trigger('click');
+
+            $('#div_week').click(function(){
+                $('.card-stats').removeClass('active');
+                $(this).children('.card-stats').addClass('active');
+                loadTableAndChart('/home/get_week_table_html', '/home/get_week_chart_html');
+            });
+            $('#div_month').click(function(){
+                $('.card-stats').removeClass('active');
+                $(this).children('.card-stats').addClass('active');
+                loadTableAndChart('/home/get_month_table_html', '/home/get_month_chart_html');
+            });
+
+            function loadTableAndChart(table_url, chart_url){
+                $('#div_table').load(table_url, function(data){
+                    return false;
+                });
+                $('#div_chart').load(chart_url, function(data){
+                    return false;
+                });
+            };
+
+        </script>
+        """
+        return html + javascript
+
+    @expose()
+    def get_month_table_html(self, *args, **kwargs):
+        return COMMON.get_month_table_html()
+
+###############################################################################
+# Overview Cards
+###############################################################################
+
+    def get_today_sales_html(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+
+        today = datetime.date(datetime.now())
+        today_balance = DBSession.query(TransactionHistory). \
+                filter(TransactionHistory.myimali_username == usernow.myimali_username). \
+                filter(TransactionHistory.type=='purchase'). \
+                filter(TransactionHistory.date == today). \
+                value(func.sum(TransactionHistory.amount))
+        if not today_balance: today_balance = 0
+        today_balance = get_currency_by_locale(today_balance)
+
+        yesterday = today - timedelta(days=1)
+        yesterday_balance = DBSession.query(TransactionHistory). \
+                filter(TransactionHistory.myimali_username == usernow.myimali_username). \
+                filter(TransactionHistory.type=='purchase'). \
+                filter(TransactionHistory.date == yesterday). \
+                value(func.sum(TransactionHistory.amount))
+        if not yesterday_balance: yesterday_balance = 0
+        yesterday_balance = get_currency_by_locale(yesterday_balance)
+
+        today_arrow, today_success = 'up', 'success'
+        if yesterday_balance > today_balance:
+            today_arrow, today_success = 'down', 'danger'
+
+        html = f"""
+        <div id='div_today' class="col-lg-3 col-md-6 col-sm-6">
+            <div class="card card-stats">
+                <div class="card-body ">
+                    <div class="row">
+                        <div class="col-5 col-md-2">
+                            <div class="icon-big text-center text-{today_success}">
+                                <i class="fa fa-long-arrow-{today_arrow}" aria-hidden="true"></i>
+                            </div>
+                        </div>
+                        <div class="col-7 col-md-10">
+                            <div class="numbers">
+                                <p class="card-category">Today's Sales</p>
+                                <p class="card-title">{today_balance}<p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="card-footer ">
+                    <hr>
+                    <div class="stats d-flex align-items-center">
+                        <span>
+                            Yesterday {yesterday_balance}
+                        </span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        return html
+
+    def get_week_sales_html(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+
+        today = datetime.date(datetime.now())
+        last_week = today - timedelta(days=7)
+        prev_week = today - timedelta(days=14)
+
+        last_week_balance = 0
+        prev_week_balance = get_currency_by_locale(0)
+
+        last_week_balance = DBSession.query(TransactionHistory). \
+                filter(TransactionHistory.myimali_username == usernow.myimali_username). \
+                filter(TransactionHistory.type=='purchase'). \
+                filter(TransactionHistory.date >= last_week). \
+                value(func.sum(TransactionHistory.amount))
+        if not last_week_balance: last_week_balance = 0
+        last_week_balance = get_currency_by_locale(last_week_balance)
+
+        prev_week_balance = DBSession.query(TransactionHistory). \
+                filter(TransactionHistory.myimali_username == usernow.myimali_username). \
+                filter(TransactionHistory.type=='purchase'). \
+                filter(TransactionHistory.date >= prev_week). \
+                filter(TransactionHistory.date <= last_week). \
+                value(func.sum(TransactionHistory.amount))
+        if not prev_week_balance: prev_week_balance = 0
+        prev_week_balance = get_currency_by_locale(prev_week_balance)
+
+        week_arrow, week_success = 'up', 'success'
+        if prev_week_balance > last_week_balance:
+            week_arrow, week_success = 'down', 'danger'
+
+        last_week = last_week.strftime('%d %b')
+        prev_week = prev_week.strftime('%d %b')
+        html = f"""
+        <div id='div_week' class="col-lg-3 col-md-6 col-sm-6">
+            <div class="card card-stats">
+                <div class="card-body ">
+                    <div class="row">
+                        <div class="col-5 col-md-2">
+                            <div class="icon-big text-center text-{week_success}">
+                                <i class="fa fa-long-arrow-{week_arrow}" aria-hidden="true"></i>
+                            </div>
+                        </div>
+                        <div class="col-7 col-md-10">
+                            <div class="numbers">
+                                <p class="card-category">Total 7 days</p>
+                                <p class="card-title">{last_week_balance}<p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="card-footer ">
+                    <hr>
+                    <div class="stats">
+                        <i class="fa fa-calendar-o"></i>
+                        From {prev_week} | To {last_week}
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        return html
+
+    def get_month_sales_html(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+
+        NUM = 30
+        today = datetime.date(datetime.now())
+        last_month = today - timedelta(days=NUM)
+
+        last_month_balance = DBSession.query(TransactionHistory). \
+                filter(TransactionHistory.myimali_username == usernow.myimali_username). \
+                filter(TransactionHistory.type=='purchase'). \
+                filter(TransactionHistory.date >= last_month). \
+                value(func.sum(TransactionHistory.amount))
+        last_month_average = last_month_balance / 30 if last_month_balance else 0
+        last_month_average = get_currency_by_locale(last_month_average)
+
+        last_month = last_month.strftime('%d %b')
+        html = f"""
+        <div id='div_month' class="col-lg-3 col-md-6 col-sm-6">
+            <div class="card card-stats">
+                <div class="card-body ">
+                    <div class="row">
+                        <div class="col-5 col-md-2">
+                            <div class="icon-big text-center text-danger">
+                                <i class="fa fa-long-arrow-down" aria-hidden="true"></i>
+                            </div>
+                        </div>
+                        <div class="col-7 col-md-10">
+                            <div class="numbers">
+                                <p class="card-category">Avg 30 Days</p>
+                                <p class="card-title">{last_month_average}<p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="card-footer ">
+                    <hr>
+                    <div class="stats">
+                        <i class="fa fa-clock-o"></i>
+                        From {last_month}
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        return html
+
+    def get_last_run(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+        last_run = DBSession.query(LastRun). \
+                filter(LastRun.myimali_username == usernow.myimali_username). \
+                first()
+        if not last_run:
+            latest = DBSession.query(TransactionHistory). \
+                    filter_by(myimali_username = usernow.myimali_username). \
+                    order_by(TransactionHistory.added.desc()). \
+                    first()
+            if latest:
+                datetime = latest.added
+            else:
+                datetime = None
+
+            last_run = LastRun()
+            last_run.myimali_username = usernow.myimali_username
+            last_run.datetime = datetime
+            DBSession.add(last_run)
+            DBSession.flush()
+        return humanize.naturaltime(last_run.datetime)
+
+    def get_balance_html(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+
+        available_balance = get_currency_by_locale(0)
+        pending_balance = get_currency_by_locale(0)
+
+        merchant_balance = MerchantBalance.by_attr_first('myimali_username', usernow.myimali_username)
+        if merchant_balance:
+            available_balance = get_currency_by_locale(merchant_balance.available_balance, cents=False)
+            pending_balance = get_currency_by_locale(merchant_balance.pending_balance, cents=False)
+
+        last_run = self.get_last_run()
+        html = f"""
+        <div id='div_balance' class="col-lg-3 col-md-6 col-sm-6">
+            <div class="card card-stats">
+                <div class="card-body ">
+                    <div class="row">
+                        <div class="col-md-12">
+                            <div class="numbers">
+                                <p class="card-category">Available Balance</p>
+                                <p class="card-title">{available_balance}<p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="card-footer ">
+                    <hr>
+                    <div class="stats d-flex align-items-center">
+                        <i class="fa fa-refresh" username='{usernow.myimali_username}'></i>
+                        <span>{last_run}</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        return html
+
+###############################################################################
+# Transaction Table
+###############################################################################
+
+    @expose()
+    def get_today_table_html(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+        today = datetime.date(datetime.now())
+        params = {
+            'to_date': today,
+            'from_date': today,
+            'transaction_type': 'purchase',
+            'username': usernow.myimali_username,
+            'page_size' : PAGE_SIZE_LIMIT,
+        }
+        outputlist = get_paginated_transaction_history(params)
+        inputlist = []
+        if outputlist.get('success'):
+            data = outputlist.get('data', {})
+            inputlist = data.get('items', [])
+        return COMMON.get_transaction_table_html(inputlist)
+
+    @expose()
+    def get_week_table_html(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+        today = datetime.date(datetime.now())
+        last_week = today - timedelta(days=7)
+        params = {
+            'to_date': today,
+            'from_date': last_week,
+            'transaction_type': 'purchase',
+            'username': usernow.myimali_username,
+            'page_size' : PAGE_SIZE_LIMIT,
+        }
+        outputlist = get_paginated_transaction_history(params)
+        inputlist = []
+        if outputlist.get('success'):
+            data = outputlist.get('data', {})
+            inputlist = data.get('items', [])
+        return COMMON.get_transaction_table_html(inputlist)
+
+###############################################################################
+# Chartjs Canvas
+###############################################################################
+
+    @expose()
+    def get_today_chart_html(self, *args, **kwargs):
+        html = self.get_chartjs_canvas_html("Today's Sales", 'Hourly earnings')
+        javacsript = """
+        <script>
+            $(document).ready(function(){
+                $.getJSON('/home/get_today_datalist', function (data) {
+                    var config = getChartOptions(data);
+                    var ctx = document.getElementById('chartjs_canvas').getContext('2d');
+                    var chart = new Chart(ctx, config);
+                    return false;
+                });
+            });
+        </script>
+        """
+        return html + javacsript
+
+    @expose()
+    def get_week_chart_html(self, *args, **kwargs):
+        html = self.get_chartjs_canvas_html("This Week's Sales", 'Daily earnings')
+        javacsript = """
+        <script>
+            $(document).ready(function(){
+                $.getJSON('/home/get_week_datalist', function (data) {
+                    var config = getChartOptions(data);
+                    var ctx = document.getElementById('chartjs_canvas').getContext('2d');
+                    var chart = new Chart(ctx, config);
+                    return false;
+                });
+            });
+        </script>
+        """
+        return html + javacsript
+
+    @expose()
+    def get_month_chart_html(self, *args, **kwargs):
+        html = self.get_chartjs_canvas_html("This Month's Sales", 'Daily earnings')
+        javacsript = """
+        <script>
+            $(document).ready(function(){
+                $.getJSON('/home/get_month_datalist', function (data) {
+                    var config = getChartOptions(data);
+                    var ctx = document.getElementById('chartjs_canvas').getContext('2d');
+                    var chart = new Chart(ctx, config);
+                    return false;
+                });
+            });
+        </script>
+        """
+        return html + javacsript
+
+    def get_chartjs_canvas_html(self, time_period='Example Time Period', title='Example Title', *args, **kwargs):
+        html = f"""
+        <div class="card">
+            <div class="card-header">
+                <div class="row">
+                    <div class="col-sm-7">
+                        <div class="numbers pull-left">
+                            {time_period}
+                        </div>
+                    </div>
+                    <div class="col-sm-5">
+                        <div class="pull-right">
+                            <span class="badge badge-pill badge-success">
+                                today increase percent
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="card-body">
+                <h6 class="big-title">{title}</h6>
+                <canvas id="chartjs_canvas" width="826" height="380"></canvas>
+            </div>
+            <div class="card-footer">
+              <small class="text-muted">Please note: Money out is displayed as a positive value for better comparison.</small>
+            </div>
+        </div>
+        """
+        return html
+
+    @expose()
+    def get_today_datalist(self, *args, **kwargs):
+        return self.get_hourly_datalist()
+
+    @expose()
+    def get_week_datalist(self, *args, **kwargs):
+        return self.get_daily_datalist(7)
+
+    @expose()
+    def get_month_datalist(self, *args, **kwargs):
+        return self.get_daily_datalist(30)
+
+    def get_daily_datalist(self, period=7, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+
+        today = datetime.date(datetime.now())
+        start_date = today - timedelta(days=period)
+        daylist = [start_date + timedelta(days=i) for i in range(period+1)]
+        output = {
+            'x_label': 'Days',
+            'y_label': 'Amounts',
+        }
+        earnings_list = []
+        refund_list = []
+        label_list = []
+
+        params = {
+            'to_date': today,
+            'from_date': start_date,
+            'username': usernow.myimali_username,
+            'page_size' : PAGE_SIZE_LIMIT,
+        }
+        result = get_paginated_transaction_history(params)
+        success = result.get('success', False)
+        if not success:
+            return json.dumps({})
+
+        data = result.get('data', {})
+        if not data:
+            return json.dumps({})
+
+        outputlist = data.get('items', [])
+
+        for i, day in enumerate(daylist):
+
+            label_list.append(day.strftime('%d %b'))
+
+            this_day_list = [x for x in outputlist if datetime.strptime(x.get('date', None), '%Y%m%d').date() == day]
+            this_purchase_list = [x for x in this_day_list if x.get('type', None) == 'purchase']
+            this_refund_list = [x for x in this_day_list if x.get('type', None) == 'refund']
+
+            this_day_balance = 0
+            if this_purchase_list:
+                this_day_balance = sum([int(x.get('amount', 0)) for x in this_purchase_list])
+                if this_day_balance:
+                    this_day_balance = this_day_balance / 100
+            earnings_list.append(abs(this_day_balance))
+
+            this_day_refund = 0
+            if this_refund_list:
+                this_day_refund = sum([int(x.get('amount', 0)) for x in this_refund_list])
+                if this_day_refund:
+                    this_day_refund = this_day_refund / 100
+            refund_list.append(abs(this_day_refund))
+
+            """
+            day_balance = DBSession.query(TransactionHistory). \
+                    filter(TransactionHistory.myimali_username == usernow.myimali_username). \
+                    filter(TransactionHistory.type=='purchase'). \
+                    filter(TransactionHistory.date == day). \
+                    value(func.sum(TransactionHistory.amount))
+            day_balance = day_balance / 100 if day_balance else 0
+            day_balance = float(day_balance)
+            earnings_list.append(abs(day_balance))
+            """
+
+            """
+            day_refund = DBSession.query(TransactionHistory). \
+                    filter(TransactionHistory.myimali_username == usernow.myimali_username). \
+                    filter(TransactionHistory.type=='refund'). \
+                    filter(TransactionHistory.date == day). \
+                    value(func.sum(TransactionHistory.amount))
+            day_refund = day_refund / 100 if day_refund else 0
+            day_refund = float(day_refund)
+            refund_list.append(abs(day_refund))
+            """
+
+        output['datasets']  = [
+            { 'label': 'Earnings','color': 'rgb(65, 184, 83)','data': earnings_list},
+            { 'label': 'Refunds','color': 'rgb(255, 26, 110)','data': refund_list}
+        ]
+        output['labels'] = label_list
+        return json.dumps(output)
+
+    def get_hourly_datalist(self, duration=24, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+
+        midnight = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        hourlist = [midnight + timedelta(hours=i) for i in range(duration+1)]
+        output = {
+            'x_label': 'Hours',
+            'y_label': 'Amounts',
+        }
+        earnings_list = []
+        refund_list = []
+        label_list = []
+
+        #today = datetime.date(datetime.now())
+        today = datetime.date(datetime.now()) - timedelta(days = 7)
+        params = {
+            'to_date': today,
+            'from_date': today,
+            'username': usernow.myimali_username,
+            'page_size' : PAGE_SIZE_LIMIT,
+        }
+        outputlist = get_paginated_transaction_history(params)
+        print()
+        print('get_hourly_datalist')
+        print(today)
+        #print(outputlist)
+        print()
+
+        for i, hour in enumerate(hourlist):
+
+            label_list.append(hour.strftime('%H:%M'))
+
+            try:
+                next_hour = hourlist[i+1]
+            except IndexError:
+                next_hour = hourlist[i]
+
+            hour_balance = DBSession.query(TransactionHistory). \
+                    filter(TransactionHistory.myimali_username == usernow.myimali_username). \
+                    filter(TransactionHistory.type=='purchase'). \
+                    filter(TransactionHistory.datetime >= hour). \
+                    filter(TransactionHistory.datetime <= next_hour). \
+                    value(func.sum(TransactionHistory.amount))
+            hour_balance = hour_balance / 100 if hour_balance else 0
+            hour_balance = float(hour_balance)
+            earnings_list.append(abs(hour_balance))
+
+            hour_refund = DBSession.query(TransactionHistory). \
+                    filter(TransactionHistory.myimali_username == usernow.myimali_username). \
+                    filter(TransactionHistory.type=='refund'). \
+                    filter(TransactionHistory.datetime >= hour). \
+                    filter(TransactionHistory.datetime <= next_hour). \
+                    value(func.sum(TransactionHistory.amount))
+            hour_refund = hour_refund / 100 if hour_refund else 0
+            hour_refund = float(hour_refund)
+            refund_list.append(abs(hour_refund))
+
+        output['datasets']  = [
+            { 'label': 'Earnings','color': 'rgb(65, 184, 83)','data': earnings_list},
+            { 'label': 'Refunds','color': 'rgb(255, 26, 110)','data': refund_list}
+        ]
+        output['labels'] = label_list
+        return json.dumps(output)
+
+###############################################################################
+# Dashboard Utils
+###############################################################################
+
+    @time_it
+    @expose()
+    def run_update_balance_and_history(self, *args, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            usernow = request.identity.get('user', {})
+            username = usernow.myimali_username
+        if not username:
+            return ''
+
+        limit = kwargs.get('limit', 100)
+
+        self.crud_balance_for_username(username)
+        self.crud_history_for_username(username, limit)
+        return ''
+
+    def crud_history_for_username(self, username=None, limit=None, *args, **kwargs):
+        if not username:
+            return False
+
+        result = get_transaction_history(username, limit)
+        historylist = result.get('data', [])
+        for item in historylist:
+
+            date = item.get('date', None)
+            type = item.get('type', None)
+            amount = item.get('amount', None)
+            time = item.get('time', None)
+            seconds = item.get('seconds', None)
+            balance = item.get('balance', None)
+            other = item.get('other', None)
+            TrxId = item.get('TrxId', None)
+            paymentReference = item.get('paymentReference', None)
+
+            the_date = datetime.strptime(date, '%Y%m%d')
+            the_datetime = datetime.strptime(f'{date} {time}:{seconds}', '%Y%m%d %H:%M:%S')
+
+            exists = DBSession.query(TransactionHistory). \
+                    filter_by(myimali_username = username). \
+                    filter_by(date = the_date). \
+                    filter_by(type = type). \
+                    filter_by(amount = amount). \
+                    filter_by(time = time). \
+                    filter_by(seconds = seconds). \
+                    filter_by(balance = balance). \
+                    filter_by(other = other). \
+                    filter_by(TrxId = TrxId). \
+                    filter_by(paymentReference = paymentReference). \
+                    first()
+            if not exists:
+                new = TransactionHistory()
+                new.myimali_username = username
+                new.date = the_date
+                new.type = type
+                new.amount = amount
+                new.time = time
+                new.seconds = seconds
+                new.datetime = the_datetime
+                new.balance = balance
+                new.other = other
+                new.TrxId = TrxId
+                new.paymentReference = paymentReference
+                new.added_by = 1
+                DBSession.add(new)
+                DBSession.flush()
+
+        last_run = DBSession.query(LastRun). \
+                filter(LastRun.myimali_username == username). \
+                first()
+        if last_run:
+            last_run.datetime = datetime.now()
+            DBSession.flush()
+        else:
+            last_run = LastRun()
+            last_run.myimali_username = username
+            last_run.datetime = datetime.now()
+            DBSession.flush()
+        return True
+
+    def crud_balance_for_username(self, username=None, *args, **kwargs):
+        if not username:
+            return False
+
+        available_balance = get_balance_by_username(username)
+        if not available_balance:
+            available_balance = 0
+
+        merchant_balance = MerchantBalance.by_attr_first('myimali_username', username)
+        if merchant_balance:
+            merchant_balance.available_balance = available_balance
+            DBSession.flush()
+            return True
+
+        merchant_balance = MerchantBalance()
+        merchant_balance.added_by = 1
+        merchant_balance.myimali_username = username
+        merchant_balance.available_balance = available_balance
+        DBSession.add(merchant_balance)
+        DBSession.flush()
+        return True
+
+    @require(CustomNotAnonymous())
+    @expose()
+    def crud_devices_from_phos(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+        #PHOSAPI = PhosWebScraper()
+        #devices = PHOSAPI.get_devices()
+        devices = []
+        for dev in devices:
+            number = dev.get('#', None)
+            active = dev.get('Active', None)
+            actions = dev.get('Actions', None)
+            identity = dev.get('Identity', None)
+            description = dev.get('Description', None)
+
+            exists = Device.by_attr_first('device_uuid', identity)
+            if not exists:
+                device = Device()
+                device.added_by = 1
+                device.merchant_id = usernow.user_id
+                device.name = description
+                device.device_uuid = identity
+                device.device_type_id = 1
+                device.number = number
+                device.actions = actions
+                DBSession.add(device)
+                DBSession.flush()
+        return 'true'
+
+    @require(CustomNotAnonymous())
+    @expose()
+    def crud_device_history_from_phos(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+        #PHOSAPI = PhosWebScraper()
+        #historylist = PHOSAPI.get_transactions_by_device_id()
+        historylist = []
+        for hist in historylist:
+            stan = hist.get('STAN', None)
+            exists = DeviceTransactionHistory.by_attr_first('stan', stan)
+            if not exists:
+                new = DeviceTransactionHistory()
+                new.datetime = hist.get('Date', None)
+                new.user = hist.get('User', None)
+                new.device_id = hist.get('Device ID', None)
+                new.terminal = hist.get('Terminal', None)
+                new.card_type = hist.get('Card Type', None)
+                new.pan = hist.get('PAN', None)
+                new.type = hist.get('Type', None)
+                new.status = hist.get('Status', None)
+                new.rc = hist.get('RC', None)
+                new.stan = stan
+                new.ac = hist.get('AC', None)
+                new.amount = hist.get('Amount', None)
+                new.currency = hist.get('Currency', None)
+                new.added_by = 1
+                DBSession.add(new)
+                DBSession.flush()
+        return 'true'
+
+    def confirm_user(self, *args, **kwargs):
+        username = kwargs.get('username', None)
+        exists = DBSession.query(User). \
+                filter(User.username==username). \
+                first()
+        if exists:
+            return exists
+
+        email = kwargs.get('email', None)
+        exists = DBSession.query(User). \
+                filter(User.email==email). \
+                first()
+        if exists:
+            return exists
+
+        name = kwargs.get('name', None)
+        mobile = kwargs.get('mobile', None)
+        reference = kwargs.get('REF', None)
+        surname = kwargs.get('surname', None)
+
+        user = User()
+        user.username = email
+        user.email = email
+        user.display_name = f'{name} {surname}'
+        user.password = reference
+        user.myimali_username = username
+        user.myimali_reference = reference
+        user.name = name
+        user.surname = surname
+        user.mobile = mobile
+        user.active = True
+        DBSession.add(user)
+        DBSession.flush()
+        return user
+
+    @expose()
+    def reset_password(self, *args, **kwargs):
+        password = kwargs.get('password', None)
+        if not password:
+            return 'false'
+        valid = self.validate_password(**kwargs)
+        success = json.loads(valid).get('success')
+        if not success:
+            return 'false'
+        user = User.by_user_id(kwargs.get('user_id', None))
+        if not user:
+            return 'false'
+        user.password = password
+        user.active = True
+        DBSession.flush()
+        return 'true'
+
+    @expose()
+    def validate_password(self, *args, **kwargs):
+        password = kwargs.get('password', None)
+
+        errorlist = []
+        if not any(char for char in password if char in string.ascii_uppercase):
+            errorlist.append('uppercase')
+
+        if not any(char for char in password if char in string.digits):
+            errorlist.append('digit')
+
+        if not any(char for char in password if char in string.punctuation):
+            errorlist.append('special')
+
+        if not len(password) >= 10:
+            errorlist.append('length')
+
+        success = True
+        if errorlist: success = False
+        return json.dumps({'success' : success, 'errorlist' : errorlist})

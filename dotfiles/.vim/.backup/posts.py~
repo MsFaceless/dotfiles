@@ -1,0 +1,306 @@
+# -*- coding: utf-8 -*-
+"""PostController controller module"""
+
+import os
+import json
+import time
+from datetime import datetime
+from sqlalchemy import func, desc, asc, or_
+from pkg_resources import resource_filename
+from tg import expose, require, redirect, validate, flash, url, request, response, predicates
+
+from eiffel_back.model import *
+from eiffel_back.lib.tg_utils import *
+from eiffel_back.lib.base import BaseController
+from eiffel_back.lib.tg_decorators import *
+from eiffel_back.lib.tgfileuploader import FileUploader
+from eiffel_back.lib.tg_generic_reportlab import PDFCreator, Paragraph
+from eiffel_back.controllers.common import CommonController
+from dotenv import dotenv_values
+
+dotenv_values = dotenv_values()
+
+FRONT_BASE_URL = dotenv_values.get('FRONT_BASE_URL')
+STUDENT_IMG_URL = os.path.join(FRONT_BASE_URL, 'img/students')
+POST_IMG_URL = os.path.join(FRONT_BASE_URL, 'img/posts')
+
+COMMON = CommonController()
+
+SEARCHKEY_POST = 'Post_SearchKeyWord'
+SEARCHKEY_POST_ACTIVE = 'Post_SearchActive'
+
+FILENAME = os.path.abspath(resource_filename('eiffel_back', 'public'))
+PUBLIC_DIRNAME = os.path.join(FILENAME)
+PDF_DIRNAME = os.path.join(PUBLIC_DIRNAME, 'pdf')
+IMAGES_DIRNAME = os.path.join(PUBLIC_DIRNAME, 'images')
+CATALOG_DIRNAME = os.path.join(IMAGES_DIRNAME, 'catalog_pictures')
+
+__all__ = ['PostController']
+
+class PostController(BaseController):
+
+    @require(CustomNotAnonymous())
+    @expose('eiffel_back.templates.generic')
+    def index(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+        kwargs['searchkey'] = SEARCHKEY_POST
+        kwargs['searchactive'] = SEARCHKEY_POST_ACTIVE
+
+        searchphrase = COMMON.get_searchphrase(**kwargs)
+        searchisactive = self.get_searchactive(**kwargs)
+
+        title = "All Posts"
+        htmltbl = self.get_posts_htmltbl(**kwargs)
+        html = f"""
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header card-header-primary card-header-icon">
+                        <div class="card-icon">
+                            <i class="material-icons">report</i>
+                        </div>
+                        <h4 class="card-title">All Posts</h4>
+                    </div>
+                    <div class="card-body pt-0">
+                        <div class="toolbar text-right">
+                            <div class="col-md-12 d-flex px-0">
+                                <button class="btn btn-primary btn-sm ml-2 filterButton" id='btn_all' value="all">All posts</button>
+                                <button class="btn btn-primary btn-sm ml-2 filterButton" id='btn_active' value="active">Active Posts</button>
+                                <button class="btn btn-primary btn-sm ml-2 filterButton" id='btn_inactive' value="inactive">Inactive Posts</button>
+                                <div class="ml-auto col-md-4 pl-0">
+                                    <input type="text" class="form-control search" name="searchphrase"  id='searchphrase' value='{searchphrase}' placeholder="Search">
+                                </div>
+                                <button class="btn btn-primary btn-sm ml-2" id='btn_search'>Search</button>
+                                <button class="btn btn-outline-primary btn-sm ml-2" id='btn_reset'>Reset</button>
+                            </div>
+                        </div>
+                        <div class="material-datatables mt-4" id="div_allpost">
+                            {htmltbl}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        javascript = """
+        $('.filterButton').click(function(){
+            var filterButton = $(this);
+            $('.filterButton').removeClass('btn-outline-primary').addClass('btn-primary');
+            $(filterButton).removeClass('btn-primary').addClass('btn-outline-primary');
+            var kwargs = "searchisactive="+$(this).val();
+            $('#div_allpost').load('/posts/get_posts_htmltbl', kwargs, function(data){
+                return 'false';
+            });
+        });
+        $('#btn_search').click(function(){
+            var kwargs = 'searchphrase='+$('#searchphrase').val();
+            $('#div_allpost').load('/posts/get_posts_htmltbl', kwargs, function(data){
+                return false;
+            });
+        });
+        $('#btn_reset').click(function(){
+            $('#searchphrase').val('').focus();
+            $('#div_allpost').load('/posts/get_posts_htmltbl', 'reset=true', function(data){
+                return false;
+            });
+        });
+        """
+        return dict(title=title, html=html, javascript=javascript)
+
+    @expose()
+    def get_posts_htmltbl(self, *args, **kwargs):
+        outputlist = []
+        dbase_query = self.get_posts_list(**kwargs)
+
+        for item in dbase_query:
+            category = Category.by_id(item.category_id)
+            subcategory = Subcategory.by_id(item.subcategory_id)
+            status = PostStatus.by_id(item.post_status_id).status
+            poster = Student.by_id(item.added_by)
+            outputlist.append({
+                'message': item.title,
+                'category': category.title+' - '+subcategory.title,
+                'status': status,
+                'added': item.added,
+                'added_by': poster.display_name,
+                'actions': f'<a class="btn btn-link btn-warning btn-just-icon view" data-post-id="{item.id}" href="/posts/post_view?post_id={item.id}"><i class="material-icons">dvr</i></a>',
+            })
+        # 'actions': f'<div class="btn btn-link btn-warning btn-just-icon view_post" data-post-id="{item.id}">'
+        # f'<i class="material-icons">dvr</i></div>',
+        dbcolumnlist=[
+                'message',
+                'category',
+                'status',
+                'added',
+                'added_by',
+                'actions',
+                    ]
+        theadlist=[
+                'Post',
+                'Category',
+                'Status',
+                'Date Created',
+                'Posted by',
+                'Actions',
+                ]
+        tdclasslist = [
+                '',
+                '',
+                '',
+                '',
+                '',
+                'text-right',
+                ]
+        javascript = """
+        <script type="text/javascript">
+            $('#allposts').DataTable({
+                stateSave: true,
+                "pagingType": "full_numbers",
+                "lengthMenu": [[10, 25, 50, -1], [10, 25, 50, 'All']],
+                "columns": [
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    { "orderable": false }
+                ],
+                "dom": "<'row'<'col-md-12't>>" +
+                    "<'row'<'col-md-6 d-flex'<'mt-1'l><'ml-2'i>><'col-md-6'p>>",
+                responsive: true,
+                language: {
+                    search: "_INPUT_",
+                    searchPlaceholder: "Search records",
+                    emptyTable: "No transactions to show...",
+                }
+            });
+            $('.view').click(function(){
+                var kwargs = {'post_id' : $(this).data('post-id')};
+                console.log(kwargs)
+                $.redirect('/posts/post_view', kwargs)
+            });
+        </script>
+        """
+        return build_html_table_material(outputlist, dbcolumnlist, theadlist, "allposts", tdclasslist)+javascript
+
+    def get_post_status_id(self, status):
+        status = DBSession.query(PostStatus). \
+            filter(func.lower(PostStatus.status) == status). \
+            first()
+        if not status:
+            return None
+        return status.id
+
+    def get_posts_list(self, *args, **kwargs):
+        kwargs['searchkey'] = SEARCHKEY_POST
+        kwargs['searchactive'] = SEARCHKEY_POST_ACTIVE
+        searchphrase = COMMON.get_searchphrase(**kwargs).lower()
+        searchisactive = self.get_searchactive(**kwargs).lower()
+        active_post_status_id = self.get_post_status_id('active')
+        deactive_post_status_id = self.get_post_status_id('deactivated')
+
+        if searchphrase:
+            searchphrase = "%" + searchphrase + "%"
+
+            result = DBSession.query(Post). \
+                filter(or_(
+                           Post.title.like(searchphrase),
+                           Post.desc.like(searchphrase),
+                    ))
+        else:
+            result = DBSession.query(Post)
+
+        print('SearchisActive: ', type(searchisactive), searchisactive, searchisactive=="active", searchisactive=="inactive")
+
+        if searchisactive == 'active':
+            print('Setting Active')
+            result = result.filter(Post.post_status_id==active_post_status_id)
+
+        if searchisactive == 'inactive':
+            print('Setting Inactive')
+            result = result.filter(Post.post_status_id==deactive_post_status_id)
+        result = result.order_by(desc(Post.added)).all()
+        return result
+
+    def get_searchactive(self, *args, **kwargs):
+        searchactive = kwargs.get('searchactive', None)
+        if not searchactive: return ''
+        reset = kwargs.get('reset', False)
+        if reset: return COMMON.delete_session_value(searchactive)
+        searchisactive = kwargs.get('searchisactive', None)
+        if not searchisactive:
+            value = COMMON.get_session_value(searchactive)
+            return value.value if value else ''
+        return COMMON.set_session_value(searchactive, searchisactive)
+
+    @require(CustomNotAnonymous())
+    @expose('eiffel_back.templates.generic')
+    def post_view(self, *args, **kwargs):
+        if not request.identity:
+            redirect('/login')
+
+        print('post_view KWARGS:', kwargs)
+        post_id = kwargs.get('post_id', None)
+        post = Post.by_id(post_id)
+        if not post:
+            return ''
+        poster_profile = COMMON.get_inline_student_profile_html(post.added_by)
+
+        posts_list = []
+        dbase_query = PostImage.by_attr_all('post_id', post_id)
+        for image in dbase_query:
+            filepath = os.path.join(POST_IMG_URL, image.filepath)
+            posts_list.append(f"""<img class="d-block ml-auto mr-auto h-450" src="{filepath}">""")
+
+        kwargs = {
+            'carousel_list': posts_list,
+            'items_per_page': 1,
+            'thumbnail_indicators': True,
+            'indicators': True
+        }
+        carousel = COMMON.get_carousel_html(**kwargs)
+
+        price = get_currency_by_locale(post.price)
+        post_status = PostStatus.by_id(post.post_status_id)
+        html = f"""
+        <div class="row">
+            <div class="col-md-8">
+                <div class="card">
+                    <div class="card-body d-flex justify-content-between align-items-center">
+                        {poster_profile}
+                        <div class="text-right">
+                            <h4 class="font-weight-bold mb-0">Price: {price}</h4>
+                            <div class="text-muted">Posted on: {post.added}</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="card card-product">
+                    <div class="card-header">
+                        {carousel}
+                    </div>
+                    <div class="card-body text-left mt-5">
+                        <h4 class="card-title text-left">
+                            {post.title} <span style="color: #{post_status.colour};">({post_status.status})</span>
+                        </h4>
+                        <span></span>
+                        <div class="card-description text-left mt-3">
+                            {post.desc}
+                        </div>
+                        <div class="row">
+                            <button class="btn btn-primary ml-auto mr-3 back">Back to Posts List</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div id="timelineDiv" data-post-id={post_id} data-post-status-id="{post.post_status_id}"></div>
+            </div>
+        </div>
+        """
+        javascript = """
+            $('.back').click(function(e){
+                $.redirect('/posts');
+            });
+        """
+        if not post_id: return dict(title="No Title Found", html='', javascript='')
+        elif post_id: return dict(title="View Post", html=html, javascript=javascript)

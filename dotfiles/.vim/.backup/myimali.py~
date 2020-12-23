@@ -1,0 +1,50 @@
+# -*- coding: utf-8 -*-
+"""MyImali controller module"""
+from tg import predicates
+
+import string
+# from tg.i18n import ugettext as _
+# from tg import predicates
+from tg import expose, require, redirect, validate, flash, url, request, response, predicates
+
+from calmerchant_app.model import *
+
+from calmerchant_app.lib.base import BaseController
+from calmerchant_app.lib.tg_utils import *
+from calmerchant_app.lib.tg_decorators import time_it
+from calmerchant_app.lib.api_tester import MyImaliApiGateway
+
+class MyImaliController(BaseController):
+
+    @require(predicates.not_anonymous())
+    @expose('calmerchant_app.templates.generic')
+    def index(self, *args, **kwargs):
+        html = """
+        <div class="col-md-6">
+            <h4 class="card-title">Testing My Imali</h4>
+            <div class="form-group form-file-upload form-file-simple">
+                <input type="text" class="form-control inputFileVisible" placeholder="Simple chooser...">
+                <input type="file" class="inputFileHidden">
+            </div>
+            <button id="submit" type="submit" class="btn btn-fill btn-primary">Submit</button>
+        </div>
+        """
+        javascript = """
+        $('#submit').click(function(){
+            $('.inputFileHidden').upload('/myimali/upload_file', function(data){
+                console.log(data);
+                return false;
+            });
+        });
+        """
+        return dict(title='My Imali Test', html=html, javascript=javascript)
+
+    @expose()
+    def upload_file(self, *args, **kwargs):
+        first = kwargs.get('', None)
+        print()
+        print(args)
+        print(kwargs)
+        print(first, type(first))
+        print()
+        return 'true'

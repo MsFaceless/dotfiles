@@ -1,0 +1,198 @@
+# -*- coding: utf-8 -*-
+"""Policy Benefit Exclusion module"""
+
+import logging
+
+from tg import predicates, require, expose, request, redirect
+from tg.i18n import ugettext as _
+from tg.i18n import lazy_ugettext as l_
+
+from rocket.model import *
+
+from rocket.lib.tg_utils import *
+from rocket.lib.base import BaseController
+from rocket.lib.type_utils import TypeDictionary
+
+from rocket.controllers.common import CommonController
+from rocket.controllers.product import ProductController
+
+from sqlalchemy import func, desc, asc, or_
+from datetime import datetime, timedelta
+
+LOGGER = logging.getLogger(__name__)
+
+TYPEUTIL = TypeDictionary()
+COMMON = CommonController()
+DBQUERY_LIMIT = 15
+
+POLICY_BENEFIT_ID = 1
+POLICY_BENEFIT_EFECTIVE_DATE = datetime.now()
+
+
+class PolicyBenefitExclusionController(BaseController):
+
+###############################################################################
+# Policy Status - List
+###############################################################################
+
+    @require(predicates.not_anonymous())
+    @expose('rocket.templates.generic')
+    def index(self, *args, **kwargs):
+        html = self.get_policy_benefit_exclusion_html()
+        javascript = self.get_javascript_policy_benefit_exclusion_onload()
+        title = _("Policy Benefit Exclusion")
+        return dict(title=title, html=html, javascript=javascript)
+
+    @expose()
+    def get_policy_benefit_exclusion_html(self, *args, **kwargs):
+        outputlist = []
+        dbase_query = DBSession.query(PolicyBenefitExclusion). \
+            filter(PolicyBenefitExclusion.active == True). \
+            filter(PolicyBenefitExclusion.policy_benefit_id == POLICY_BENEFIT_ID). \
+            order_by(PolicyBenefitExclusion.product_benefit_exclusion_id.desc()). \
+            limit(DBQUERY_LIMIT)
+
+        for item in dbase_query:
+            # Get Policy Benefit Exclusion Id
+            policy_benefit_exclusion_id = item.id
+
+            # Get Expiry
+            benefit_exclusion_expiry_type = TYPEUTIL.get_name('benefit_exclusion_expiry_type',
+                                                              item.benefit_exclusion_expiry_type)
+            # TODO will need to count number of premiums paid in the final version of Policy CRUD
+            if benefit_exclusion_expiry_type == 'number_of_days':
+                policy_benefit_exclusion_expiration_date = PolicyBenefitExclusionExpirationDate. \
+                    by_attr_first('policy_benefit_exclusion_id', policy_benefit_exclusion_id)
+                expiry = policy_benefit_exclusion_expiration_date.expiry_date
+            elif benefit_exclusion_expiry_type == 'number_of_premiums':
+                policy_benefit_exclusion_expiration_count = PolicyBenefitExclusionExpirationCount.by_attr_first(
+                    'policy_benefit_exclusion_id', policy_benefit_exclusion_id)
+                expiry = policy_benefit_exclusion_expiration_count.initial_number_of_premiums
+            else:
+                expiry = "Infinite"
+
+            # Get Product Cover and Exclusion DBQuery via Product Benefit Exclusion Id
+            product_benefit_exclusion_id = item.product_benefit_exclusion_id
+            product_benefit_exclusion = BenefitExclusion.by_id(product_benefit_exclusion_id)
+            product_benefit_exclusion_link_id = product_benefit_exclusion.benefit_exclusion_link_id
+            product_benefit_exclusion_link = BenefitExclusionLink.by_id(product_benefit_exclusion_link_id)
+            product_benefit_cover_and_exclusion_id = product_benefit_exclusion_link.cover_and_exclusion_id
+            product_benefit_cover_and_exclusion = CoverAndExclusion.by_id(product_benefit_cover_and_exclusion_id)
+
+            # Get Product Benefit Cover and Exclusion Code
+            product_benefit_cover_and_exclusion_code = product_benefit_cover_and_exclusion.code
+
+            # Get Product Benefit Cover and Exclusion Description
+            product_benefit_cover_and_exclusion_description = product_benefit_cover_and_exclusion.description
+
+            outputlist.append({
+                'policy_benefit_exclusion_code': product_benefit_cover_and_exclusion_code,
+                'policy_benefit_exclusion_description': product_benefit_cover_and_exclusion_description,
+                'policy_benefit_exclusion_expiry': expiry
+            })
+        dbcolumnlist = [
+            'policy_benefit_exclusion_code',
+            'policy_benefit_exclusion_description',
+            'policy_benefit_exclusion_expiry',
+        ]
+        theadlist = [
+            'Code',
+            'Description',
+            'Expiry',
+        ]
+        tdclasslist = [
+            '',
+            '',
+            '',
+        ]
+        htmltable = build_html_table(outputlist, dbcolumnlist, theadlist, "policy_benefit_exclusion_table",
+                                     tdclasslist)
+        html = f"""
+                    <div class="row">
+                        <div class="col-md-12">
+                            <div class="card">
+                                <div class="card-header">
+                                    <div class="row d-flex">
+                                        <div class="col-md-6">
+                                             <h4 class="card-title">{_('Policy Exclusions')}</h4>
+                                        </div>
+                                        <div class="col-md-6 text-right">
+                                            <button id="create_new_policy_benefit_exclusion" class="btn btn-primary" policy_benefit_id='{POLICY_BENEFIT_ID}' ml-auto">Create New Policy Benefit Exclusion</button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="card-body">
+                                    <div id='div_policy_date_table' class="table-responsive">
+                                        {htmltable}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                """
+        return html
+
+    @expose()
+    def get_javascript_policy_benefit_exclusion_onload(self, *args, **kwargs):
+        javascript = """
+                $("#create_new_policy_benefit_exclusion").click(function(){
+                    var policy_id = $(this).attr('policy_id');
+                    var kwargs = {'policy_id' : policy_id};
+                    $.post('/policy_benefit_exclusion/create_new_policy_benefit_exclusions?', function(data){
+                        $.redirect('/policy_benefit_exclusion/index');
+                        return false;
+                    });
+                });
+                """
+        return javascript
+
+###############################################################################
+# TODO this is only a temp CRUD, only the DB queries will be used, the rest will be discarded
+# Policy Benefit Exclusion - New
+###############################################################################
+
+    @expose()
+    def create_new_policy_benefit_exclusions(self, *args, **kwargs):
+        policy_benefit_id = POLICY_BENEFIT_ID
+        policy_benefit = PolicyBenefit.by_id(policy_benefit_id)
+        if not policy_benefit:
+            print("Something went wrong, could not find the PolicyBenefit entry")
+            return ''
+        product_benefit_id = policy_benefit.product_benefit_id
+        product_benefit_exclusions = BenefitExclusion.by_attr_all('benefit_id', product_benefit_id)
+
+        for exclusion in product_benefit_exclusions:
+            exclusion_expiry_type = TYPEUTIL.get_name('benefit_exclusion_expiry_type', exclusion.benefit_exclusion_expiry_type_id)
+
+            policy_benefit_exclusion = PolicyBenefitExclusion()
+            policy_benefit_exclusion.policy_benefit_id = POLICY_BENEFIT_ID
+            policy_benefit_exclusion.product_benefit_exclusion_id = exclusion.id
+            policy_benefit_exclusion.benefit_exclusion_expiry_type = exclusion.benefit_exclusion_expiry_type_id
+            DBSession.add(policy_benefit_exclusion)
+            DBSession.flush()
+
+            if exclusion_expiry_type == "number_of_days":
+                product_benefit_exclusion_expiry_days = BenefitExclusionExpiryDays.by_attr_first('benefit_exclusion_id',
+                                                                                                 exclusion.id)
+                number_of_days = product_benefit_exclusion_expiry_days.number_of_days
+
+                policy_benefit_exclusion_expiration_date = PolicyBenefitExclusionExpirationDate()
+                policy_benefit_exclusion_expiration_date.policy_benefit_exclusion_id = policy_benefit_exclusion.id
+                policy_benefit_exclusion_expiration_date.expiry_date = POLICY_BENEFIT_EFECTIVE_DATE + timedelta(days=int(number_of_days))
+
+                DBSession.add(policy_benefit_exclusion_expiration_date)
+                DBSession.flush()
+
+            elif exclusion_expiry_type == "number_of_premiums":
+                product_benefit_exclusion_expiry_count = BenefitExclusionExpiryCount.by_attr_first(
+                    'benefit_exclusion_id', exclusion.id)
+                number_of_premiums = product_benefit_exclusion_expiry_count.count
+
+                policy_benefit_exclusion_expiration_count = PolicyBenefitExclusionExpirationCount()
+                policy_benefit_exclusion_expiration_count.policy_benefit_exclusion_id = policy_benefit_exclusion.id
+                policy_benefit_exclusion_expiration_count.initial_number_of_premiums = number_of_premiums
+
+                DBSession.add(policy_benefit_exclusion_expiration_count)
+                DBSession.flush()
+        return ''
+

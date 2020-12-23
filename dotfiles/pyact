@@ -1,0 +1,11 @@
+#!/usr/bin/python3.8
+import os
+
+def find_bin(target="bin/activate", curdepth=0):
+    depth = 5
+    if curdepth >= depth: return False
+
+    if os.path.exists(target): return target
+    else: return find_bin(target=f"../{target}", curdepth=curdepth)
+
+print(find_bin())

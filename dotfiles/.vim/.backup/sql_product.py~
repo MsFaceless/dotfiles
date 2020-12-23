@@ -1,0 +1,532 @@
+# -*- coding: utf-8 -*-
+
+import os
+from datetime import datetime
+from hashlib import sha256
+
+from sqlalchemy import Table, ForeignKey, Column
+from sqlalchemy.types import Unicode, Integer, DateTime, Boolean
+from sqlalchemy.orm import relation, synonym
+
+from rocket.model import DeclarativeBase, metadata, DBSession
+from rocket.lib.model_utils import PhatBase, common_columns, get_type_table, get_phat_table
+
+###############################################################################
+# All Product Related Types
+###############################################################################
+
+# Shared between Product and Benefit
+CommunicationType = get_type_table(model_name='Communication', table_name='communication') # Sms, Email, Print
+PeriodType = get_type_table(model_name='Period', table_name='period') # Days, Months, Calendar Months, etc.
+
+# Product
+ProductType = get_type_table(model_name='Product', table_name='product')  # Contractual, Voucher
+ProductStateType = get_type_table(model_name='ProductState', table_name='product_state') # Sandbox, Active, Expired
+ProductMessageType = get_type_table(model_name='ProductMessage', table_name='product_message') # Reminder, Confirmation
+
+# Benefit
+BenefitPurchaseType = get_type_table(model_name='BenefitPurchase', table_name='benefit_purchase') # Group, Coupon, Loyalty
+BenefitPriceType = get_type_table(model_name='BenefitPrice', table_name='benefit_price') # Rate table, Fixed premium & sum insured
+BenefitInsuredType = get_type_table(model_name='BenefitInsured', table_name='benefit_insured') # Business, Natural Person, Member only, Family only, Member & Family
+BenefitExclusionExpiryType = get_type_table(model_name='BenefitExclusionExpiry', table_name='benefit_exclusion_expiry') # Days, Premiums, Infinte
+BenefitPeriodEffectType = get_type_table(model_name='BenefitPeriodEffect', table_name='benefit_period_effect') # Active, Claim Grace, Refund Grace, etc.
+BenefitMessageType = get_type_table(model_name='BenefitMessage', table_name='benefit_message') # Refund, Claim
+BenefitAllocationType = get_type_table(model_name='BenefitAllocation', table_name='benefit_allocation') # Acquisition, Purchase, Claim, Redemption
+BenefitAllocationCalculationType = get_type_table(model_name='BenefitAllocationCalculation', table_name='benefit_allocation_calculation') # Percentage, Amount, Factor
+BenefitInsuredLifeRelationshipType = get_type_table(model_name='BenefitInsuredLifeRelationship', table_name='benefit_insured_life_relationship') # Principal, Spouse, etc.
+BenefitAssetType = get_type_table(model_name='BenefitAsset', table_name='benefit_asset') # Business, Employee, Vehicle, Property
+
+# Utilities
+FrequencyType = get_type_table(model_name='Frequency', table_name='frequency') # Daily, Weekly, etc.
+SystemDocumentType = get_type_table(model_name='SystemDocument', table_name='system_document') # Welcome, Claim, Member, Product
+LoaderQuestionPremiumEffectType = get_type_table(model_name='LoaderQuestionPremiumEffect', table_name='loader_question_premium_effect') # None, Percentage, Amount
+
+###############################################################################
+# Product
+###############################################################################
+
+tbl_product = {
+    '__tablename__': 'tbl_product',
+    'product_type_id': common_columns.get('integer')(),
+    'code': common_columns.get('code_not_nullable')(),
+    'name': common_columns.get('title_not_nullable')(),
+    'entity_organisation_product_owner_id': common_columns.get('integer')(),
+    'product_state_type_id': common_columns.get('integer')(), # default: Sandbox
+    'policy_number_prefix': common_columns.get('title')(),
+    'has_excess': common_columns.get('boolean_default_false')(),
+    'apply_excess_on_all_benefits': common_columns.get('boolean_default_false')(),
+}
+Product = get_phat_table(model_name='Product', columndict=tbl_product)
+
+tbl_product_premium_frequency_option = {
+    '__tablename__': 'tbl_product_premium_frequency_option',
+    'product_id': common_columns.get('integer_not_nullable')(),
+    'adjustment_factor': common_columns.get('factor')(),
+    'frequency_type_id': common_columns.get('integer_not_nullable')(),
+}
+ProductPremiumFrequencyOption = get_phat_table(model_name='ProductPremiumFrequencyOption', columndict=tbl_product_premium_frequency_option)
+
+tbl_product_history_link = {
+    '__tablename__': 'tbl_product_history_link',
+    'product_id': common_columns.get('integer_not_nullable')(),
+    'previous_product_id': common_columns.get('integer_not_nullable')()
+}
+ProductHistoryLink = get_phat_table(model_name='ProductHistoryLink', columndict=tbl_product_history_link)
+
+tbl_product_excess_link = {
+    '__tablename__': 'tbl_product_excess_link',
+    'product_id': common_columns.get('integer_not_nullable')(),
+    'excess_id': common_columns.get('integer_not_nullable')()
+}
+ProductExcessLink = get_phat_table(model_name='ProductExcessLink', columndict=tbl_product_excess_link)
+
+###############################################################################
+# Benefit
+###############################################################################
+
+tbl_benefit = {
+    '__tablename__': 'tbl_benefit',
+    'product_id': common_columns.get('integer_not_nullable')(),
+    'name': common_columns.get('title')(),
+    'entity_organisation_insurer_id': common_columns.get('integer')(),
+    'benefit_price_type_id': common_columns.get('integer')(),
+    'is_life': common_columns.get('boolean')(),
+    'benefit_insured_type_id': common_columns.get('integer')(),
+    'benefit_purchase_type_id': common_columns.get('integer')(),
+    'cover_and_exclusion_id': common_columns.get('integer')(),
+    'is_main_benefit': common_columns.get('boolean')(),
+    'is_compulsory': common_columns.get('boolean')(),
+    'allow_multiple_payouts': common_columns.get('boolean_default_false')(),
+    'claim_terminates_policy': common_columns.get('boolean_default_false')(),
+    'rounding_rate_id': common_columns.get('integer')(),
+
+    'premium': common_columns.get('currency_not_nullable')(),
+    'sum_insured': common_columns.get('currency_not_nullable')(),
+    'rate_table_id': common_columns.get('integer')(),
+
+    'premium_increase_percentage': common_columns.get('percentage')(),
+    'sum_insured_increase_percentage': common_columns.get('percentage')(),
+
+    'has_premium_limits': common_columns.get('boolean_default_false')(),
+    'has_sum_insured_limits': common_columns.get('boolean_default_false')(),
+
+    'limit_claims': common_columns.get('boolean_default_true')(),
+    'number_of_claims': common_columns.get('integer_default')(default=1),
+}
+Benefit = get_phat_table(model_name='Benefit', columndict=tbl_benefit)
+
+tbl_benefit_excess_link = {
+    '__tablename__': 'tbl_benefit_excess_link',
+    'benefit_id': common_columns.get('integer_not_nullable')(),
+    'excess_id': common_columns.get('integer_not_nullable')()
+}
+BenefitExcessLink = get_phat_table(model_name='BenefitExcessLink', columndict=tbl_benefit_excess_link)
+
+###############################################################################
+# Benefit - Premium and Sum Insured
+###############################################################################
+
+tbl_benefit_premium_limit = {
+    '__tablename__': 'tbl_benefit_premium_limit',
+    'benefit_id': common_columns.get('integer_not_nullable')(),
+    'minimum_premium': common_columns.get('currency')(),
+    'maximum_premium': common_columns.get('currency')(),
+}
+BenefitPremiumLimit = get_phat_table(model_name='BenefitPremiumLimit', columndict=tbl_benefit_premium_limit)
+
+tbl_benefit_sum_insured_limit = {
+    '__tablename__': 'tbl_benefit_sum_insured_limit',
+    'benefit_id': common_columns.get('integer_not_nullable')(),
+    'minimum_sum_insured': common_columns.get('currency')(),
+    'maximum_sum_insured': common_columns.get('currency')(),
+}
+BenefitSumInsuredLimit = get_phat_table(model_name='BenefitSumInsuredLimit', columndict=tbl_benefit_sum_insured_limit)
+
+###############################################################################
+# Benefit - Insured - Life
+###############################################################################
+
+tbl_benefit_insured_life = {
+    '__tablename__': 'tbl_benefit_insured_life',
+    'benefit_id': common_columns.get('integer_not_nullable')(),
+    'benefit_insured_life_relationship_type_id': common_columns.get('integer_not_nullable')(),
+    'maximum_entry_age': common_columns.get('integer')(), # Oldest age at purchase
+    'expiry_age': common_columns.get('integer')(), # Oldest age for policy to be valid
+    'maximum_lives': common_columns.get('integer_default')(default=1),
+    'minimum_age': common_columns.get('integer_default')(default=1),
+}
+BenefitInsuredLife = get_phat_table(model_name='BenefitInsuredLife', columndict=tbl_benefit_insured_life)
+
+###############################################################################
+# Benefit - Insured - Non Life
+###############################################################################
+
+tbl_benefit_insured_non_life = {
+    '__tablename__': 'tbl_benefit_insured_non_life',
+    'benefit_id': common_columns.get('integer_not_nullable')(),
+    'benefit_asset_type_id': common_columns.get('integer_not_nullable')(),
+    'description': common_columns.get('description')(),
+}
+BenefitInsuredNonLife = get_phat_table(model_name='BenefitInsuredNonLife', columndict=tbl_benefit_insured_non_life)
+
+###############################################################################
+# Product - System Document
+###############################################################################
+
+tbl_system_document = {
+    '__tablename__': 'tbl_system_document',
+    'name': common_columns.get('title_not_nullable')(),
+    'description': common_columns.get('description_not_nullable')(),
+    'system_document_type_id': common_columns.get('integer_not_nullable')()
+}
+SystemDocument = get_phat_table(model_name='SystemDocument', columndict=tbl_system_document)
+
+tbl_product_system_document_link = {
+    '__tablename__': 'tbl_product_system_document_link',
+    'product_id': common_columns.get('integer_not_nullable')(),
+    'system_document_id': common_columns.get('integer')(),
+    'name': common_columns.get('title_not_nullable')(),
+    'description': common_columns.get('description_not_nullable')(),
+    'order': common_columns.get('integer_not_nullable')(),
+    'file_path': common_columns.get('description')(),
+}
+ProductSystemDocumentLink = get_phat_table(model_name='ProductSystemDocumentLink', columndict=tbl_product_system_document_link)
+
+###############################################################################
+# Product - Messaging and Communication
+###############################################################################
+
+tbl_product_message = {
+    '__tablename__': 'tbl_product_message',
+    'product_id': common_columns.get('integer_not_nullable')(),
+    'product_message_type_id': common_columns.get('integer')(), # E.g. Reminder or Confirmation
+    'benefit_message_type_id': common_columns.get('integer')(), # E.g. Claim or Refund
+    'communication_type_id': common_columns.get('integer')(),
+    'content': common_columns.get('longtext_not_nullable')()
+}
+ProductMessage = get_phat_table(model_name='ProductMessage', columndict=tbl_product_message)
+
+tbl_product_message_media = {
+    '__tablename__': 'tbl_product_message_media',
+    'product_message_id': common_columns.get('integer_not_nullable')(),
+    'file_path': common_columns.get('description')()
+}
+ProductMessageMedia = get_phat_table(model_name='ProductMessageMedia', columndict=tbl_product_message_media)
+
+tbl_product_message_reminder = {
+    '__tablename__': 'tbl_product_message_reminder',
+    'product_message_id': common_columns.get('integer_not_nullable')(),
+    'period': common_columns.get('integer_not_nullable')(),
+    'period_type_id': common_columns.get('integer_not_nullable')()
+}
+ProductMessageReminder = get_phat_table(model_name='ProductMessageReminder', columndict=tbl_product_message_reminder)
+
+###############################################################################
+# Benefit - Messaging and Communication
+###############################################################################
+
+tbl_benefit_message = {
+    '__tablename__': 'tbl_benefit_message',
+    'benefit_id': common_columns.get('integer_not_nullable')(),
+    'benefit_message_type_id': common_columns.get('integer_not_nullable')(), # E.g. Refund or Claim
+    'communication_type_id': common_columns.get('integer')(),
+    'content': common_columns.get('longtext_not_nullable')()
+}
+BenefitMessage = get_phat_table(model_name='BenefitMessage', columndict=tbl_benefit_message)
+
+tbl_benefit_message_media = {
+    '__tablename__': 'tbl_benefit_message_media',
+    'benefit_message_id': common_columns.get('integer_not_nullable')(),
+    'file_path': common_columns.get('description')()
+}
+BenefitMessageMedia = get_phat_table(model_name='BenefitMessageMedia', columndict=tbl_benefit_message_media)
+
+tbl_benefit_message_reminder = {
+    '__tablename__': 'tbl_benefit_message_reminder',
+    'benefit_message_id': common_columns.get('integer_not_nullable')(),
+    'period': common_columns.get('integer_not_nullable')(),
+    'period_type_id': common_columns.get('integer_not_nullable')()
+}
+BenefitMessageReminder = get_phat_table(model_name='BenefitMessageReminder', columndict=tbl_benefit_message_reminder)
+
+###############################################################################
+# Benefit - Claim Questions
+###############################################################################
+
+tbl_benefit_claim_question_link = {
+    '__tablename__': 'tbl_benefit_claim_question_link',
+    'benefit_id': common_columns.get('integer_not_nullable')(),
+    'claim_question_id': common_columns.get('integer_not_nullable')(),
+    'claim_question_correct_answer_id': common_columns.get('integer_not_nullable')(),
+}
+BenefitClaimQuestionLink = get_phat_table(model_name='BenefitClaimQuestionLink', columndict=tbl_benefit_claim_question_link)
+
+tbl_claim_question = {
+    '__tablename__': 'tbl_claim_question',
+    'text': common_columns.get('longtext_not_nullable')()
+}
+ClaimQuestion = get_phat_table(model_name='ClaimQuestion', columndict=tbl_claim_question)
+
+tbl_claim_question_answer = {
+    '__tablename__': 'tbl_claim_question_answer',
+    'claim_question_id': common_columns.get('integer_not_nullable')(),
+    'answer_text': common_columns.get('longtext_not_nullable')(),
+}
+ClaimQuestionAnswer = get_phat_table(model_name='ClaimQuestionAnswer', columndict=tbl_claim_question_answer)
+
+###############################################################################
+# Cover and Exclusions
+###############################################################################
+
+tbl_cover_and_exclusion = {
+    '__tablename__': 'tbl_cover_and_exclusion',
+    'code': common_columns.get('title_not_nullable')(),
+    'description': common_columns.get('description_not_nullable')(),
+    'is_cover': common_columns.get('boolean_default_true')(),
+    'is_exclusion': common_columns.get('boolean_default_true')(),
+}
+CoverAndExclusion = get_phat_table(model_name='CoverAndExclusion', columndict=tbl_cover_and_exclusion)
+
+tbl_benefit_payout_frequency_option = {
+    '__tablename__': 'tbl_benefit_payout_frequency_option',
+    'benefit_id': common_columns.get('integer_not_nullable')(),
+    'number_of_payouts': common_columns.get('integer_default')(default=1),
+    'frequency_type_id': common_columns.get('integer_not_nullable')()
+}
+BenefitPayoutFrequencyOption = get_phat_table(model_name='BenefitPayoutFrequencyOption', columndict=tbl_benefit_payout_frequency_option)
+
+###############################################################################
+# Benefit - Cover and Exclusions
+###############################################################################
+
+tbl_benefit_cover = {
+    '__tablename__': 'tbl_benefit_cover',
+    'benefit_id': common_columns.get('integer_not_nullable')(),
+    'cover_and_exclusion_id': common_columns.get('integer_not_nullable')(),
+}
+BenefitCover = get_phat_table(model_name='BenefitCover', columndict=tbl_benefit_cover)
+
+tbl_benefit_exclusion = {
+    '__tablename__': 'tbl_benefit_exclusion',
+    'benefit_id': common_columns.get('integer_not_nullable')(),
+    'cover_and_exclusion_id': common_columns.get('integer_not_nullable')(),
+    'benefit_exclusion_expiry_type_id': common_columns.get('integer_not_nullable')()
+}
+BenefitExclusion = get_phat_table(model_name='BenefitExclusion', columndict=tbl_benefit_exclusion)
+
+tbl_benefit_exclusion_expiry_days = {
+    '__tablename__': 'tbl_benefit_exclusion_expiry_days',
+    'benefit_exclusion_id': common_columns.get('integer_not_nullable')(),
+    'number_of_days': common_columns.get('integer_not_nullable')()
+}
+BenefitExclusionExpiryDays = get_phat_table(model_name='BenefitExclusionExpiryDays', columndict=tbl_benefit_exclusion_expiry_days)
+
+tbl_benefit_exclusion_expiry_count = {
+    '__tablename__': 'tbl_benefit_exclusion_expiry_count',
+    'benefit_exclusion_id': common_columns.get('integer_not_nullable')(),
+    'count': common_columns.get('integer')()
+}
+BenefitExclusionExpiryCount = get_phat_table(model_name='BenefitExclusionExpiryCount', columndict=tbl_benefit_exclusion_expiry_count)
+
+###############################################################################
+# Benefit - Period or Durations
+###############################################################################
+
+tbl_benefit_period = {
+    '__tablename__': 'tbl_benefit_period',
+    'benefit_id': common_columns.get('integer_not_nullable')(),
+    'benefit_period_effect_type_id': common_columns.get('integer')(),
+    'period_type_id': common_columns.get('integer_not_nullable')(),
+    'time_period': common_columns.get('integer')()
+}
+BenefitPeriod = get_phat_table(model_name='BenefitPeriod', columndict=tbl_benefit_period)
+
+###############################################################################
+# Benefit - Allocations
+###############################################################################
+
+tbl_general_ledger_account = {
+    '__tablename__': 'tbl_general_ledger_account',
+    'gl_name': common_columns.get('title_not_nullable')(),
+    'debit_account': common_columns.get('title_not_nullable')(),
+    'credit_account': common_columns.get('title_not_nullable')(),
+    'gl_key': common_columns.get('title_not_nullable')()
+}
+GeneralLedgerAccount = get_phat_table(model_name='GeneralLedgerAccount', columndict=tbl_general_ledger_account)
+
+tbl_benefit_allocation = {
+    '__tablename__': 'tbl_benefit_allocation',
+    'name': common_columns.get('title_not_nullable')()
+}
+BenefitAllocation = get_phat_table(model_name='BenefitAllocation', columndict=tbl_benefit_allocation)
+
+tbl_benefit_allocation_link = {
+    '__tablename__': 'tbl_benefit_allocation_link',
+    'benefit_id': common_columns.get('integer_not_nullable')(),
+    'benefit_allocation_id': common_columns.get('integer_not_nullable')(),
+    'benefit_allocation_type_id': common_columns.get('integer_not_nullable')(),
+    'benefit_allocation_calculation_type_id': common_columns.get('integer_not_nullable')(),
+    'bln_require_gl_account_id': common_columns.get('boolean')(),
+    'gl_account_id': common_columns.get('integer')(),
+    'payment_received_type_id': common_columns.get('integer')(),
+}
+BenefitAllocationLink = get_phat_table(model_name='BenefitAllocationLink', columndict=tbl_benefit_allocation_link)
+
+tbl_benefit_allocation_link_calculation_percentage = {
+    '__tablename__': 'tbl_benefit_allocation_link_calculation_percentage',
+    'benefit_allocation_link_id': common_columns.get('integer_not_nullable')(),
+    'percentage': common_columns.get('percentage_not_nullable')()
+}
+BenefitAllocationLinkCalculationPercentage = get_phat_table(model_name='BenefitAllocationLinkCalculationPercentage', columndict=tbl_benefit_allocation_link_calculation_percentage)
+
+tbl_benefit_allocation_link_calculation_amount = {
+    '__tablename__': 'tbl_benefit_allocation_link_calculation_amount',
+    'benefit_allocation_link_id': common_columns.get('integer_not_nullable')(),
+    'amount': common_columns.get('currency_not_nullable')()
+}
+BenefitAllocationLinkCalculationAmount = get_phat_table(model_name='BenefitAllocationLinkCalculationAmount', columndict=tbl_benefit_allocation_link_calculation_amount)
+
+tbl_benefit_allocation_link_calculation_factor = {
+    '__tablename__': 'tbl_benefit_allocation_link_calculation_factor',
+    'benefit_allocation_link_id': common_columns.get('integer_not_nullable')(),
+    'factor': common_columns.get('integer_not_nullable')()
+}
+BenefitAllocationLinkCalculationFactor = get_phat_table(model_name='BenefitAllocationLinkCalculationFactor', columndict=tbl_benefit_allocation_link_calculation_factor)
+
+###############################################################################
+# Benefit - Loaders
+###############################################################################
+
+tbl_benefit_loader_link = {
+    '__tablename__': 'tbl_benefit_loader_link',
+    'benefit_id': common_columns.get('integer_not_nullable')(),
+    'loader_question_id': common_columns.get('integer_not_nullable')()
+}
+BenefitLoaderLink = get_phat_table(model_name='BenefitLoaderLink', columndict=tbl_benefit_loader_link)
+
+tbl_loader_question = {
+    '__tablename__': 'tbl_loader_question',
+    'text': common_columns.get('longtext')(),
+    'loader_question_premium_effect_type_id': common_columns.get('integer_not_nullable')()
+}
+LoaderQuestion = get_phat_table(model_name='LoaderQuestion', columndict=tbl_loader_question)
+
+tbl_loader_question_answer = {
+    '__tablename__': 'tbl_loader_question_answer',
+    'loader_question_id': common_columns.get('integer_not_nullable')(),
+    'answer_text': common_columns.get('longtext')(),
+}
+LoaderQuestionAnswer = get_phat_table(model_name='LoaderQuestionAnswer', columndict=tbl_loader_question_answer)
+
+tbl_loader_question_answer_percentage = {
+    '__tablename__': 'tbl_loader_question_answer_percentage',
+    'loader_question_answer_id': common_columns.get('integer_not_nullable')(),
+    'percentage': common_columns.get('percentage_not_nullable')()
+}
+LoaderQuestionAnswerPercentage = get_phat_table(model_name='LoaderQuestionAnswerPercentage', columndict=tbl_loader_question_answer_percentage)
+
+tbl_loader_question_answer_amount = {
+    '__tablename__': 'tbl_loader_question_answer_amount',
+    'loader_question_answer_id': common_columns.get('integer_not_nullable')(),
+    'amount': common_columns.get('currency_not_nullable')()
+}
+LoaderQuestionAnswerAmount = get_phat_table(model_name='LoaderQuestionAnswerAmount', columndict=tbl_loader_question_answer_amount)
+
+###############################################################################
+# Benefit - Rate Tables
+###############################################################################
+
+tbl_rate_table = {
+    '__tablename__': 'tbl_rate_table',
+    'code': common_columns.get('code')(),
+    'name': common_columns.get('title')(),
+    'is_life': common_columns.get('boolean')(),
+    'base_value': common_columns.get('integer_default_not_nullable')(default=1000),
+    'benefit_asset_type_id': common_columns.get('integer')(),
+}
+RateTable = get_phat_table(model_name='RateTable', columndict=tbl_rate_table)
+
+tbl_rate_table_line_item_life = {
+    '__tablename__': 'tbl_rate_table_line_item_life',
+    'rate_table_id': common_columns.get('integer_not_nullable')(),
+    'gender_type_id': common_columns.get('integer')(),  # optional from utilities
+    'maximum_age': common_columns.get('integer')(),
+    'minimum_age': common_columns.get('integer')(),
+    'rate_factor': common_columns.get('factor')(),
+    'excess_id': common_columns.get('integer')()
+}
+RateTableLineItemLife = get_phat_table(model_name='RateTableLineItemLife', columndict=tbl_rate_table_line_item_life)
+
+tbl_rate_table_line_item_vehicle = {
+    '__tablename__': 'tbl_rate_table_line_item_vehicle',
+    'rate_table_id': common_columns.get('integer_not_nullable')(),
+    'asset_vehicle_category_id': common_columns.get('integer_not_nullable')(),
+    'description': common_columns.get('description_not_nullable')(),
+    'insured_amount': common_columns.get('currency_not_nullable')(),
+    'uninsured_amount': common_columns.get('currency_not_nullable')(),
+    'third_party_amount': common_columns.get('currency_not_nullable')(),
+    'excess_id': common_columns.get('integer')()
+}
+RateTableLineItemVehicle = get_phat_table(model_name='RateTableLineItemVehicle', columndict=tbl_rate_table_line_item_vehicle)
+
+tbl_rate_table_line_item_employee = {
+    '__tablename__': 'tbl_rate_table_line_item_employee',
+    'rate_table_id': common_columns.get('integer_not_nullable')(),
+    'minimum_employees': common_columns.get('integer')(),
+    'maximum_employees': common_columns.get('integer')(),
+    'amount': common_columns.get('currency_not_nullable')(),
+    'excess_id': common_columns.get('integer')()
+}
+RateTableLineItemEmployee = get_phat_table(model_name='RateTableLineItemEmployee', columndict=tbl_rate_table_line_item_employee)
+
+tbl_rate_table_line_item_turnover = {
+    '__tablename__': 'tbl_rate_table_line_item_turnover',
+    'rate_table_id': common_columns.get('integer_not_nullable')(),
+    'minimum_turnover': common_columns.get('currency_not_nullable')(),
+    'maximum_turnover': common_columns.get('currency_not_nullable')(),
+    'minimum_premium': common_columns.get('currency_not_nullable')(),
+    'maximum_premium': common_columns.get('currency_not_nullable')(),
+    'amount': common_columns.get('currency_not_nullable')(),
+    'excess_id': common_columns.get('integer')()
+}
+RateTableLineItemTurnover = get_phat_table(model_name='RateTableLineItemTurnover', columndict=tbl_rate_table_line_item_turnover)
+
+tbl_rate_table_line_item_landlord = {
+    '__tablename__': 'tbl_rate_table_line_item_landlord',
+    'rate_table_id': common_columns.get('integer_not_nullable')(),
+    'minimum_rental': common_columns.get('currency_not_nullable')(),
+    'maximum_rental': common_columns.get('currency_not_nullable')(),
+    'percentage': common_columns.get('integer_not_nullable')(),
+    'minimum_premium': common_columns.get('currency_not_nullable')(),
+    'excess_id': common_columns.get('integer')()
+}
+RateTableLineItemLandlord = get_phat_table(model_name='RateTableLineItemLandlord', columndict=tbl_rate_table_line_item_landlord)
+
+###############################################################################
+# Rounding Rate
+###############################################################################
+
+tbl_rounding_rate = {
+    '__tablename__': 'tbl_rounding_rate',
+    'name': common_columns.get('description_not_nullable')(),
+}
+RoundingRate = get_phat_table(model_name='RoundingRate', columndict=tbl_rounding_rate)
+
+tbl_rounding_rate_item = {
+    '__tablename__': 'tbl_rounding_rate_item',
+    'rounding_rate_id': common_columns.get('integer_not_nullable')(),
+    'min_amount': common_columns.get('currency_not_nullable')(),
+    'max_amount': common_columns.get('currency_not_nullable')(),
+    'set_amount': common_columns.get('currency_not_nullable')(),
+}
+RoundingRateItem = get_phat_table(model_name='RoundingRateItem', columndict=tbl_rounding_rate_item)
+
+###############################################################################
+# Excess
+###############################################################################
+
+tbl_excess = {
+    '__tablename__': 'tbl_excess',
+    'amount': common_columns.get('currency_not_nullable')(),
+}
+Excess = get_phat_table(model_name='Excess', columndict=tbl_excess)

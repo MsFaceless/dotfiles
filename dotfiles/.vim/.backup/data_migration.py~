@@ -1,0 +1,215 @@
+import requests
+import pandas as pd
+import json
+import os
+
+from person_dataframe_builders import PersonDataFrameBuilder, AddressDataFrameBuilder, BankDataFrameBuilder
+from migration_utils import RocketApp
+
+#base_url = "https://qa.rocketinsure.co.za"
+base_url = "https://qanam.rocketinsure.co.za"
+#base_url = 'http://localhost:1234'
+
+
+class PersonDataFrame:
+
+    def __init__(self):
+        self.success = {'success': False, 'data': 'PersonDataFrame has not run'}
+        self.person_data_frame = None
+
+    def build_data_frame(self):
+        person = PersonDataFrameBuilder(). \
+            get_person_data_frame(). \
+            get_person_identity_data_frame(). \
+            get_person_contact_data_frame(). \
+            remove_non_cellphone_contact_from_person_contact_df(). \
+            remove_non_primary_identification_from_person_identity_df(). \
+            join_person_df_and_person_identity_df(). \
+            join_person_df_and_person_contact_df(). \
+            set_correct_date_format(). \
+            replace_nan_with_empty_string(). \
+            replace_type_ids_with_temp_values(). \
+            build_person_data_frame()
+            #replace_type_ids_with_rocket_values(). \
+        if not person:
+            self.success['data'] = 'No person dataframe from PersonDataFrameBuilder()'
+        else:
+            if person['success']:
+                self.person_data_frame = person['data']
+                self.success = {'success': True}
+            else:
+                self.success['data'] = person['data']
+        return self
+
+
+class AddressDataFrame:
+
+    def __init__(self):
+        self.success = {'success': False, 'data': 'AddressDataFrame has not run'}
+        self.address_data_frame = None
+
+    def build_data_frame(self):
+        address = AddressDataFrameBuilder(). \
+            get_address_data_frame(). \
+            combine_address_lines(). \
+            drop_old_address_lines(). \
+            replace_address_type_obj_with_type_id(). \
+            replace_nan_with_empty_string(). \
+            build_address_data_frame()
+        if not address:
+            self.success['data'] = 'No address dataframe from AddressDataFrameBuilder()'
+        else:
+            if address['success']:
+                self.address_data_frame = address['data']
+                self.success = {'success': True}
+            else:
+                self.success['data'] = address['data']
+        return self
+
+
+class BankDataFrame:
+
+    def __init__(self):
+        self.success = {'success': False, 'data': 'AddressDataFrame has not run'}
+        self.bank_data_frame = None
+
+    def build_data_frame(self):
+        bank = BankDataFrameBuilder(). \
+            get_bank_data_frame(). \
+            replace_type_ids_with_temp_values(). \
+            replace_nan_with_empty_string(). \
+            build_bank_data_frame()
+        if not bank:
+            self.success['data'] = 'No bank dataframe from BankeDataFrameBuilder()'
+        else:
+            if bank['success']:
+                self.bank_data_frame = bank['data']
+                self.success = {'success': True}
+            else:
+                self.success['data'] = bank['data']
+        return self
+
+
+class DataMigration:
+
+    def __init__(self):
+        self.person_data_frame = None
+        self.address_data_frame = None
+        self.bank_data_frame = None
+        self.rocket_app = None
+        self.fail_message = None
+        self.fail_data_frame = None
+
+    def set_up_fail_data_frame(self):
+        columns = [
+            'ClientNo',
+            'Import Type',
+            'Error Message'
+        ]
+        fail_df = pd.DataFrame(columns=columns)
+        self.fail_data_frame = fail_df
+
+    def set_up_data_frames(self):
+        person_data_frame = PersonDataFrame().build_data_frame()
+        print(person_data_frame)
+        if not person_data_frame.success['success']:
+            self.fail_message = person_data_frame.success
+            return False
+        address_data_frame = AddressDataFrame().build_data_frame()
+        if not address_data_frame.success['success']:
+            self.fail_message = address_data_frame.success
+            return False
+        bank_data_frame = BankDataFrame().build_data_frame()
+        if not bank_data_frame.success['success']:
+            self.fail_message = bank_data_frame.success
+            return False
+        self.person_data_frame = person_data_frame.person_data_frame
+        self.address_data_frame = address_data_frame.address_data_frame
+        self.bank_data_frame = bank_data_frame.bank_data_frame
+        return True
+
+    def address_row_dict(self, ClientNo):
+        row = self.address_data_frame.loc[self.address_data_frame['ClientNo'] == ClientNo]
+        to_send = row[['address_line', 'address_type_id', 'postal_code']]
+        to_send = to_send.to_dict('records')
+        return to_send
+
+    def bank_row_dict(self, ClientNo):
+        row = self.bank_data_frame.loc[self.bank_data_frame['ClientNo'] == ClientNo]
+        to_send = row[
+            ['bank_id', 'currency_id', 'swift_code', 'account_holder', 'branch_code', 'account_number', 'iban']]
+        if not to_send.empty:
+            to_send = to_send.to_dict('records')
+            return to_send[0]
+        else:
+            return None
+
+    def set_up_import_request(self):
+        kwargs = {'username': 'Developer', 'password': 'developpass', 'base_url': base_url}
+        self.rocket_app = RocketApp(**kwargs)
+
+    def import_person_details(self):  # TODO proper error catching needed
+        data_frames = self.set_up_data_frames()
+        if not data_frames:
+            print(self.fail_message)
+            return
+        self.set_up_import_request()
+        if not self.rocket_app:
+            return
+        self.set_up_fail_data_frame()
+
+        # TODO remove the tail for all
+        person_data_frame_dictionary = self.person_data_frame.tail(1000).to_dict('records')  # TODO set the size of the import here
+        #person_data_frame_dictionary = self.person_data_frame.to_dict('records')  # TODO set the size of the import here
+
+        for person in person_data_frame_dictionary:
+            ClientNo = person.get('ClientNo', None)
+            response = self.rocket_app.post_to_rocketapp(endpoint='members/save_new_memberobj', data=person)
+
+            if response['success'] and ClientNo:
+                entity_person_id = response['entity_person_id']
+                address_data_frame_dict = self.address_row_dict(ClientNo)
+                if len(address_data_frame_dict) == 2:
+                    for address in address_data_frame_dict:
+                        address.update({'entity_person_id': entity_person_id})
+                        response_address = self.rocket_app.post_to_rocketapp(endpoint='common/save_person_address',
+                                                                             data=address)
+                        if not response_address['success'] and ClientNo:
+                            address_import_fail_dict = {
+                                'ClientNo': ClientNo,
+                                'Import Type': "Address Import",
+                                'Error Message': response_address['message']}
+                            self.fail_data_frame = self.fail_data_frame.append(address_import_fail_dict, ignore_index=True)
+                elif address_data_frame_dict:
+                    address_data_frame_dict = address_data_frame_dict[0]
+                    address_data_frame_dict.update({'entity_person_id': entity_person_id})
+                    response_address = self.rocket_app.post_to_rocketapp(endpoint='common/save_person_address',
+                                                                         data=address_data_frame_dict)
+                    if not response_address['success'] and ClientNo:
+                        address_import_fail_dict = {
+                            'ClientNo': ClientNo,
+                            'Import Type': "Address Import",
+                            'Error Message': response_address['message']}
+                        self.fail_data_frame = self.fail_data_frame.append(address_import_fail_dict, ignore_index=True)
+
+                bank_data_frame_dict = self.bank_row_dict(ClientNo)
+                if bank_data_frame_dict:
+                    bank_data_frame_dict.update({'entity_person_id': entity_person_id})
+                    response_bank = self.rocket_app.post_to_rocketapp(endpoint='common/save_person_bank_account',
+                                                                      data=bank_data_frame_dict)
+                    if not response_bank['success'] and ClientNo:
+                        bank_import_fail_dict = {
+                            'ClientNo': ClientNo,
+                            'Import Type': "Bank Import",
+                            'Error Message': response_bank['message']}
+                        self.fail_data_frame = self.fail_data_frame.append(bank_import_fail_dict, ignore_index=True)
+            elif not response['success'] and ClientNo:
+                person_import_fail_dict = {
+                    'ClientNo': ClientNo,
+                    'Import Type': "Person Import",
+                    'Error Message': response['message']}
+                self.fail_data_frame = self.fail_data_frame.append(person_import_fail_dict, ignore_index=True)
+        print(self.fail_data_frame)
+
+if __name__ == '__main__':
+    DataMigration().import_person_details()

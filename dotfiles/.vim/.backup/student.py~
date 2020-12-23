@@ -1,0 +1,813 @@
+# -*- coding: utf-8 -*-
+"""StudentController controller module"""
+
+import os
+import json
+from datetime import datetime
+from sqlalchemy import func, desc, asc
+from pkg_resources import resource_filename
+from tg import expose, require, redirect, validate, flash, url, request, response, predicates
+
+
+from eiffel_back.model import *
+from eiffel_back.lib.tg_utils import *
+from eiffel_back.lib.base import BaseController
+from eiffel_back.lib.tg_decorators import *
+from eiffel_back.lib.tgfileuploader import FileUploader
+from eiffel_back.lib.tg_generic_reportlab import PDFCreator, Paragraph
+from eiffel_back.lib.email_creator import EiffelBackEmailCreator
+import eiffel_back.lib.gateway_utils as GATEWAY
+from eiffel_back.controllers.common import CommonController
+from dotenv import dotenv_values
+
+dotenv_values = dotenv_values()
+
+COMMON = CommonController()
+SEARCHKEY_STUDENT = 'Student_SearchKeyWord'
+SEARCHKEY_INVITEE = 'Invitee_SearchKeyWord'
+
+FILENAME = os.path.abspath(resource_filename('eiffel_back', 'public'))
+PUBLIC_DIRNAME = os.path.join(FILENAME)
+PDF_DIRNAME = os.path.join(PUBLIC_DIRNAME, 'pdf')
+IMAGES_DIRNAME = os.path.join(PUBLIC_DIRNAME, 'images')
+CATALOG_DIRNAME = os.path.join(IMAGES_DIRNAME, 'catalog_pictures')
+FRONT_BASE_URL = dotenv_values.get('FRONT_BASE_URL')
+FRONT_STUDENT_IMAGES_URL = os.path.join(FRONT_BASE_URL, 'img/students')
+NUM = 10
+LIMIT = 20
+
+__all__ = ['StudentController']
+
+class StudentController(BaseController):
+
+    @require(CustomNotAnonymous())
+    @expose('eiffel_back.templates.generic')
+    def index(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+        kwargs['searchkey'] = SEARCHKEY_STUDENT
+        searchphrase = COMMON.get_searchphrase(**kwargs)
+        title = "Active Users"
+        htmltbl = self.get_active_students_tbl()
+        html = f"""
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header card-header-primary card-header-icon">
+                	<div class="row">
+						<div class="col-md-4">
+						     <div class="card-icon">
+                            <i class="material-icons">school</i>
+                        </div>
+                        <h4 class="card-title">Users</h4>
+                        </div>
+				 	</div>
+                    </div>
+                    <div class="card-body pt-0">
+                        <div class="material-datatables mt-3" id="div_student">
+                            {htmltbl}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        javascript = """
+        $('#action_search').click(function(){
+            var kwargs = 'searchphrase='+$('#searchphrase').val();
+            $('#div_student').load('/student/get_student_htmltbl', kwargs, function(data){
+                return false;
+            });
+        })
+        $('#btn_reset').click(function(){
+            $('#searchphrase').val('').focus();
+            $('#div_student').load('/student/get_student_htmltbl', 'reset=true', function(data){
+                return false;
+            });
+        })
+        """
+        return dict(title=title, html=html, javascript=javascript)
+
+    @expose()
+    def get_active_students_tbl(self, *args, **kwargs):
+        dbase_query = self.get_active_student_list(**kwargs)
+        html = self.get_student_htmltbl(**{'dbase_query': dbase_query, 'row_actions': ['View']})
+        return html
+
+    @expose()
+    def get_preregistered_student_tbl(self, *args, **kwargs):
+        dbase_query = self.get_invited_student_list(**kwargs)
+        html = self.get_student_htmltbl(**{'dbase_query': dbase_query, 'row_actions': ['Edit']})
+        return html
+
+    @expose()
+    def get_student_htmltbl(self, *args, **kwargs):
+        dbase_query = kwargs.get('dbase_query', [])
+        row_actions = kwargs.get('row_actions', [])
+        outputlist = []
+        for item in dbase_query:
+
+            added_by = User.by_id(item.added_by)
+            data = f'data-student-id="{item.id}"'
+            status = StudentStatus.by_id(item.student_status_id)
+
+            username = getattr(item, 'username', None)
+            if username:
+                item.student_status_id = COMMON.get_type_id(StudentStatus, 'Active')
+                DBSession.flush()
+
+            actions = ""
+            if 'View' in row_actions:
+                actions += f'<div {data} class="btn btn-link btn-warning btn-just-icon view"><i class="material-icons">visibility</i></div>'
+            if 'Edit' in row_actions:
+                actions += f'<div {data} class="btn btn-link btn-warning btn-just-icon edit"><i class="material-icons">edit</i></div>'
+
+            identity_number = None
+            if item.identity_number:
+                identity_number = item.identity_number
+            if item.passport_number:
+                identity_number = item.passport_number
+
+            if not identity_number:
+                continue
+
+            print()
+            print('get_student_htmltbl')
+            print(item)
+            print(item.formal_name)
+            print()
+
+            outputlist.append({
+                'name': item.display_name,
+                #'identity_number': identity_number,
+                'student_number': item.student_number,
+                'status' : status.status if status else 'Unknown',
+                #'email': item.email,
+                'added': item.added,
+                'added_by': f'{added_by.name} {added_by.surname}',
+                #'actions': actions,
+                             })
+        print(outputlist)
+        dbcolumnlist=[
+                'name',
+                #'identity_number',
+                'student_number',
+                #'email',
+                'status',
+                'added',
+                'added_by',
+                #'actions',
+                    ]
+        theadlist=[
+                'Name',
+                #'Identity or Passport No.',
+                'Student / Employee No.',
+                #'Email',
+                'Status',
+                'Date Added',
+                'Added By',
+                #'Actions'
+                ]
+        tdclasslist = [
+                '',
+                #'',
+                '',
+                #'',
+                '',
+                '',
+                '',
+                #'text-right',
+                ]
+        javascript = """
+        <script>
+        $('.edit').click(function(){
+            var kwargs = {'student_id' : $(this).data('student-id')};
+            $.redirect('/edit_student', kwargs);
+        });
+        $('.view').click(function(){
+            var kwargs = {'student_id' : $(this).data('student-id')};
+            $.redirect('/view_student', kwargs);
+        });
+        $('#student_tbl').DataTable({
+            "pagingType": "full_numbers",
+            "lengthMenu": [[10, 25, 50, -1],[10, 25, 50, 'All']],
+            "dom": "<'toolbar'f>" +
+                "<'row'<'col-md-12't>>" +
+                "<'row'<'col-md-6 d-flex'<'mt-1'l><'ml-2'i>><'col-md-6'p>>",
+            responsive: true,
+            language: {
+                search: "_INPUT_",
+                searchPlaceholder: "Search records",
+                emptyTable: "No Pre-Registered students to show...",
+            }
+        });
+        </script>
+        """
+
+        return build_html_table_material(outputlist, dbcolumnlist, theadlist, "student_tbl", tdclasslist) + javascript
+
+    @expose()
+    def get_active_student_list(self, *args, **kwargs):
+        usernow = request.identity.get('user')
+        kwargs['searchkey'] = SEARCHKEY_STUDENT
+        searchphrase = COMMON.get_searchphrase(**kwargs).lower()
+        if searchphrase:
+            searchphrase = "%" + searchphrase + "%"
+            dbase_query = DBSession.query(Student). \
+                filter(or_(
+                Student.identity_number.like(searchphrase),
+            )). \
+                filter(Student.student_status_id == COMMON.get_type_id(StudentStatus, 'Active')). \
+                order_by(asc(Student.name)).limit(LIMIT)
+            return  dbase_query
+        else:
+            dbase_query = DBSession.query(Student). \
+                filter(Student.student_status_id == COMMON.get_type_id(StudentStatus, 'Active')). \
+                order_by(asc(Student.id)). \
+                limit(LIMIT)
+        return dbase_query
+
+    def get_student_form_html(self, *args, **kwargs):
+        id = kwargs.get('id', '')
+        name = kwargs.get('name', '')
+        title = kwargs.get('title', '')
+        email = kwargs.get('email', '')
+        surname = kwargs.get('surname', '')
+        alt_email = kwargs.get('alt_email', '')
+        display_name = kwargs.get('display_name', '')
+        id_no_type_id = kwargs.get('id_no_type_id', '')
+        student_number = kwargs.get('student_number', '')
+        identity_number = kwargs.get('identity_number', '')
+        passport_number = kwargs.get('passport_number', '')
+        location_id = kwargs.get('location_id', '')
+        address1 = kwargs.get('address1', '')
+        address2 = kwargs.get('address2', '')
+        address3 = kwargs.get('address3', '')
+        postal_code = kwargs.get('postal_code', '')
+
+        hidden_input = COMMON.get_hidden_input(**{'id': 'id', 'value': id}) if id else ''
+        display = COMMON.get_form_input(12, 'Display Name', 'display_name', display_name, attributes='required')
+        student_number = COMMON.get_form_input(6, 'Student / Employee Number', 'student_number', student_number, attributes='required')
+        identity_number = COMMON.get_form_input(6, 'Identity Number', 'identity_number', identity_number)
+        passport_number = COMMON.get_form_input(6, 'Passport Number', 'passport_number', passport_number)
+        id_no_type_id = COMMON.get_form_input(6, 'Identity Type', 'id_no_type_id', id_no_type_id, attributes='required')
+        title = COMMON.get_form_input(2, 'Title', 'title', title)
+        name = COMMON.get_form_input(5, 'First Name', 'name', name, attributes='required')
+        surname = COMMON.get_form_input(5, 'Last Name', 'surname', surname, attributes='required')
+        email = COMMON.get_form_input(6, 'Email Address', 'email', email, input_type='email', attributes='required')
+        alt_email = COMMON.get_form_input(6, 'Alternate Email Address', 'alt_email', alt_email, input_type='email')
+        location_id = COMMON.get_hidden_input(**{'id': 'location_id', 'value': location_id})
+        addressline1 = COMMON.get_form_input(12, 'Address', 'address1', address1)
+        addressline2 = COMMON.get_form_input(4, 'City', 'address2', address2)
+        addressline3 = COMMON.get_form_input(4, 'Country', 'address3', address3)
+        postal_code = COMMON.get_form_input(4, 'Postal Code', 'postal_code', postal_code)
+
+        card_title = 'Edit' if id else 'Register New'
+        form_width = 'col-md-8' if id else 'col-md-12'
+        profile = ""
+        if id:
+            profile = f"""
+            <div class="col-md-4">
+                <div class="card card-profile">
+                    <div class="card-avatar">
+                        <a href="#pablo">
+                            <img class="img" src="images/faces/1.png" />
+                        </a>
+                    </div>
+                    <div class="card-body">
+                        <h6 class="card-category text-gray">{id}</h6>
+                        <h4 class="card-title">{display_name}</h4>
+                    </div>
+                </div>
+            </div>
+            """
+        html = f"""
+        <div class="row mt-3">
+            <div class="{form_width}">
+                <div class="card">
+                    <div class="card-header card-header-icon card-header-primary">
+                        <div class="card-icon">
+                            <i class="material-icons">person</i>
+                        </div>
+                        <h4 class="card-title">{card_title} User</h4>
+                    </div>
+                    <div class="card-body">
+                        <form id='form_student'>
+                            {hidden_input}
+                            <div class="row">
+                                {student_number}
+                            </div>
+                            <div class="row">
+                                {title}
+                                {name}
+                                {surname}
+                            </div>
+                            <div class="row">
+                                {identity_number}
+                                {passport_number}
+                            </div>
+                            <div class="row">
+                                {email}
+                                {alt_email}
+                            </div>
+                            <button class="btn btn-primary pull-right save">Save</button>
+                            <button id="cancelBtn" class="btn btn-outline-primary">Cancel</button>
+                            <div class="clearfix"></div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+            {profile}
+        </div>
+        """
+        return html
+
+    @require(CustomNotAnonymous())
+    @expose('eiffel_back.templates.generic')
+    def view(self, *args, **kwargs):
+        student_id = kwargs.get('student_id', None)
+        usernow = request.identity.get('user', {})
+        this = Student.by_id(student_id)
+        if not this: redirect('/all_students')
+        html = self.get_student_view_html(**{
+            'id' : this.id if this.id else '',
+            'name' : this.name if this.name else '',
+            'title' : this.title if this.title else '',
+            'email' : this.email if this.email else '',
+            'mobile' : this.mobile if this.mobile else '',
+            'surname' : this.surname if this.surname else '',
+            'display_name' : this.display_name if this.display_name else '',
+            'student_number' : this.student_number if this.student_number else '',
+            'filepath' : this.filepath if this.filepath else '',
+            'location_id': this.location_id if this.location_id else '',
+        })
+        javascript = """
+        $('.back').click(function(e){
+            e.preventDefault();
+            $.redirect('/all_students');
+        });
+        $('.deactivate').click(function(e){
+            e.preventDefault();
+            var kwargs = {
+                'student_id': $(this).attr('student_id'),
+            }
+            $('#dialogdiv').load('/student/deactivate_student_dialog', kwargs);
+        });
+        """
+        return dict(title='Edit Student', html=html, javascript=javascript)
+
+    def get_student_view_html(self, *args, **kwargs):
+        id = kwargs.get('id', '')
+        name = kwargs.get('name', '')
+        title = kwargs.get('title', '')
+        email = kwargs.get('email', '')
+        mobile = kwargs.get('mobile', '')
+        surname = kwargs.get('surname', '')
+        display_name = kwargs.get('display_name', '')
+        student_number = kwargs.get('student_number', '')
+        filename = kwargs.get('filepath', None)
+        filepath = os.path.join(FRONT_STUDENT_IMAGES_URL, filename)
+        if not COMMON.remote_file_exists(filepath):
+            filepath = '/images/nouserimage.svg'
+
+        display = COMMON.get_form_input(12, 'Display Name', 'display_name', display_name, 'disabled')
+        student_number = COMMON.get_form_input(12, 'Student / Employee Number', 'student_number', student_number, 'disabled')
+        title = COMMON.get_form_input(2, 'Title', 'title', title, 'disabled')
+        name = COMMON.get_form_input(5, 'First Name', 'name', name, 'disabled')
+        surname = COMMON.get_form_input(5, 'Last Name', 'surname', surname, 'disabled')
+        mobile = COMMON.get_form_input(6, 'Mobile', 'mobile', mobile, 'disabled', input_type='tel')
+        email = COMMON.get_form_input(6, 'Email Address', 'email', email, 'disabled', input_type='email')
+        card_title = 'View'
+        return f"""
+        <div class="row">
+            <div class="col-md-8">
+                <div class="card">
+                    <div class="card-header card-header-icon card-header-primary">
+                        <div class="card-icon">
+                            <i class="material-icons">person</i>
+                        </div>
+                        <h4 class="card-title">{card_title} Student</h4>
+                    </div>
+                    <div class="card-body">
+                        <div class="toolbar text-right">
+                        </div>
+                        <form id='form_student'>
+                            <div class="row">
+                                {display}
+                                {student_number}
+                            </div>
+                            <div class="row">
+                                {title}
+                                {name}
+                                {surname}
+                            </div>
+                            <div class="row">
+                                {mobile}
+                                {email}
+                            </div>
+                            <div class="row">
+                                <button class="btn btn-danger ml-auto mr-2 deactivate" student_id="{id}">Deactivate</button>
+                                <button class="btn btn-outline-primary mr-3 back">Back</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card card-profile">
+                    <div class="card-avatar">
+                        <a href="#pablo">
+                            <img class="img" src="{filepath}" />
+                        </a>
+                    </div>
+                    <div class="card-body">
+                        <h6 class="card-category text-gray">{id}</h6>
+                        <h4 class="card-title">{display_name}</h4>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+
+
+    def get_hidden_input(self, *args, **kwargs):
+        input_id = kwargs.get('id', 'id')
+        input_value = kwargs.get('value', None)
+        return f"""<input style='display:none;' type="text" id="{input_id}" name="{input_id}" class="form-control" value="{input_value}"/>"""
+
+    @expose()
+    def deactivate_student_dialog(self, *args, **kwargs):
+        student_id = kwargs.get('student_id', None)
+        if not student_id:
+            return ''
+        student = Student.by_id(student_id)
+        message = f"""
+Dear {student.name},
+
+Due to certain irregularities we have decided to deactivate your account.
+
+Regards,
+The Administrator
+
+IMPORTANT: If you wish to appeal this action, please direct your complaint to the administrator at email@email.ac.za
+        """
+        html = f"""
+        <div id="deactivateStudent" class="modal" tabindex="-1" role="dialog">
+            <div class="modal-dialog modal-dialog-centered modal-lg" role="document">
+                <div class="modal-content">
+                    <div class="modal-body">
+                        <h5 class="font-weight-bold">By deactivating the student, the following will happen.</h5>
+                        <ul>
+                            <li>All active posts will be deactivated</li>
+                            <li>All active offers will be deactivated</li>
+                            <li>All chats with this student will be deactivated</li>
+                            <li>The Student will be logged out and will not be able to log back in</li>
+                            <li>The Student will be informed via email that this account has been deactivated</li>
+                        </ul>
+                        <h5 class="text-danger">Should this student be reactivated, all posts, offers and chats will be lost</h5>
+                        <div class="row">
+                            <div class="col-md-12">
+                                <div class="form-group">
+                                    <label>Deactivation Email Message</label>
+                                    <div class="form-group">
+                                        <label class="bmd-label-floating"> </label>
+                                        <textarea id="message" class="form-control" rows="9" maxlength="200" name="message" disabled>{message}</textarea>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button id="deactivateBtn" type="button" class="btn btn-danger" student_id={student_id}>Deactivate</button>
+                        <button type="button" class="btn btn-outline-primary" data-dismiss="modal">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        javascript = """
+        <script>
+            $('#deactivateBtn').click(function(){
+                var kwargs = {
+                    'student_id': $(this).attr('student_id'),
+                }
+                $.post('/student/deactivate_student', kwargs, function(data){
+                    var result = JSON.parse(data);
+                    showNotification(result.status, result.message);
+                    if(result.success === 'true'){
+                      $('#deactivateStudent').modal('hide');
+                    }
+                    return false;
+                })
+            });
+            $('#deactivateStudent').modal();
+        </script>
+     	"""
+        return html + javascript
+
+    @expose()
+    def deactivate_student(self, *args, **kwargs):
+        student_id = kwargs.get('student_id', None)
+        if not student_id:
+            print('NO student_id')
+            return json.dumps({'success': 'false', 'message': 'No Student selected', 'status': 'danger'})
+        chats = DBSession.query(ChatMessage). \
+            filter(or_(
+                ChatMessage.from_student == student_id,
+                ChatMessage.to_student == student_id
+            )). \
+            all()
+        for chat in chats:
+            chat.active = False
+            DBSession.flush()
+
+        offers = DBSession.query(Order). \
+            filter(or_(
+                Order.buyer_id == student_id,
+                Order.seller_id == student_id
+            )). \
+            all()
+        for offer in offers:
+            offer.active = False
+            DBSession.flush()
+
+        posts = DBSession.query(Post). \
+            filter(Post.added_by == student_id). \
+            all()
+        for post in posts:
+            post.active = False
+            DBSession.flush()
+
+        # email_result = self.send_deactivation_email(**{'student_id': student_id})
+        #! REMEMBER to add email when loading real data
+        student = Student.by_id(student_id)
+        student_name = student.display_name
+        student.active = False
+        DBSession.flush()
+        return json.dumps({'success': 'true', 'message': f'Student "{student_name}" Successfully Deactivated', 'status': 'success'})
+
+    @expose()
+    def send_deactivation_email(self, *args, **kwargs):
+        student_id = kwargs.get('student_id', None)
+        student = Student.by_id(student_id)
+        if not student: return 'false'
+        if not student.email: return 'false'
+        e = EiffelBackEmailCreator()
+        valid_email = e.validate_email(student.email)
+        if not valid_email: return 'false'
+        e.add_subject('Account Deactivation | Eiffel Corp')
+        e.add_to_address(student.email)
+        plain_text = f"""
+        Dear {student.name}, \n\n
+        Due to certain irregularities we have decided to deactivate your account.\n\n
+        Regards, \n
+        The Administrator\n\n
+        IMPORTANT: If you wish to appeal this action, please direct your complaint to the administrator at email@email.ac.za
+        """
+        e.add_plain_text(plain_text)
+        rich_text = f"""
+        Dear {student.name}, <br/><br/>
+        Due to certain irregularities we have decided to deactivate your account.<br/>
+        Regards, <br/>
+        The Administrator<br/><br/>
+        <p style="color: red;">IMPORTANT: If you wish to appeal this action, please direct your complaint to the administrator at email@email.ac.za</p>
+        """
+        e.add_rich_text(rich_text)
+        e.send(False)
+        if not e: return 'false'
+        return 'true'
+
+    # ENROLMENT START
+
+    @require(CustomNotAnonymous())
+    @expose('eiffel_back.templates.generic')
+    def preregistered_users(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+        kwargs['searchkey'] = SEARCHKEY_INVITEE
+        searchphrase = COMMON.get_searchphrase(**kwargs)
+        title = "Pre-Registered Users"
+        htmltbl = self.get_preregistered_student_tbl(**kwargs)
+        html = f"""
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header card-header-primary card-header-icon">
+                	<div class="row">
+						<div class="col-md-4">
+						     <div class="card-icon">
+                            <i class="material-icons">school</i>
+                        </div>
+                        <h4 class="card-title">Pre-Registered Users</h4>
+                        </div>
+				 	</div>
+                    </div>
+                    <div class="card-body pt-0">
+                        <div class="toolbar">
+                            <div class="col-md-12 d-flex mt-4 px-0">
+                                <button class="btn btn-sm btn-primary ml-auto" id='btn_import'>Import Pre-Registered User List</button>
+                                <button class="btn btn-sm btn-outline-primary ml-2" id='btn_register'>Register New User</button>
+                            </div>
+                        </div>
+                        <div class="material-datatables mt-3" id="div_student">
+                            {htmltbl}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        javascript = """
+        $('#action_search').click(function(){
+            var kwargs = 'searchphrase='+$('#searchphrase').val();
+            $('#div_student').load('/student/get_preregistered_student_tbl', kwargs, function(data){
+                return false;
+            });
+        })
+        $('#btn_reset').click(function(){
+        $('#searchphrase').val('').focus();
+            $('#div_student').load('/student/get_preregistered_student_tbl', 'reset=true', function(data){
+                return false;
+            });
+        })
+        $('#btn_register').click(function(){
+            $.redirect('/register_user');
+        });
+        $('#btn_import').click(function(){
+            $('#dialogdiv').load('/batch_import/get_batch_import_modal');
+            return false;
+        });
+        """
+        return dict(title=title, html=html, javascript=javascript)
+
+    def get_preregistered_toolbar(self,searchphrase=None, *args, **kwargs):
+        return f"""
+        <div class="toolbar">
+            <div class="col-md-12 d-flex mt-4 px-0">
+                    <input type="text" class="form-control search" name="searchphrase"  id='searchphrase' value='{searchphrase}' placeholder="Search">
+                </div>
+                <button class="btn btn-sm btn-primary ml-2" id='action_search'>Search</button>
+                <button class="btn btn-sm btn-outline-primary ml-2" id='btn_reset'>Reset</button>
+                <button class="btn btn-sm btn-primary ml-auto" id='btn_import'>Import Pre-Registered User List</button>
+                <button class="btn btn-sm btn-outline-primary ml-2" id='btn_register'>Register New User</button>
+            </div>
+        </div>
+        """
+
+    @expose()
+    def get_invited_student_list(self, *args, **kwargs):
+        usernow = request.identity.get('user')
+        kwargs['searchkey'] = SEARCHKEY_INVITEE
+        searchphrase = COMMON.get_searchphrase(**kwargs).lower()
+        if searchphrase:
+            searchphrase = "%" + searchphrase + "%"
+            dbase_query = DBSession.query(Student). \
+                filter(Student.student_status_id == COMMON.get_type_id(StudentStatus, 'invited')). \
+                order_by(asc(Student.id)).limit(LIMIT)
+            return  dbase_query
+        else:
+            dbase_query = DBSession.query(Student). \
+                filter(Student.student_status_id == COMMON.get_type_id(StudentStatus, 'invited')). \
+                order_by(asc(Student.id)). \
+                limit(LIMIT)
+        return dbase_query
+
+    @require(CustomNotAnonymous())
+    @expose('eiffel_back.templates.generic')
+    def register(self, *args, **kwargs):
+        #result = GATEWAY.get_person_identity_types()
+        usernow = request.identity.get('user', {})
+        html = self.get_student_form_html()
+        javascript = """
+        var form_student = $('#form_student');
+        setFormValidation(form_student);
+        $('.save').click(function(e){
+            e.preventDefault();
+
+            var valid_form_student = FormIsValid(form_student);
+
+            if (valid_form_student){
+                var formserial = $(form_student).serialize();
+                $.post('/common/save_register_user?', formserial, function(data){
+                    var result = JSON.parse(data);
+                    showNotification(result.status, result.message);
+                    if(result.success === 'true'){
+                        $.post('/prefetch_students?', function(data){
+                            $.redirect('/preregistered_users');
+                            return false;
+                        });
+                    };
+                    return false;
+                });
+                return false;
+            };
+        });
+        $('#cancelBtn').click(function(e){
+            e.preventDefault();
+            $.redirect('/preregistered_users');
+        });
+        """
+        return dict(title="Register New User", html=html, javascript=javascript)
+
+    @require(CustomNotAnonymous())
+    @expose('eiffel_back.templates.generic')
+    def edit(self, *args, **kwargs):
+        student_id = kwargs.get('student_id', None)
+        usernow = request.identity.get('user', {})
+        this = Student.by_id(student_id)
+
+        location_id = this.location_id
+        location = Location.by_attr_first('id', this.location_id)
+        address1 = address2 = address3 = postal_code = ''
+        if location:
+            address1 = location.address1
+            address2 = location.address2
+            address3 = location.address3
+            postal_code = location.postal_code
+
+        html = self.get_student_form_html(**{
+            'id' : this.id,
+            'name' : this.name,
+            'title' : this.title,
+            'email' : this.email,
+            'mobile' : this.mobile,
+            'surname' : this.surname,
+            'alt_email' : this.alternate_email,
+            'display_name' : this.display_name,
+            'student_number' : this.student_number,
+            'identity_number' : this.identity_number,
+            'passport_number' : this.passport_number,
+            'location_id': this.location_id if this.location_id else '',
+            'address1': address1,
+            'address2': address2,
+            'address3': address3,
+            'postal_code': postal_code,
+        })
+        javascript = """
+        var form_student = $('#form_student');
+        setFormValidation('#form_student');
+        $('.save').click(function(e){
+            e.preventDefault();
+
+            var valid_form_student = FormIsValid(form_student);
+
+            if (valid_form_student){
+                var formserial = $(form_student).serialize();
+                $.post('/student/save_edit_student?', formserial, function(data){
+                    var result = JSON.parse(data);
+                    console.log(result);
+                    showNotification(result.status, result.message);
+                    if(result.success === 'true'){
+                        $.post('/prefetch_students?', function(data){
+                            $.redirect('/preregistered_users');
+                            return false;
+                        });
+                    };
+                    return false;
+                });
+            };
+        });
+        $('#cancelBtn').click(function(e){
+            e.preventDefault();
+            $.redirect('/preregistered_users');
+        });
+        """
+        return dict(title='Edit Student', html=html, javascript=javascript)
+
+    @expose()
+    def save_edit_student(self, *args, **kwargs):
+        this = Student.by_id(kwargs.get('id', None))
+        if not this: return json.dumps({'success': 'false', 'message': 'Student not found!', 'status': 'danger'})
+
+        email = kwargs.get('email', None)
+        if not email:
+            return json.dumps({'success': 'false', 'message': 'Please provide an email address.', 'status': 'danger'})
+
+        mobile = kwargs.get('mobile', None)
+        if not mobile:
+            return json.dumps({'success': 'false', 'message': 'Please provide a mobile number.', 'status': 'danger'})
+        valid_mobile = True if len(mobile) >= 10 else False
+        if not valid_mobile:
+            return json.dumps({'success': 'false', 'message': 'Please ensure that a valid mobile number is entered.', 'status': 'danger'})
+
+        identity_number = kwargs.get('identity_number', None)
+        passport_number = kwargs.get('passport_number', None)
+        if not identity_number and not passport_number:
+            return json.dumps({'success': 'false', 'message': 'Please supply a ID or Passport Number', 'status': 'danger'})
+
+        student_number = kwargs.get('student_number', None)
+        if not student_number:
+            return json.dumps({'success': 'false', 'message': 'Please supply a Student number', 'status': 'danger'})
+        kwargs['entity_id'] = this.entity_id
+        result = GATEWAY.update_student(kwargs)
+        if not result.get('success'):
+            message = result.get('data', 'This student could not be pre-registered, please try again.')
+            return json.dumps({'success': 'false', 'message': message, 'status': 'danger'})
+        entity_id = result.get('data', None)
+        if not entity_id:
+            print('DEBUG: NO value in result from API')
+            return json.dumps({'success': 'false', 'message': 'This student could not be pre-registered, please try again.', 'status': 'danger'})
+
+        this.display_name = kwargs.get('display_name', None)
+        this.student_status_id = COMMON.get_type_id(StudentStatus, 'invited')
+        this.location_id = COMMON.set_location(**kwargs)
+        DBSession.flush()
+        return json.dumps({'success': 'true', 'message': f'Student was successfully updated.', 'status': 'success'})

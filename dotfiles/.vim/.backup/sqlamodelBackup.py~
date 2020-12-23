@@ -1,0 +1,259 @@
+# -*- coding: utf-8 -*-
+
+import os
+
+from sqlalchemy import Table, ForeignKey, Column
+from sqlalchemy.orm import relation, synonym
+from sqlalchemy.types import Unicode, Integer, DateTime, Boolean
+
+from calabash.model import DeclarativeBase, metadata, DBSession
+from calabash.lib.model_utils import PhatBase, common_columns, get_type_table, get_phat_table
+
+#************************** Wallet Types **************************#
+WalletType = get_type_table(model_name='Wallet', table_name='wallet')
+WalletAccountType = get_type_table(model_name='WalletAccount', table_name='wallet_account')
+WalletWithholdPeriodType = get_type_table(model_name='WalletWithholdPeriod', table_name='wallet_withhold_period')
+WalletRulesType = get_type_table(model_name='WalletRules', table_name='wallet_rules')
+WalletStatusType = get_type_table(model_name='WalletStatus', table_name='wallet_status')
+
+#************************** Transactions Types **************************#
+TransactionType = get_type_table(model_name='Transaction', table_name='transaction')
+PayorPayeeType = get_type_table(model_name='PayorPayee', table_name='payor_payee')
+
+#************************** Audit Types **************************#
+AuditType = get_type_table(model_name='Audit', table_name='audit')
+
+#************************** Notification Types **************************#
+NotificationType = get_type_table(model_name='Notification', table_name='notification')
+
+#************************** Wallet Provider **************************#
+tbl_wallet_provider = {
+    '__tablename__': 'tbl_wallet_provider',
+    'name': common_columns.get('title_not_nullable')(),
+    'base_url': common_columns.get('description_not_nullable')(),
+    'documentation_url': common_columns.get('description_not_nullable')(),
+}
+WalletProvider = get_phat_table(model_name='WalletProvider', columndict=tbl_wallet_provider)
+
+#************************** Wallet **************************#
+tbl_wallet_catalog = {
+    '__tablename__': 'tbl_wallet_catalog',
+    'name': common_columns.get('title_not_nullable')(),
+    'wallet_type_id': common_columns.get('integer_not_nullable')(),
+    'wallet_account_type_id': common_columns.get('integer_not_nullable')(),
+    'wallet_provider_id': common_columns.get('integer_not_nullable')(),
+    'wallet_withhold_period_type_id': common_columns.get('integer_not_nullable')(),
+    'wallet_withhold_period_value': common_columns.get('integer')(),
+    'max_transaction_amount': common_columns.get('integer_not_nullable')(),
+    'max_balance': common_columns.get('integer_not_nullable')(),
+    'min_balance': common_columns.get('integer_not_nullable')(),
+    #'bln_myimali_synced': common_columns.get('boolean_default_false_not_nullable')(),
+}
+WalletCatalog = get_phat_table(model_name='WalletCatalog', columndict=tbl_wallet_catalog)
+
+tbl_wallet_catalog_rules = {
+    '__tablename__': 'tbl_wallet_catalog_rules',
+    'wallet_catalog_id': common_columns.get('integer_not_nullable')(),
+    'wallet_rules_type_id': common_columns.get('integer_not_nullable')(),
+    'value': common_columns.get('boolean')(),
+}
+WalletCatalogRules = get_phat_table(model_name='WalletCatalogRules', columndict=tbl_wallet_catalog_rules)
+
+tbl_wallet = {
+    '__tablename__': 'tbl_wallet',
+    'client_id': common_columns.get('integer_not_nullable')(),
+    'entity_id': common_columns.get('integer_not_nullable')(),
+    'username': common_columns.get('description_not_nullable')(),
+    'wallet_catalog_id': common_columns.get('integer_not_nullable')(),
+    'wallet_status_type_id': common_columns.get('integer_not_nullable')(),
+    'max_transaction_amount': common_columns.get('integer_not_nullable')(),
+    'max_balance': common_columns.get('integer_not_nullable')(),
+    'min_balance': common_columns.get('integer_not_nullable')(),
+    'available_balance': common_columns.get('integer_not_nullable')(),
+    'pending_balance': common_columns.get('integer_not_nullable')(),
+    'last_balance_update': common_columns.get('date_not_nullable')(),
+}
+Wallet = get_phat_table(model_name='Wallet', columndict=tbl_wallet)
+
+#************************** Social Clubs **************************#
+tbl_wallet_social_club = {
+    '__tablename__': 'tbl_wallet_social_club',
+    'wallet_id': common_columns.get('integer_not_nullable')(),
+    'name': common_columns.get('title_not_nullable')(),
+}
+WalletSocialClub = get_phat_table(model_name='WalletSocialClub', columndict=tbl_wallet_social_club)
+
+tbl_wallet_social_club_member = {
+    '__tablename__': 'tbl_wallet_social_club_member',
+    'entity_id': common_columns.get('integer_not_nullable')(),
+    'username': common_columns.get('description_not_nullable')(),
+    'wallet_id': common_columns.get('integer_not_nullable')(),
+    'balance': common_columns.get('integer_not_nullable')(),
+}
+WalletSocialClubMember = get_phat_table(model_name='WalletSocialClubMember', columndict=tbl_wallet_social_club_member)
+
+#************************** Transactions **************************#
+tbl_allocation = {
+    '__tablename__': 'tbl_allocation',
+    'transaction_type_id': common_columns.get('integer_not_nullable')(),
+    'sequence': common_columns.get('integer_not_nullable')(),
+    'name': common_columns.get('title_not_nullable')(),
+    'percentage': common_columns.get('percentage_not_nullable')(),
+    'client_id': common_columns.get('integer_not_nullable')(),
+    'payor_type_id': common_columns.get('integer_not_nullable')(),
+    'payee_type_id': common_columns.get('integer_not_nullable')(),
+}
+Allocation = get_phat_table(model_name='Allocation', columndict=tbl_allocation)
+
+tbl_allocation_payor_system_wallet = {
+    '__tablename__': 'tbl_allocation_payor_system_wallet',
+    'allocation_id': common_columns.get('integer_not_nullable')(),
+    'wallet_id': common_columns.get('integer_not_nullable')(),
+}
+AllocationPayorSystemWallet = get_phat_table(model_name='AllocationPayorSystemWallet', columndict=tbl_allocation_payor_system_wallet)
+
+tbl_allocation_payee_system_wallet = {
+    '__tablename__': 'tbl_allocation_payee_system_wallet',
+    'allocation_id': common_columns.get('integer_not_nullable')(),
+    'wallet_id': common_columns.get('integer_not_nullable')(),
+}
+AllocationPayeeSystemWallet = get_phat_table(model_name='AllocationPayeeSystemWallet', columndict=tbl_allocation_payee_system_wallet)
+
+tbl_allocation_payor_specific_wallet = {
+    '__tablename__': 'tbl_allocation_payor_specific_wallet',
+    'allocation_id': common_columns.get('integer_not_nullable')(),
+    'wallet_id': common_columns.get('integer_not_nullable')(),
+}
+AllocationPayorSpecificWallet = get_phat_table(model_name='AllocationPayorSpecificWallet', columndict=tbl_allocation_payor_specific_wallet)
+
+tbl_allocation_payee_specific_wallet = {
+    '__tablename__': 'tbl_allocation_payee_specific_wallet',
+    'allocation_id': common_columns.get('integer_not_nullable')(),
+    'wallet_id': common_columns.get('integer_not_nullable')(),
+}
+AllocationPayeeSpecificWallet = get_phat_table(model_name='AllocationPayeeSpecificWallet', columndict=tbl_allocation_payee_specific_wallet)
+
+tbl_allocation_payee_message = {
+    '__tablename__': 'tbl_allocation_payee_message',
+    'allocation_id': common_columns.get('integer_not_nullable')(),
+    'text': common_columns.get('description_not_nullable')(),
+}
+AllocationPayeeMessage = get_phat_table(model_name='AllocationPayeeMessage', columndict=tbl_allocation_payee_message)
+
+tbl_allocation_payor_message = {
+    '__tablename__': 'tbl_allocation_payor_message',
+    'allocation_id': common_columns.get('integer_not_nullable')(),
+    'text': common_columns.get('description_not_nullable')(),
+}
+AllocationPayorMessage = get_phat_table(model_name='AllocationPayorMessage', columndict=tbl_allocation_payor_message)
+
+tbl_transaction = {
+    '__tablename__': 'tbl_transaction',
+    'transaction_type_id': common_columns.get('integer_not_nullable')(),
+    'transaction_status_id': common_columns.get('integer_not_nullable')(),
+    'currency_id': common_columns.get('integer_not_nullable')(),
+    'amount': common_columns.get('integer_not_nullable')(),
+}
+Transaction = get_phat_table(model_name='Transaction', columndict=tbl_transaction)
+
+tbl_transaction_debit = {
+    '__tablename__': 'tbl_transaction_debit',
+    'transaction_id': common_columns.get('integer_not_nullable')(),
+    'allocation_id': common_columns.get('integer_not_nullable')(),
+    'wallet_id': common_columns.get('integer_not_nullable')(),
+    'amount': common_columns.get('integer_not_nullable')(),
+}
+TransactionDebit = get_phat_table(model_name='TransactionDebit', columndict=tbl_transaction_debit)
+
+tbl_transaction_debit_message = {
+    '__tablename__': 'tbl_transaction_debit_message',
+    'transaction_debit_id': common_columns.get('integer_not_nullable')(),
+    'allocation_payor_message_id': common_columns.get('integer_not_nullable')(),
+    'text': common_columns.get('longtext_not_nullable')(),
+}
+TransactionDebitMessage = get_phat_table(model_name='TransactionDebitMessage', columndict=tbl_transaction_debit_message)
+
+tbl_transaction_credit = {
+    '__tablename__': 'tbl_transaction_credit',
+    'transaction_id': common_columns.get('integer_not_nullable')(),
+    'allocation_id': common_columns.get('integer_not_nullable')(),
+    'wallet_id': common_columns.get('integer_not_nullable')(),
+    'amount': common_columns.get('integer_not_nullable')(),
+}
+TransactionCredit = get_phat_table(model_name='TransactionCredit', columndict=tbl_transaction_credit)
+
+tbl_transaction_credit_message = {
+    '__tablename__': 'tbl_transaction_credit_message',
+    'transaction_credit_id': common_columns.get('integer_not_nullable')(),
+    'allocation_payee_message_id': common_columns.get('integer_not_nullable')(),
+    'text': common_columns.get('longtext_not_nullable')(),
+}
+TransactionCreditMessage = get_phat_table(model_name='TransactionCreditMessage', columndict=tbl_transaction_credit_message)
+
+#************************** Client **************************#
+tbl_client = {
+    '__tablename__': 'tbl_client',
+    'entity_id': common_columns.get('integer_not_nullable')(),
+    'name': common_columns.get('description_not_nullable')(),
+}
+Client = get_phat_table(model_name='Client', columndict=tbl_client)
+
+#************************** Notification **************************#
+tbl_application = {
+    '__tablename__': 'tbl_application',
+    'name': common_columns.get('description_not_nullable')(),
+}
+Application = get_phat_table(model_name='Application', columndict=tbl_application)
+
+tbl_application_token = {
+    '__tablename__': 'tbl_application_token',
+    'application_id': common_columns.get('integer_not_nullable')(),
+    'guid': common_columns.get('description_not_nullable')(),
+    'token': common_columns.get('description_not_nullable')(),
+}
+ApplicationToken = get_phat_table(model_name='ApplicationToken', columndict=tbl_application_token)
+
+tbl_notification = {
+    '__tablename__': 'tbl_notification',
+    'application_id': common_columns.get('integer')(),
+    'notification_type_id': common_columns.get('integer_not_nullable')(),
+    'from_username': common_columns.get('description_not_nullable')(),
+    'to_username': common_columns.get('description_not_nullable')(),
+    'message': common_columns.get('description_not_nullable')(),
+    'amount': common_columns.get('integer')(),
+    'actioned_notification_id': common_columns.get('integer')(),
+    'bln_actioned': common_columns.get('boolean_default_false_not_nullable')(),
+    'bln_viewed': common_columns.get('boolean_default_false_not_nullable')(),
+    'bln_delivered': common_columns.get('boolean_default_false_not_nullable')(), # set this when returning the seen list
+    'bln_deleted': common_columns.get('boolean_default_false_not_nullable')(),
+}
+Notification = get_phat_table(model_name='Notification', columndict=tbl_notification)
+
+#************************** Audit **************************#
+tbl_audit = {
+    '__tablename__': 'tbl_audit',
+    'table_name': common_columns.get('title_not_nullable')(),
+    'audit_type_id': common_columns.get('integer_not_nullable')(),
+    'primary_key': common_columns.get('integer_not_nullable')(),
+}
+Audit = get_phat_table(model_name='Audit', columndict=tbl_audit)
+
+#********************** Merchant Email *********************#
+tbl_merchant_magic_link = {
+    '__tablename__': 'tbl_merchant_magic_link',
+    'username': common_columns.get('description_not_nullable')(),
+    'reference': common_columns.get('description_not_nullable')(),
+    'guid': common_columns.get('description_not_nullable')(),
+    'expiry': common_columns.get('datetime_not_nullable')(),
+}
+MerchantMagicLink = get_phat_table(model_name='MerchantMagicLink', columndict=tbl_merchant_magic_link)
+
+#********************** Mobile OTP *********************#
+tbl_mobile_one_time_pin = {
+    '__tablename__': 'tbl_mobile_one_time_pin',
+    'username': common_columns.get('description_not_nullable')(),
+    'mobile': common_columns.get('description_not_nullable')(),
+    'otp': common_columns.get('description_not_nullable')(),
+    'expiry': common_columns.get('datetime_not_nullable')(),
+}
+MobileOneTimePin = get_phat_table(model_name='MobileOneTimePin', columndict=tbl_mobile_one_time_pin)

@@ -1,0 +1,201 @@
+# -*- coding: utf-8 -*-
+"""OrderController controller module"""
+
+import os
+import json
+from datetime import datetime
+from sqlalchemy import func, desc, asc
+from pkg_resources import resource_filename
+from tg import expose, require, redirect, validate, flash, url, request, response, predicates
+
+from eiffel_back.model import *
+from eiffel_back.lib.tg_utils import *
+from eiffel_back.lib.base import BaseController
+from eiffel_back.lib.tg_decorators import *
+from eiffel_back.lib.tgfileuploader import FileUploader
+from eiffel_back.lib.tg_generic_reportlab import PDFCreator, Paragraph
+
+import eiffel_back.lib.gateway_utils as GATEWAY
+
+from eiffel_back.controllers.common import CommonController
+
+COMMON = CommonController()
+
+FILENAME = os.path.abspath(resource_filename('eiffel_back', 'public'))
+PUBLIC_DIRNAME = os.path.join(FILENAME)
+PDF_DIRNAME = os.path.join(PUBLIC_DIRNAME, 'pdf')
+IMAGES_DIRNAME = os.path.join(PUBLIC_DIRNAME, 'images')
+CATALOG_DIRNAME = os.path.join(IMAGES_DIRNAME, 'catalog_pictures')
+
+NUM = 5
+
+__all__ = ['OrderController']
+
+class OrderController(BaseController):
+
+    @require(CustomNotAnonymous())
+    @expose('eiffel_back.templates.generic')
+    def index(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+        title = "All Orders"
+        htmltbl = self.get_orders_htmltbl(**kwargs)
+        html = f"""
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header card-header-primary card-header-icon">
+                        <div class="card-icon">
+                            <i class="material-icons">business</i>
+                        </div>
+                        <h4 class="card-title">Orders</h4>
+                    </div>
+                    <div class="card-body">
+                        <div class="toolbar">
+                        </div>
+                        <div class="material-datatables">
+                            {htmltbl}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        javascript = """
+        """
+        return dict(title=title, html=html, javascript=javascript)
+
+    def get_orders_htmltbl(self, *args, **kwargs):
+        outputlist = []
+        dbase_query = DBSession.query(Order). \
+            join(Post, Post.id == Order.post_id). \
+            filter(Post.active == True). \
+            order_by(desc(Order.updated)). \
+            all()
+        for item in dbase_query:
+            ad = Post.by_id(item.post_id)
+            outputlist.append({
+                'order_no': item.id,
+                'title' : ad.title,
+                'date': item.added,
+                'total': get_currency_by_locale(item.offer_amount),
+                #'actions': '',
+                             })
+        dbcolumnlist=[
+                'order_no',
+                'title',
+                'date',
+                'total',
+                #'actions',
+                    ]
+        theadlist=[
+                'Order ',
+                'Ad Title',
+                'Date',
+                'Total',
+                #'Actions'
+                ]
+        tdclasslist = [
+                '',
+                '',
+                '',
+                'text-center',
+                #'text-right',
+                ]
+        javascript = """
+        <script>
+        $('#allorders').DataTable({
+            "pagingType": "full_numbers",
+            "lengthMenu": [[10, 25, 50, -1],[10, 25, 50, 'All']],
+            "dom": "<'toolbar'f>" +
+                "<'row'<'col-md-12't>>" +
+                "<'row'<'col-md-6 d-flex'<'mt-1'l><'ml-2'i>><'col-md-6'p>>",
+            "order": [[ 2, "desc" ]],
+            "columns": [
+                    null,
+                    null,
+                    null,
+                    null,
+                ],
+            responsive: true,
+            language: {
+                search: "_INPUT_",
+                searchPlaceholder: "Search records",
+                emptyTable: "No imports to show...",
+            }
+        });
+        </script>
+        """
+        return build_html_table_material(outputlist, dbcolumnlist, theadlist, "allorders", tdclasslist) + javascript
+
+    @require(CustomNotAnonymous())
+    @expose('eiffel_back.templates.generic')
+    def pricing(self, *args, **kwargs):
+        title = "Pricing"
+
+        featured_ad_price = 20
+        merchant_username = 'calabash pay'
+
+        this = FeaturedAdSetup.latest_entry()
+        if this:
+            featured_ad_price = this.price
+            merchant_username = this.merchant_username
+
+        pricing = COMMON.get_form_input(4, 'Featured Ad Price', 'featured_ad_price', value=featured_ad_price, input_type='number')
+        merchant_username = COMMON.get_form_input(4, 'Merchant Username', 'merchant_username', value=merchant_username, input_type='text')
+        html = f"""
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header card-header-primary card-header-icon">
+                        <div class="card-icon">
+                            <i class="material-icons">money</i>
+                        </div>
+                        <h4 class="card-title">Pricing</h4>
+                    </div>
+                    <div class="card-body">
+                        <form id='form_pricing'>
+                            {pricing}
+                            {merchant_username}
+                        </form>
+                    </div>
+                    <div class="card-footer">
+                        <button id='save_new_pricing' class="btn btn-primary">Save</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        javascript = """
+        $('#save_new_pricing').click(function(){
+            var formserial = $('#form_pricing').serialize();
+            $.post('/save_featured_ad_price?', formserial, function(data){
+                return false;
+            });
+        });
+        """
+        return dict(title=title, html=html, javascript=javascript)
+
+    @expose()
+    def save_featured_ad_price(self, *args, **kwargs):
+        if not request.identity:
+            return ''
+
+        usernow = request.identity.get('user', {})
+        featured_ad_price = kwargs.get('featured_ad_price', None)
+        merchant_username = kwargs.get('merchant_username', None)
+
+        this = FeaturedAdSetup.latest_entry()
+        if not this:
+            this = FeaturedAdSetup()
+            this.price = featured_ad_price
+            this.merchant_username = merchant_username
+            this.added_by = usernow.id
+            DBSession.add(this)
+            DBSession.flush()
+        else:
+            this.price = featured_ad_price
+            this.merchant_username = merchant_username
+            DBSession.flush()
+        result = GATEWAY.update_merchant_featured_ad_link(kwargs)
+        print(result)
+        return ''

@@ -1,0 +1,11 @@
+# -*- coding: utf-8 -*-
+"""User Controller"""
+
+from tg import expose
+
+from calabash import model
+from calabash.lib.base import BaseController
+
+import calabash.lib.vault_utils as VAULT
+
+class UserController(BaseController):

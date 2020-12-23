@@ -1,0 +1,14 @@
+#!/bin/bash
+
+function dlswp {
+	find . -iname "*.pyc" -print0 -exec rm -r {} \;
+}
+dlswp
+
+#pip uninstall calabash -y
+#pip install -r requirements.txt
+#python setup.py develop
+
+source dbpop
+echo "something amazing"
+gearbox setup-app -c aws_production.ini --debug

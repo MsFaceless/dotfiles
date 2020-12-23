@@ -1,0 +1,77 @@
+#!/usr/bin/env python
+from dotenv import dotenv_values
+import os
+from lib.osutils import ensure_dir, deploy_repo, ensure_venv, update_repo
+import subprocess
+from deepcommit import deep_commit
+import sys
+
+hardswitch = True
+#hardswitch = True
+deploy_users = ['hans']#, 'camilla']
+
+if os.environ.get("USER") in deploy_users and hardswitch: 
+    args = sys.argv
+    commit_message = args[-1]
+    deep_commit(f"Commit via deepcommit: {commit_message}")
+
+#clean_run = False
+clean_run = True
+
+env_dict = dotenv_values()
+
+branch = env_dict.get("BRANCH")
+active_controllers_string = env_dict.get("CONTROLLERS")
+
+user_path = os.path.expanduser('~')
+env_path = os.path.join(user_path, 'enviros')
+
+live_dir = os.path.join(env_path, 'live')
+if clean_run: ensure_dir(live_dir)
+
+vertical_name = env_dict.get("VERTICAL")
+vertical_dir = os.path.join(live_dir, vertical_name)
+if clean_run: ensure_dir(vertical_dir)
+
+app_name = env_dict.get("APPNAME")
+virtualenv_dir = os.path.join(vertical_dir, f"{app_name}_env")
+if clean_run: ensure_venv(virtualenv_dir)
+
+app_dir = os.path.join(virtualenv_dir, app_name)
+mainrepo_link = env_dict.get("HGMAIN")
+hghost = env_dict.get("HGHOST")
+hguser = env_dict.get("HGUSER")
+hgproto = env_dict.get("HGPROTO")
+mainrepo_link = f"{hgproto}://{hguser}@{hghost}//home/{hguser}/repos/{vertical_name}/{vertical_name}_{app_name}/{app_name}"
+if clean_run: deploy_repo(app_dir, mainrepo_link, branch)
+else: update_repo(app_dir, branch)
+os.chdir(app_dir)
+
+run_main_clean_path = os.path.join(app_dir, 'run_main_clean')
+dbpop_path = os.path.join(app_dir, 'dbpop')
+
+active_controllers_string = env_dict.get("CONTROLLERS")
+if not active_controllers_string: 
+    logger.warn("No Controllers Found")
+    raise Exception
+
+active_controllers = [name for name in active_controllers_string.split(',')]
+controllers_dir = os.path.join(app_dir, 'controllers')
+if clean_run: ensure_dir(controllers_dir)
+for controller_name in active_controllers:
+    controller_dir = os.path.join(controllers_dir, controller_name)
+    controller_link = f"{hgproto}://{hguser}@{hghost}//home/{hguser}/repos/{vertical_name}/{vertical_name}_{app_name}/{controller_name}"
+    if clean_run: deploy_repo(controller_dir, controller_link)
+    else: update_repo(controller_dir)
+if clean_run:
+    init_process = subprocess.Popen(['bash', run_main_clean_path]) 
+    init_process.wait()
+else: 
+    init_process = subprocess.Popen(['bash', dbpop_path]) 
+    init_process.wait()
+    import setup_app
+
+runpath = os.path.join(app_dir, 'run')
+
+spawn_term = subprocess.Popen([f"source", "run"], executable="/usr/bin/bash")
+spawn_term.wait()

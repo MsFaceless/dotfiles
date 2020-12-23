@@ -1,0 +1,1425 @@
+# -*- coding: utf-8 -*-
+"""Claim controller module"""
+
+from tg import predicates, require
+from tg import expose, redirect, validate, url, request
+
+from tg.i18n import ugettext as _
+from tg.i18n import lazy_ugettext as l_
+
+from rocket.model import *
+
+from sqlalchemy import func, desc, asc, or_, and_
+
+from rocket.lib.tg_utils import *
+from rocket.lib.base import BaseController
+from rocket.lib.type_utils import TypeDictionary
+from rocket.controllers.common import CommonController
+
+COMMON = CommonController()
+LIMIT = 20
+
+TYPEUTIL = TypeDictionary()
+PERSON = TYPEUTIL.get_id_of_name('entity_type', 'person')
+PRINCIPAL_TYPE = TYPEUTIL.get_id_of_name('benefit_insured_life_relationship_type', 'principal')
+SPOUSE_TYPE = TYPEUTIL.get_id_of_name('benefit_insured_life_relationship_type', 'spouse')
+
+class ClaimController(BaseController):
+
+    @expose()
+    def _default(self, *args, **kwargs):
+        return 'This page is not available.'
+
+    @require(predicates.not_anonymous())
+    @expose('rocket.templates.generic')
+    def index(self, *args, **kwargs):
+        # self.fake_data()
+        html = self.get_active_claim_html(*args, **kwargs)
+        javascript = ''
+        title = _("Claim")
+        return dict(title=title, html=html, javascript=javascript)
+
+    @expose()
+    def get_active_claim_html(self, *args, **kwargs):
+        table = self.get_claim_table()
+        html = f"""
+        <div class="row">
+            <div class="col-lg-12">
+                <div class="card">
+                <div class="card-header">
+                    <div class="row d-flex">
+                        <div class="col-lg-6">
+                            <h4 class="card-title">{_('Claim')}</h4>
+                        </div>
+                        <div class="col-lg-6 text-right">
+                            <button id="registerClaimBtn" type="button" class="btn btn-primary">Register Claim</button>
+                        </div>
+                    </div>
+                    <hr>
+                </div>
+                <div id="tableDiv" class="card-body">
+                    {table}
+                </div>
+            </div>
+        </div>
+        """
+        javascript = """
+        <script nonce='1234'>
+            $('#registerClaimBtn').click(function(){
+                $.redirect('/claim/register');
+                return false;
+            });
+        </script>
+        """
+        return html + javascript
+
+    @expose()
+    def get_claim_table(self, *args, **kwargs):
+        dbase_query = DBSession.query(Claim).\
+            filter(Claim.bln_active == True).\
+            all()
+
+        outputlist = []
+        for item in dbase_query:
+            insured = EntityPerson.by_id(item.insured_entity_person_id)
+            title = EntityPersonTitle.by_id(insured.entity_person_title_id) if insured else ''
+            full_name = f'{title.title.title()} {insured.surname}, {insured.firstname}' if insured else 'Not Set'
+
+            claim_status = ClaimStatus.by_attr_first('claim_id', item.id)
+            status = TYPEUTIL.get_pretty_name('claim_status_type', claim_status.claim_status_type_id)
+            outputlist.append({
+            'insured': f'<span class="action_link manageClaim" data-claim_id="{item.id}">{full_name}</span>',
+            'status': status,
+            'added': item.added,
+        })
+        dbcolumnlist=[
+            'insured',
+            'status',
+            'added',
+        ]
+        theadlist=[
+            'Name',
+            'Status',
+            'Added',
+        ]
+        javascript = """
+        <script nonce='1234'>
+            $('.manageClaim').click(function(){
+                var kwargs = $(this).data();
+                $.redirect('/claim/manage', kwargs);
+                return false;
+            });
+        </script>
+        """
+        return build_html_table(outputlist, dbcolumnlist, theadlist, 'claim_table') + javascript
+
+    @require(predicates.not_anonymous())
+    @expose('rocket.templates.generic')
+    def register(self, *args, **kwargs):
+        html = f"""
+        <div class="row">
+            <div class="col-lg-12">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="row d-flex align-items-center">
+                            <div class="col-lg-6">
+                                <h4 class="card-title">{_('Register Claim')}</h4>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-body mb-3">
+                        <div class="col-lg-6 d-flex align-items-center pl-0">
+                            <div class="form-group row col mb-0">
+                                <input type="text" class="form-control " id="search_param" name="search_param" maxlength="50" placeholder="Policy, Identity, Mobile Number or Email Address">
+                            </div>
+                            <div class="dropdown ml-3">
+                                <button class="btn btn-primary dropdown-toggle my-0" type="button" id="searchType" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                                    Search
+                                </button>
+                                <div class="dropdown-menu" aria-labelledby="searchType">
+                                    <button class="dropdown-item" type="button" data-search_type="policy">Policy Number</button>
+                                    <button class="dropdown-item" type="button" data-search_type="identity">Identity Number</button>
+                                    <button class="dropdown-item" type="button" data-search_type="mobile">Mobile Number</button>
+                                    <button class="dropdown-item" type="button" data-search_type="email">Email Adress</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div id="resultDiv" class="row d-flex flex-lg-nowrap"></div>
+        """
+        javascript = """
+            $('.dropdown-item').click(function(){
+                var kwargs = $(this).data();
+                kwargs['search_param'] = $('#search_param').val();
+                $('#resultDiv').load('/claim/get_search_result', kwargs, function(data){
+                    return false;
+                });
+            });
+     	"""
+        title = _("Register Claim")
+        return dict(title=title, html=html, javascript=javascript)
+
+    @expose()
+    def get_search_result(self, *args, **kwargs):
+        search_param = kwargs.get('search_param', None)
+        if not search_param:
+            log.warning('get_search_result: No search_param in kwargs')
+            return ''
+
+        search_param = '%'+search_param+'%'
+
+        search_type = kwargs.get('search_type', None)
+        if not search_type:
+            log.warning('get_search_result: No search_type in kwargs')
+            return ''
+
+        if search_type == 'policy':
+            dbase_query = DBSession.query(Policy, Product).\
+                join(Product, Product.id == Policy.product_id).\
+                filter(Policy.policy_number.like(search_param)).\
+                all()
+            return self.get_policy_result(dbase_query, **kwargs)
+
+        elif search_type == 'identity':
+            dbase_query = DBSession.query(EntityPerson).\
+                join(EntityPersonIdentity, EntityPersonIdentity.entity_person_id == EntityPerson.id).\
+                filter(EntityPersonIdentity.value.like(search_param)).\
+                all()
+            return self.get_person_result(dbase_query, **kwargs)
+
+        elif search_type == 'mobile' or search_type == 'email':
+            dbase_query = DBSession.query(EntityPerson).\
+                join(EntityContact, EntityContact.entity_id == EntityPerson.entity_id).\
+                filter(EntityContact.value.like(search_param)).\
+                all()
+            return self.get_person_result(dbase_query, **kwargs)
+
+    def get_person_result(self, dbase_query=None, *args, **kwargs):
+        if not dbase_query:
+            return ''
+
+        outputlist = []
+        for item in dbase_query:
+            title = EntityPersonTitle.by_id(item.entity_person_title_id)
+            full_name = f'{title.title} {item.surname}, {item.firstname}'
+            gender = TYPEUTIL.get_pretty_name('entity_person_gender_type', item.entity_person_gender_type_id)
+            outputlist.append({
+            'insured': f'<span class="action_link viewMember" data-entity_person_id="{item.id}">{full_name}</span>',
+            'date_of_birth': item.date_of_birth,
+            'gender': gender,
+        })
+        dbcolumnlist=[
+            'insured',
+            'date_of_birth',
+            'gender',
+        ]
+        theadlist=[
+            'Name',
+            'Date of Birth',
+            'Gender',
+        ]
+        tdclasslist = [
+            '',
+            '',
+            'w-10 text-right',
+        ]
+        table = build_html_table(outputlist, dbcolumnlist, theadlist, 'claim_table', tdclasslist)
+        html = f"""
+            <div id="memberTableDiv" class="col-lg-12">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="row d-flex align-items-center">
+                            <div class="col-lg-6">
+                                <h4 class="card-title">{_('Members')}</h4>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-body mb-3">
+                        {table}
+                    </div>
+                </div>
+            </div>
+            <div id="viewDiv" style="display: none"></div>
+        """
+        javascript = """
+        <script nonce='1234'>
+            var memberTableDiv = $('#memberTableDiv');
+            var viewDiv = $('#viewDiv');
+            $('.viewMember').click(function(){
+                var kwargs = $(this).data();
+                viewDiv.load('/claim/view_member', kwargs, function(data){
+                    memberTableDiv.attr('class', 'col-lg-6');
+                    viewDiv.addClass('col-lg-6').fadeIn('slow');
+                    return false;
+                });
+            });
+        </script>
+        """
+        return html + javascript
+
+    @expose()
+    def view_member(self, *args, **kwargs):
+        entity_person_id = kwargs.get('entity_person_id', None)
+        if not entity_person_id:
+            log.warning('view_member: No entity_person_id in kwargs')
+            return ''
+
+        items = COMMON.get_member_view_items(**kwargs)
+        policies_card = self.get_member_policy_benefit_card(**kwargs)
+        html = f"""
+            <div id="memberViewDiv" class="card">
+                <div class="card-body">
+                    {items}
+                    <div class="text-right">
+                        <button id="confirmBtn" type="button" class="btn btn-primary" data-entity_person_id="{entity_person_id}">Confirm</button>
+                        <button id="cancelBtn" type="button" class="btn btn-outline-primary">Cancel</button>
+                    </div>
+                </div>
+            </div>
+            {policies_card}
+        """
+        javascript = """
+        <script nonce='1234'>
+            var delay = ($(window).width() >= 990) ? 700 : 300;
+            var memberTableDiv = $('#memberTableDiv');
+            $('#cancelBtn').click(function(){
+                memberTableDiv.attr('class', 'col-lg-12');
+                $('#viewDiv').fadeOut(delay, function(){
+                    $(this).empty();
+                });
+                return false;
+            });
+            $('#confirmBtn').click(function(){
+                var kwargs = $(this).data();
+                $.post('/claim/create_claim', kwargs, function(data){
+                    var result = JSON.parse(data);
+                    if (result.success === true){
+                        var params = {'claim_id': result.data};
+                        $.redirect('/claim/manage', params);
+                        return false;
+                    } else {
+                        showNotification(result.status, result.message);
+                        return false;
+                    }
+                    return false;
+                })
+            });
+        </script>
+        """
+        return html + javascript
+
+    @expose()
+    def get_member_policy_benefit_card(self, *args, **kwargs):
+        print(kwargs)
+        entity_person_id = kwargs.get('entity_person_id', None)
+        if not entity_person_id:
+            log.warning('view_member: No entity_person_id in kwargs')
+            return ''
+
+        dbase_query = DBSession.query(PolicyBenefit, Policy, Product).\
+            join(PolicyBenefitInsuredLife, PolicyBenefitInsuredLife.policy_benefit_id == PolicyBenefit.id).\
+            join(Policy, Policy.id == PolicyBenefit.policy_id).\
+            join(Product, Product.id == Policy.product_id).\
+            filter(PolicyBenefitInsuredLife.entity_person_id == entity_person_id).\
+            all()
+
+        outputlist = []
+        for item in dbase_query:
+            benefit_status = DBSession.query(PolicyBenefitStatus, PolicyBenefitStatusType).\
+                join(PolicyBenefitStatusType, PolicyBenefitStatusType.id == PolicyBenefitStatus.policy_benefit_status_type_id).\
+                filter(PolicyBenefitStatus.policy_benefit_id == item.PolicyBenefit.id).\
+                filter(PolicyBenefitStatus.bln_active == True).\
+                order_by(PolicyBenefitStatus.id.desc()).\
+                first()
+            status = benefit_status.PolicyBenefitStatusType.name if benefit_status else ''
+
+            outputlist.append({
+            'policy_number': item.Policy.policy_number,
+            'product': item.Product.name,
+            'status': status,
+            })
+
+        dbcolumnlist=[
+            'policy_number',
+            'product',
+            'status',
+        ]
+        theadlist=[
+            'Policy Number',
+            'Product',
+            'Status',
+        ]
+        table = build_html_table(outputlist, dbcolumnlist, theadlist, 'member_policy_table')
+        html = f"""
+            <div id="memberPolicyTableDiv" class="">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="row d-flex align-items-center">
+                            <div class="col-lg-6">
+                                <h4 class="card-title">{_('Policies')}</h4>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-body mb-3">
+                        {table}
+                    </div>
+                </div>
+            </div>
+            <div id="memberPolicyViewDiv" style="display: none"></div>
+        """
+        javascript = """
+        <script nonce='1234'>
+            var memberPolicyTableDiv = $('#memberPolicyTableDiv');
+            var memberPolicyViewDiv = $('#memberPolicyViewDiv');
+            $('.viewpolicy').click(function(){
+                var kwargs = $(this).data();
+                memberPolicyViewDiv.load('/claim/view_policy', kwargs, function(data){
+                    memberPolicyTableDiv.attr('class', 'col-lg-6');
+                    memberPolicyViewDiv.addClass('col-lg-6').fadeIn('slow');
+                    return false;
+                });
+            });
+        </script>
+        """
+        return html + javascript
+
+    def get_policy_result(self, dbase_query=None, *args, **kwargs):
+        if not dbase_query:
+            return ''
+
+        outputlist = []
+        for item in dbase_query:
+            outputlist.append({
+            'policy_number': f'<span class="action_link viewPolicy" data-policy_id="{item.Policy.id}">{item.Policy.policy_number}</span>',
+            'product': item.Product.name,
+            })
+
+        dbcolumnlist=[
+            'policy_number',
+            'product',
+        ]
+        theadlist=[
+            'Policy Number',
+            'Product',
+        ]
+        tdclasslist = [
+            '',
+            '',
+            '',
+        ]
+        table = build_html_table(outputlist, dbcolumnlist, theadlist, 'policy_table', tdclasslist)
+        html = f"""
+            <div id="policyTableDiv" class="col-lg-12">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="row d-flex align-items-center">
+                            <div class="col-lg-6">
+                                <h4 class="card-title">{_('Policies')}</h4>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-body mb-3">
+                        {table}
+                    </div>
+                </div>
+            </div>
+            <div id="policyViewDiv" style="display: none"></div>
+        """
+        javascript = """
+        <script nonce='1234'>
+            var policyTableDiv = $('#policyTableDiv');
+            var policyViewDiv = $('#policyViewDiv');
+            $('.viewPolicy').click(function(){
+                var kwargs = $(this).data();
+                policyViewDiv.load('/claim/view_policy', kwargs, function(data){
+                    policyTableDiv.attr('class', 'col-lg-6');
+                    policyViewDiv.addClass('col-lg-6').fadeIn('slow');
+                    return false;
+                });
+            });
+        </script>
+        """
+        return html + javascript
+
+    @expose()
+    def view_policy(self, *args, **kwargs):
+        policy_id = kwargs.get('policy_id', None)
+        if not policy_id:
+            log.warning('view_policy: No policy_id in kwargs')
+            return ''
+
+        dbase_query = DBSession.query(Policy, PolicyBenefitInsuredLife).\
+            join(PolicyBenefit, PolicyBenefit.policy_id == Policy.id).\
+            join(PolicyBenefitInsuredLife, PolicyBenefitInsuredLife.policy_benefit_id == PolicyBenefit.id).\
+            filter(Policy.id == policy_id).\
+            filter(PolicyBenefitInsuredLife.entity_person_id != None).\
+            all()
+
+        outputlist = []
+        for item in dbase_query:
+            entity_person = EntityPerson.by_id(item.PolicyBenefitInsuredLife.entity_person_id)
+            title = EntityPersonTitle.by_id(entity_person.entity_person_title_id)
+            title_text = f'{title.title.title()} ' if title else ''
+            full_name = f'{title_text}{entity_person.firstname} {entity_person.surname}'
+            outputlist.append({
+            'name': full_name,
+            'date_of_birth': entity_person.date_of_birth,
+            'action': f'<span class="selectMember action_link" data-entity_person_id="{entity_person.id}" data-policy_id="{policy_id}">select</span>',
+            })
+
+        dbcolumnlist=[
+            'name',
+            'date_of_birth',
+            'action'
+        ]
+        theadlist=[
+            'Insured',
+            'Date of Birth',
+            ''
+        ]
+        table = build_html_table(outputlist, dbcolumnlist, theadlist, 'policy_member_table')
+        policy_number = dbase_query[0].Policy.policy_number if dbase_query else None
+        card_title = f'Policy number: {policy_number}' if policy_number else 'Policy'
+        html = f"""
+            <div class="card">
+                <div class="card-body">
+                    <h4 class="mt-3">{card_title}</h4>
+                    <hr>
+                    {table}
+                    <div class="text-right">
+                        <button id="confirmBtn" type="button" class="btn btn-primary" disabled>Confirm</button>
+                        <button id="cancelBtn" type="button" class="btn btn-outline-primary">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        """
+        javascript = """
+        <script nonce='1234'>
+            var delay = ($(window).width() >= 990) ? 700 : 300;
+            var policyTableDiv = $('#policyTableDiv');
+            $('#cancelBtn').click(function(){
+                policyTableDiv.attr('class', 'col-lg-12');
+                $('#policyViewDiv').fadeOut(delay, function(){
+                    $(this).empty();
+                });
+                return false;
+            });
+            $('.selectMember').click(function(){
+                var kwargs = $(this).data();
+                var thisRow = $(this).closest('tr');
+                $('tr').removeClass('bg-light font-weight-bold');
+                thisRow.addClass('bg-light font-weight-bold');
+                $('#confirmBtn').removeAttr('disabled')
+                .data(kwargs);
+                return false;
+            });
+            $('#confirmBtn').click(function(){
+                var kwargs = $(this).data();
+                $.post('/claim/create_claim', kwargs, function(data){
+                    var result = JSON.parse(data);
+                    console.log(result);
+                    if (result.success === true){
+                        var params = {'claim_id': result.data};
+                        $.redirect('/claim/manage', params);
+                        return false;
+                    } else {
+                        showNotification(result.status, result.message);
+                        return false;
+                    }
+                    return false;
+                })
+            });
+        </script>
+        """
+        return html + javascript
+
+    @expose()
+    def create_claim(self, *args, **kwargs):
+        entity_person_id = kwargs.get('entity_person_id', None)
+        if not entity_person_id:
+            log.warning('create_claim: No entity_person_id in kwargs')
+            return json.dumps({'success': False, 'message': 'Please select a Member to continue', 'status': 'danger'})
+        policy_id = kwargs.get('policy_id', None)
+        if not policy_id:
+            log.warning('create_claim: No policy_id in kwargs')
+
+        entity_person_id = str_to_int(entity_person_id)
+        policy_id = str_to_int(policy_id) if policy_id else None
+
+        claim = DBSession.query(Claim).\
+            filter(Claim.insured_entity_person_id == entity_person_id).\
+            filter(Claim.bln_active == True).\
+            first()
+
+        if not claim:
+            claim = Claim()
+            claim.insured_entity_person_id = entity_person_id
+            DBSession.add(claim)
+            DBSession.flush()
+
+        claim_status = ClaimStatus.by_attr_first('claim_id', claim.id)
+        if not claim_status:
+            claim_status = ClaimStatus()
+            claim_status.claim_id = claim.id
+            claim_status.claim_status_type_id = TYPEUTIL.get_id_of_name('claim_status_type', 'registered')
+            DBSession.add(claim_status)
+            DBSession.flush()
+
+        return json.dumps({'success': True, 'data': claim.id})
+
+    @require(predicates.not_anonymous())
+    @expose('rocket.templates.generic')
+    def manage(self, *args, **kwargs):
+        # self.fake_questions()
+        claim_id = kwargs.get('claim_id', None)
+        if not claim_id:
+            log.warning('/claim/manage: No claim_id in kwargs')
+            redirect('/claim')
+
+        claim_contents = self.get_claim_content(**kwargs)
+        html = f"""
+        <div id="claimContent">
+            {claim_contents}
+        </div>
+        """
+        javascript = """
+
+     	"""
+        title = _("Manage Claim")
+        return dict(title=title, html=html, javascript=javascript)
+
+    @expose()
+    def get_claim_content(self, *args, **kwargs):
+        claim_id = kwargs.get('claim_id', None)
+        if not claim_id:
+            log.warning('get_claim_content: No claim_id in kwargs')
+            return ''
+
+        claim = Claim.by_id(claim_id)
+
+        actions = ''
+        if not claim.claimant_entity_person_id:
+            if not claim.claimant_entity_person_id == claim.insured_entity_person_id:
+                actions = f"""
+                    <button id="setEqual" type="button" class="btn btn-outline-danger" data-insured_entity_person_id="{claim.insured_entity_person_id}"
+                        data-claim_id="{claim_id}">Claimant and Insured is the same person</button>"""
+
+        claim_individuals = self.get_claim_individuals_card(**kwargs)
+        claim_details = self.get_claim_details_card(**kwargs) if claim.claimant_entity_person_id else ''
+        html = f"""
+        <div class="row">
+            <div class="col-lg-12">
+                <div class="card">
+                    <div class="card-header mb-3">
+                        <div class="row d-flex align-items-center">
+                            <div class="col-lg-6">
+                                <h4 class="card-title">{_('Manage Claim')}</h4>
+                            </div>
+                            <div class="col-lg-6 text-right">
+                                <button id="backBtn" type="button" class="btn btn-primary">Back to Claims List</button>
+                                {actions}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div id="claimIndividualsDiv">{claim_individuals}</div>
+        <div id="claimQuestionsDiv">{claim_details}</div>
+        """
+        javascript = """
+        <script nonce='1234'>
+            $('#setEqual').click(function(){
+                var kwargs = $(this).data();
+                $.post('/claim/set_claimant_equal_to_insured', kwargs, function(data){
+                    var result = JSON.parse(data);
+                    if (result.success === true){
+                        $('#claimContent').load('/claim/get_claim_content', kwargs, function(d){
+                            return false;
+                        });
+                    }
+                });
+            });
+            $('#backBtn').click(function(){
+                $.redirect('/claim');
+                return false;
+            });
+        </script>
+        """
+        return html + javascript
+
+    @expose()
+    def get_claim_individuals_card(self, *args, **kwargs):
+        claim_id = kwargs.get('claim_id', None)
+        if not claim_id:
+            log.warning('get_claim_individuals_card: No claim_id in kwargs')
+            return ''
+
+        claim = Claim.by_id(claim_id)
+        insured_view = COMMON.get_member_view_items(**{'entity_person_id': claim.insured_entity_person_id})
+        form = COMMON.get_person_card(_('Insured'), insured_view)
+        if claim.claimant_entity_person_id:
+            if not claim.claimant_entity_person_id == claim.insured_entity_person_id:
+                claimant_form = COMMON.get_member_view_items(**{'entity_person_id': claim.claimant_entity_person_id})
+                form += COMMON.get_person_card(_('Claimant'), claimant_form)
+            else:
+                insured_view = COMMON.get_member_view_items(**{'entity_person_id': claim.insured_entity_person_id})
+                form += COMMON.get_person_card(_('Claimant'), insured_view)
+
+        if not claim.claimant_entity_person_id:
+            claimant_form = self.get_claimant_form(**kwargs)
+            form += COMMON.get_person_card(_('Claimant'), claimant_form)
+
+        html = f"""
+            <div class="card">
+                <div class="card-body pt-3">
+                    <div class="row">
+                        {form}
+                    </div>
+                </div>
+            </div>
+        """
+        return html
+
+    def get_claimant_form(self, *args, **kwargs):
+        claim_id = kwargs.get('claim_id', None)
+        if not claim_id:
+            log.warning('get_claimant_form: No claim_id in kwargs')
+            return ''
+
+        form = COMMON.get_new_person_form(**{'form_id': 'claimant_form', 'form_class': '', 'input_wrapper_class': ''})
+        html = f"""
+            {form}
+            <div class="col-lg-12 text-right pr-2">
+                <button id="saveClaimantBtn" type="button" class="btn btn-primary" data-claim_id="{claim_id}">Save Claimant</button>
+            </div>
+
+        """
+        javascript = """
+        <script nonce='1234'>
+            var claimant_form = $('#claimant_form');
+            setFormValidation(claimant_form);
+            $('#saveClaimantBtn').click(function(){
+                var kwargs = $(this).data();
+                var valid = FormIsValid(claimant_form);
+                if (valid){
+                    var formserial = getFormData(claimant_form);
+                    $.extend(formserial, kwargs);
+                    $.post('/claim/save_claimant', formserial, function(data){
+                        var result = JSON.parse(data);
+                        if (result.success === true){
+                            $('#claimContent').load('/claim/get_claim_content', kwargs, function(d){
+                                return false;
+                            });
+                            return false;
+                        } else {
+                            showNotification(result.status, result.message);
+                            return false;
+                        }
+                    });
+                }
+            });
+            var idNumber = $('#number');
+            var idType = $('#identity_type_id');
+            var saidType = $(identity_type_id).data('saidId');
+            var saidLength = $(identity_type_id).data('length');
+
+            idNumber.on('keyup', function(){
+                if ((idNumber.val().length >= saidLength) && (parseInt($('#identity_type_id option:selected').val()) === saidType)){
+                    var params = {
+                        'identity_type_id': idType.val(),
+                        'identity_number': idNumber.val()
+                    }
+                    $.post('/members/check_member_exists', params, function(data){
+                        var result = JSON.parse(data);
+                        if(result.success === true){
+                            var kwargs = {
+                                'entity_person_id': result.data,
+                                'form_id': 'benefitForm' + policyBenefitId
+                            }
+                            $(containerDiv).load('/common/get_edit_person_form', kwargs, function(){
+                                benefit_form = $('#benefitForm' + policyBenefitId);
+                                setFormValidation(benefit_form);
+                                return false;
+                            });
+                        }
+                        return false;
+                    });
+                }
+            });
+        </script>
+        """
+        return html + javascript
+
+    @expose()
+    def save_claimant(self, *args, **kwargs):
+        claim_id = kwargs.get('claim_id', None)
+        if not claim_id:
+            log.warning('save_claimant: No claim_id in kwargs')
+            return json.dumps({'success': False, 'message': 'Please select a Claim', 'status': 'danger'})
+
+        entity_id = COMMON.save_new_personobj(**kwargs)
+        entity_person = EntityPerson.by_attr_first('entity_id', entity_id)
+        if not entity_person:
+            log.warning(f'save_claimant: Entity person does not exist for entity_id({entity_id}) provided')
+            return json.dumps({'success': False, 'message': 'We could not find find the person you are trying to link', 'status': 'danger'})
+
+        claim = Claim.by_id(claim_id)
+        if not claim:
+            log.warning('save_claimant')
+            return json.dumps({'success': False, 'message': 'The claim you chose is not available, please try again', 'status': 'danger'})
+
+        claim.claimant_entity_person_id = entity_person.id
+        DBSession.flush()
+        return json.dumps({'success': True, 'message': 'Claimant linked to claim', 'status': 'success'})
+
+    @expose()
+    def set_claimant_equal_to_insured(self, *args, **kwargs):
+        claim_id = kwargs.get('claim_id', None)
+        if not claim_id:
+            log.warning('set_claimant_equal_to_insured: No claim_id in kwargs')
+            return json.dumps({'success': False, 'message': 'Please choose a Claim', 'status': 'danger'})
+        insured_entity_person_id = kwargs.get('insured_entity_person_id', None)
+        if not insured_entity_person_id:
+            log.warning('set_claimant_equal_to_insured: No insured_entity_person_id in kwargs')
+            return json.dumps({'success': False, 'message': 'Please choose an Insured', 'status': 'danger'})
+
+        claim = Claim.by_id(claim_id)
+        if not claim:
+            log.warning('set_claimant_equal_to_insured: Could not find a claim for the id provided')
+            return json.dumps({'success': False, 'message': 'The claim you chose is not available, please try again', 'status': 'danger'})
+
+        claim.claimant_entity_person_id = insured_entity_person_id
+        DBSession.flush()
+        return json.dumps({'success': True, 'message': 'Claimant successfully set', 'status': 'success'})
+
+    @expose()
+    def get_claim_details_card(self, *args, **kwargs):
+        claim_id = kwargs.get('claim_id', None)
+        if not claim_id:
+            log.warning('get_claim_details_card: No claim_id in kwargs')
+            return ''
+
+        claim = Claim.by_id(claim_id)
+        incident_date = claim.incident_date if claim else ''
+
+        dbase_query = ClaimQuestion.get_all('id')
+        cover_and_exclusion_select = COMMON.get_selectbox_benefit_cover_links(**{'display_col': 'description', 'selected': claim.cover_and_exclusion_id})
+        claim_questions = ''
+        actions = ''
+        if claim.cover_and_exclusion_id:
+            claim_questions, actions = self.get_claim_questions(**{'cover_and_exclusion_id': claim.cover_and_exclusion_id, 'claim_id': claim_id})
+
+        benefits = self.get_qualifyting_benefits_table(**kwargs)
+        documents = self.get_claim_drawer_html(**kwargs)
+        html = f"""
+        <div class="row">
+            <div class="col-lg-12">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="row d-flex align-items-center">
+                            <div class="col-lg-6">
+                                <h4 class="card-title">{_('Claim Details')}</h4>
+                            </div>
+                        </div>
+                        <hr>
+                    </div>
+                    <div class="card-body">
+                        <form id="claimDetailForm" data-claim_id="{claim_id}">
+                            <div class="form-group row">
+                                <label class="col-lg-6 col-form-label" for="incident_date" required="">Incident Date</label>
+                                <div class="col-lg-6">
+                                    <input type="text" class="form-control date_field" id="incident_date" name="incident_date" required="" value="{incident_date}">
+                                </div>
+                            </div>
+                            <div class="form-group row">
+                                <label class="col-lg-6 col-form-label" for="cover_and_exclusion_id" required="">Reason for claim</label>
+                                <div class="col-lg-6">
+                                    {cover_and_exclusion_select}
+                                </div>
+                            </div>
+                            <div id="claimQuestions">{claim_questions}</div>
+                        </form>
+                        <div class="col-lg-12 text-right">
+                            {actions}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {benefits}
+        {documents}
+        """
+        javascript = """
+        <script nonce='1234'>
+            $('#cover_and_exclusion_id').change(function(){
+                var kwargs = {
+                    'cover_and_exclusion_id': $('#cover_and_exclusion_id option:selected').val(),
+                    'claim_id': $('#claimDetailForm').data('claim_id'),
+                    'incident_date': $('#incident_date').val()
+                }
+                $.post('/claim/update_claim', kwargs, function(data){
+                    var result = JSON.parse(data);
+                    if (result.success === true){
+                        $('#claimQuestionsDiv').load('/claim/get_claim_details_card', kwargs, function(d){
+                            return false;
+                        });
+                    };
+                });
+            });
+            $(document).on('click', '#claimStatusBtn', function(){
+                var kwargs = $(this).data();
+                $.post('/claim/update_claim_status', kwargs, function(data){
+                    var result = JSON.parse(data);
+                    if (result.success === true){
+                        $.redirect('/claim');
+                        return false;
+                    }
+                    return false;
+                })
+            });
+            createDatepicker('.date_field');
+        </script>
+        """
+        return html + javascript
+
+    def get_claim_questions(self, *args, **kwargs):
+        cover_and_exclusion_id = kwargs.get('cover_and_exclusion_id', None)
+        if not cover_and_exclusion_id:
+            log.warning('get_claim_questions: No cover_and_exclusion_id in kwargs')
+            return ''
+
+        claim_id = kwargs.get('claim_id', None)
+        if not claim_id:
+            log.warning('get_claim_questions: No claim_id in kwargs')
+            return ''
+
+        claim = Claim.by_id(claim_id)
+        if not claim:
+            log.warning(f'get_claim_questions: Claim for claim_id: {claim_id} not found')
+            return ''
+
+        dbase_query = DBSession.query(PolicyBenefitInsuredLife, PolicyBenefit, BenefitClaimQuestionLink).\
+            join(PolicyBenefit, PolicyBenefit.id == PolicyBenefitInsuredLife.policy_benefit_id).\
+            join(BenefitClaimQuestionLink, BenefitClaimQuestionLink.benefit_id == PolicyBenefit.product_benefit_id).\
+            filter(PolicyBenefitInsuredLife.entity_person_id == claim.insured_entity_person_id).\
+            filter(PolicyBenefit.cover_and_exclusion_id == cover_and_exclusion_id).\
+            group_by(BenefitClaimQuestionLink.claim_question_id).\
+            all()
+
+        html = ''
+        actions = ''
+        correct_count = 0
+        for item in dbase_query:
+            q = ClaimQuestion.by_id(item.BenefitClaimQuestionLink.claim_question_id)
+            policy_answer = DBSession.query(ClaimPolicyQuestionAnswer).\
+                filter(ClaimPolicyQuestionAnswer.claim_id == claim_id).\
+                filter(ClaimPolicyQuestionAnswer.claim_question_id == q.id).\
+                first()
+            selected = policy_answer.claim_question_answer_id if policy_answer else None
+            if selected and not item.BenefitClaimQuestionLink.claim_question_correct_answer_id == selected:
+                decline_status = TYPEUTIL.get_id_of_name('claim_status_type', 'repudiated')
+                actions = f'<button id="claimStatusBtn" type="button" class="btn btn-danger" data-claim_id="{claim_id}" data-claim_status_type_id="{decline_status}">Decline Claim</button>'
+
+            if item.BenefitClaimQuestionLink.claim_question_correct_answer_id == selected:
+                correct_count += 1
+
+            if correct_count == len(dbase_query):
+                approve_status = TYPEUTIL.get_id_of_name('claim_status_type', 'approved')
+                actions = f'<button id="claimStatusBtn" type="button" class="btn btn-primary" data-claim_id="{claim_id}" data-claim_status_type_id="{approve_status}">Accept Claim</button>'
+            answer_select = self.get_answer_selectbox(**{
+                'id': f'claim_question_id_{item.BenefitClaimQuestionLink.claim_question_id}',
+                'claim_question_id': q.id,
+                'class_names': 'claimQuestion',
+                'attributes': f'data-claim_id="{claim_id}" data-claim_question_id="{q.id}"',
+                'selected': selected
+            })
+            html += f"""
+                <div class="form-group row">
+                    <label class="col-lg-6 col-form-label" for="claim_question_answer_id" required="">{q.text}</label>
+                    <div class="col-lg-3">
+                        {answer_select}
+                    </div>
+                </div>
+            """
+        html += """
+        <script nonce='1234'>
+            $('.claimQuestion').change(function(){
+                var thisId = this.id;
+                var kwargs = new Object;
+                kwargs['claim_id'] = $(this).data('claim_id')
+                kwargs['claim_question_id'] = $(this).data('claim_question_id')
+                kwargs['claim_question_answer_id'] = $('#'+thisId+' option:selected').val();
+                console.log(kwargs);
+                $.post('/claim/save_claim_question_answer', kwargs, function(data){
+                    $('#claimQuestionsDiv').load('/claim/get_claim_details_card', kwargs, function(d){
+                        return false;
+                    });
+                });
+            });
+        </script>
+        """
+        return (html, actions)
+
+    @expose()
+    def update_claim_status(self, *args, **kwargs):
+        print(kwargs)
+        claim_id = kwargs.get('claim_id', None)
+        if not claim_id:
+            log.warning('update_claim_status: No claim_id in kwargs')
+            return json.dumps({'success': False, 'message': 'Please select a claim', 'status': 'danger'})
+        claim_status_type_id = kwargs.get('claim_status_type_id', None)
+        if not claim_status_type_id:
+            log.warning('update_claim_status: No claim_status_type_id in kwargs')
+            return json.dumps({'success': False, 'message': 'Please select a claim status', 'status': 'danger'})
+
+        claim_status = ClaimStatus()
+        claim_status.claim_id = claim_id
+        claim_status.claim_status_type_id = claim_status_type_id
+        DBSession.add(claim_status)
+        DBSession.flush()
+        print('got here')
+        return json.dumps({'success': True, 'message': 'Status updated', 'status': 'success'})
+
+    @expose()
+    def save_claim_question_answer(self, *args, **kwargs):
+        print(kwargs)
+        claim_id = kwargs.get('claim_id', None)
+        if not claim_id:
+            log.warning('save_claim_question_answer: No claim_id in kwargs')
+            return json.dumps({'success': False, 'message': 'Please select a claim', 'status': 'danger'})
+        claim_question_id = kwargs.get('claim_question_id', None)
+        if not claim_question_id:
+            log.warning('save_claim_question_answer: No claim_question_id in kwargs')
+            return json.dumps({'success': False, 'message': 'Please select a claim question', 'status': 'danger'})
+        claim_question_answer_id = kwargs.get('claim_question_answer_id', None)
+        if not claim_question_answer_id:
+            log.warning('save_claim_question_answer: No claim_question_answer_id in kwargs')
+            return json.dumps({'success': False, 'message': 'Please select a answer', 'status': 'danger'})
+
+        claim_policy_question_answer = DBSession.query(ClaimPolicyQuestionAnswer).\
+            filter(ClaimPolicyQuestionAnswer.claim_id == claim_id).\
+            filter(ClaimPolicyQuestionAnswer.claim_question_id == claim_question_id).\
+            filter(ClaimPolicyQuestionAnswer.bln_active == True).\
+            first()
+
+        if claim_policy_question_answer:
+            claim_policy_question_answer.claim_id = claim_id
+            claim_policy_question_answer.claim_question_id = claim_question_id
+            claim_policy_question_answer.claim_question_answer_id = claim_question_answer_id
+            DBSession.flush()
+
+        if not claim_policy_question_answer:
+            claim_policy_question_answer = ClaimPolicyQuestionAnswer()
+            claim_policy_question_answer.claim_id = claim_id
+            claim_policy_question_answer.claim_question_id = claim_question_id
+            claim_policy_question_answer.claim_question_answer_id = claim_question_answer_id
+            DBSession.add(claim_policy_question_answer)
+            DBSession.flush()
+
+
+        return json.dumps({'success': True, 'message': 'Claim Question answer updated', 'status': 'success'})
+
+    @expose()
+    def update_claim(self, *args, **kwargs):
+        claim_id = kwargs.get('claim_id', None)
+        if not claim_id:
+            log.warning('update_claim_date: No claim_id in kwargs')
+            return json.dumps({'success': False, 'message': 'Please select a claim', 'status': 'danger'})
+
+        claim = Claim.by_id(claim_id)
+        if not claim:
+            log.warning(f'update_claim_date: Claim not found for claim_id: {claim_id} provided')
+            return json.dumps({'success': False, 'message': 'Could not find the claim that you selected, please refresh and try again', 'status': 'danger'})
+
+        incident_date = kwargs.get('incident_date', None)
+        if incident_date:
+            incident_date = str_to_date(incident_date)
+            claim.incident_date = incident_date
+
+        cover_and_exclusion_id = kwargs.get('cover_and_exclusion_id', None)
+        if cover_and_exclusion_id:
+            claim.cover_and_exclusion_id = cover_and_exclusion_id
+
+        DBSession.flush()
+        return json.dumps({'success': True, 'message': 'Claim Updated', 'status': 'success'})
+
+    def get_answer_selectbox(self, *args, **kwargs):
+        claim_question_id = kwargs.get('claim_question_id', None)
+        dbase_query = DBSession.query(ClaimQuestionAnswer).\
+            filter(ClaimQuestionAnswer.claim_question_id == claim_question_id).\
+            filter(ClaimQuestionAnswer.bln_active == True).\
+            group_by(ClaimQuestionAnswer.answer_text).\
+            all()
+        ClaimQuestionAnswer.by_attr_all('claim_question_id', claim_question_id)
+        kwargs['active'] = True
+        kwargs['outputlist'] = [{'name': m.answer_text, 'id': m.id} for m in dbase_query]
+        return create_selectbox_html(**kwargs)
+
+    @expose()
+    def get_qualifyting_benefits_table(self, *args, **kwargs):
+        claim_id = kwargs.get('claim_id', None)
+        if not claim_id:
+            log.warning('get_claim_details_card: No claim_id in kwargs')
+            return ''
+
+        claim = Claim.by_id(claim_id)
+        if not claim:
+            log.warning(f'get_qualifyting_benefits_table: No claim found for claim_id: {claim_id} provided')
+            return ''
+
+        dbase_query = DBSession.query(PolicyBenefit, Benefit, Policy, Product).\
+            join(Benefit, Benefit.id == PolicyBenefit.product_benefit_id).\
+            join(Policy, Policy.id == PolicyBenefit.policy_id).\
+            join(Product, Product.id == Policy.product_id).\
+            join(PolicyBenefitInsuredLife, PolicyBenefitInsuredLife.policy_benefit_id == PolicyBenefit.id).\
+            filter(PolicyBenefitInsuredLife.entity_person_id == claim.insured_entity_person_id).\
+            filter(Benefit.cover_and_exclusion_id == claim.cover_and_exclusion_id).\
+            all()
+
+        outputlist = []
+        for item in dbase_query:
+            benefit_status = DBSession.query(PolicyBenefitStatus, PolicyBenefitStatusType).\
+                join(PolicyBenefitStatusType, PolicyBenefitStatusType.id == PolicyBenefitStatus.policy_benefit_status_type_id).\
+                filter(PolicyBenefitStatus.policy_benefit_id == item.PolicyBenefit.id).\
+                filter(PolicyBenefitStatus.bln_active == True).\
+                order_by(PolicyBenefitStatus.id.desc()).\
+                first()
+
+            outputlist.append({
+            'policy_number': item.Policy.policy_number,
+            'product': item.Product.name,
+            'status': benefit_status.PolicyBenefitStatusType.name,
+            })
+
+        dbcolumnlist=[
+            'policy_number',
+            'product',
+            'status',
+        ]
+        theadlist=[
+            'Policy Number',
+            'Product',
+            'Status',
+        ]
+        table = build_html_table(outputlist, dbcolumnlist, theadlist, 'member_policy_table')
+        html = f"""
+            <div id="claimPolicyTableDiv" class="">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="row d-flex align-items-center">
+                            <div class="col-lg-6">
+                                <h4 class="card-title">{_('Policies')}</h4>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-body mb-3">
+                        {table}
+                    </div>
+                </div>
+            </div>
+            <div id="memberPolicyViewDiv" style="display: none"></div>
+        """
+        return html
+
+    def get_claim_drawer_html(self, *args, **kwargs):
+        if not request.identity:
+            return ''
+        usernow = request.identity.get('user', None)
+
+        claim_id = kwargs.get('claim_id', None)
+        if not claim_id:
+            return ''
+
+        cabinet = Cabinet.by_attr_first('name', 'Claim')
+        if not cabinet:
+            cabinet = Cabinet()
+            cabinet.name = 'Claim'
+            cabinet.description = 'Claim Cabinet'
+            DBSession.add(cabinet)
+            DBSession.flush()
+        print(cabinet)
+
+        drawer = DBSession.query(Drawer). \
+                filter(Drawer.cabinet_id == cabinet.id). \
+                filter(Drawer.name == claim_id). \
+                first()
+        if not drawer:
+            drawer = Drawer()
+            drawer.cabinet_id = cabinet.id
+            drawer.name = claim_id
+            DBSession.add(drawer)
+            DBSession.flush()
+        print(drawer)
+
+        user_link = DBSession.query(DrawerUserLink). \
+                filter(DrawerUserLink.drawer_id == drawer.id). \
+                filter(DrawerUserLink.user_id == usernow.id). \
+                first()
+        if not user_link:
+            user_link = DrawerUserLink()
+            user_link.drawer_id = drawer.id
+            user_link.user_id = usernow.id
+            DBSession.add(user_link)
+            DBSession.flush()
+        print(user_link)
+
+        link = DBSession.query(DrawerClaimLink). \
+                filter(DrawerClaimLink.drawer_id == drawer.id). \
+                filter(DrawerClaimLink.claim_id == claim_id). \
+                first()
+        if not link:
+            link = DrawerClaimLink()
+            link.drawer_id = drawer.id
+            link.claim_id = claim_id
+            DBSession.add(link)
+            DBSession.flush()
+        print(link)
+
+        html = f"""
+        <div class="row">
+            <div class="col-xl-4" id="div_show_drawer_list" cabinet_id='{cabinet.id}'>
+            </div>
+            <div class="col-xl-8" id="div_show_file_list" drawer_id='{drawer.id}'>
+            </div>
+        </div>
+        """
+        javascript = """
+        <script nonce='1234'>
+            var kwargs = 'drawer_id=' + $('#div_show_file_list').attr('drawer_id');
+            kwargs += '&cabinet_id=' + $('#div_show_drawer_list').attr('cabinet_id');
+
+            $('#div_show_drawer_list').load('/media/show_drawer_list_for_cabinet', kwargs, function(data){
+                return false;
+            });
+            $('#div_show_file_list').load('/media/show_file_list_for_drawer?', kwargs, function(data){
+                return false;
+            });
+        </script>
+        """
+        return html + javascript
+
+    # REMOVE
+    def fake_data(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+        entities = []
+
+        title = EntityPersonTitle.by_attr_first('title', 'Mr')
+        if not title:
+            title = EntityPersonTitle()
+            title.title = 'Mr'
+            title.description = 'Mister'
+            DBSession.add(title)
+            DBSession.flush()
+            print(f'CREATED: {title}')
+
+        language = Language.by_attr_first('name', 'English')
+        if not language:
+            language = Language()
+            language.code = 'ENG'
+            language.name = 'English'
+            DBSession.add(language)
+            DBSession.flush()
+            print(f'CREATED: {language}')
+
+        for i in range(1, 10):
+            entity = Entity()
+            entity.entity_type_id = PERSON
+            DBSession.add(entity)
+            DBSession.flush()
+            entities.append(entity.id)
+            print(f'CREATED: {entity}')
+
+        names = ['Jan', 'Karel', 'Piet', 'Malan', 'Kobus', 'Koert', 'Danie', 'Louw', 'Juan', 'Schalk']
+        surnames = ['Smit', 'Smal', 'van der Merwe', 'de Lange', 'Greeff', 'Lourens', 'de Bruyn', 'Bergh', 'van Niekerk', 'Swart']
+        for i in range(1, 10):
+            entity_person = EntityPerson.by_id(i)
+            if not entity_person:
+                this = EntityPerson()
+                this.surname = surnames.pop(0)
+                this.firstname = names.pop(0)
+                this.preferred_name = this.firstname
+                this.entity_id = entities.pop(0)
+                this.entity_person_gender_type_id = TYPEUTIL.get_id_of_name('entity_person_gender_type', 'male')
+                this.entity_person_title_id = title.id
+                this.language_id = language.id
+                this.date_of_birth = datetime.now()
+                DBSession.add(this)
+                DBSession.flush()
+                print(f'CREATED: {this}')
+
+                ent_pid = EntityPersonIdentity()
+                ent_pid.entity_person_identity_type_id = TYPEUTIL.get_id_of_name('entity_person_identity_type', 'identity_number')
+                ent_pid.value = f'123456789{i}'
+                ent_pid.entity_person_id = this.id
+                DBSession.add(ent_pid)
+                DBSession.flush()
+                print(f'CREATED: {ent_pid}')
+
+                ent_con = EntityContact()
+                ent_con.entity_id = this.entity_id
+                ent_con.entity_contact_type_id = TYPEUTIL.get_id_of_name('entity_contact_type', 'mobile')
+                ent_con.name = 'Main phone'
+                ent_con.value = f'123456789{i}'
+                ent_con.preferred = True
+                DBSession.add(ent_con)
+                DBSession.flush()
+                print(f'CREATED: {ent_con}')
+
+        # create products
+        for i in range(1, 10):
+            product = Product.by_attr_first('code', f'PFP{i}')
+            if not product:
+                product = Product()
+                product.code = f'PFP{i}'
+                product.name = f'Personal Funeral Product{i}'
+                product.entity_organisation_product_owner_id = 1
+                product.product_state_type_id = TYPEUTIL.get_id_of_name('product_state_type', 'active')
+                product.policy_number_prefix = None
+                product.has_excess = False
+                product.apply_excess_on_all_benefits = False
+                DBSession.add(product)
+                DBSession.flush()
+                print(f'CREATED: {product}')
+
+                cover_and_exclusion = CoverAndExclusion.by_attr_first('code', 'Life all Causes')
+                choice = random.choice(range(10, 100))
+                benefit = Benefit()
+                benefit.product_id = product.id
+                benefit.name = f'Principal Life{i}'
+                benefit.entity_organisation_insurer_id = 1
+                benefit.benefit_price_type_id = TYPEUTIL.get_id_of_name('benefit_price_type', 'fixed')
+                benefit.is_life = True
+                benefit.benefit_insured_type_id = TYPEUTIL.get_id_of_name('benefit_insured_type', 'natural_person')
+                benefit.benefit_purchase_type_id = TYPEUTIL.get_id_of_name('benefit_purchase_type', 'individual')
+                benefit.cover_and_exclusion_id = cover_and_exclusion.id if cover_and_exclusion else None
+                benefit.is_main_benefit = True
+                benefit.is_compulsory = True
+                benefit.allow_multiple_payouts = False
+                benefit.claim_terminates_policy = True
+                benefit.premium = choice
+                benefit.sum_insured = 25000
+                benefit.premium_increase_percentage = 0
+                benefit.sum_insured_increase_percentage = 0
+                benefit.has_premium_limits = True
+                benefit.has_sum_insured_limits = True
+                benefit.limit_claims = True
+                benefit.number_of_claims = 1
+                DBSession.add(benefit)
+                DBSession.flush()
+                print(f'CREATED: {benefit}')
+
+                choice = random.choice(range(10, 100))
+                bil_principal = BenefitInsuredLife()
+                bil_principal.benefit_id = benefit.id
+                bil_principal.benefit_insured_life_relationship_type_id = PRINCIPAL_TYPE
+                DBSession.add(bil_principal)
+                DBSession.flush()
+                print(f'CREATED: {bil_principal}')
+
+                policy = Policy()
+                policy.policy_number = f'1234567890{i}'
+                policy.product_id = product.id
+                DBSession.add(policy)
+                DBSession.flush()
+                print(f'CREATED: {policy}')
+
+                policy_benefit = PolicyBenefit()
+                policy_benefit.policy_id = policy.id
+                policy_benefit.product_benefit_id = benefit.id
+                policy_benefit.number_of_claims_remaining = None
+                policy_benefit.cover_and_exclusion_id = 2
+                policy_benefit.premium = 15
+                policy_benefit.sum_insured = 25000
+                policy_benefit.is_compulsory = True
+                DBSession.add(policy_benefit)
+                DBSession.flush()
+                print(f'CREATED: {policy_benefit}')
+
+                pbs = PolicyBenefitStatus()
+                pbs.policy_benefit_id = policy_benefit.id
+                pbs.policy_benefit_status_type_id = TYPEUTIL.get_id_of_name('policy_benefit_status_type', 'active')
+                pbs.date_set = datetime.now()
+                pbs.current_status = True
+                DBSession.add(pbs)
+                DBSession.flush()
+                print(f'CREATED: {pbs}')
+
+                pb_spouse = PolicyBenefit()
+                pb_spouse.policy_id = policy.id
+                pb_spouse.product_benefit_id = benefit.id
+                pb_spouse.number_of_claims_remaining = None
+                pb_spouse.cover_and_exclusion_id = 2
+                pb_spouse.premium = 15
+                pb_spouse.sum_insured = 25000
+                pb_spouse.is_compulsory = True
+                DBSession.add(pb_spouse)
+                DBSession.flush()
+                print(f'CREATED: {pb_spouse}')
+
+                spbs = PolicyBenefitStatus()
+                spbs.policy_benefit_id = pb_spouse.id
+                spbs.policy_benefit_status_type_id = TYPEUTIL.get_id_of_name('policy_benefit_status_type', 'active')
+                spbs.date_set = datetime.now()
+                spbs.current_status = True
+                DBSession.add(spbs)
+                DBSession.flush()
+                print(f'CREATED: {spbs}')
+
+                choice = random.choice(range(1, 10))
+                pbil_primary = PolicyBenefitInsuredLife()
+                pbil_primary.policy_benefit_id = policy_benefit.id
+                pbil_primary.entity_person_id = choice
+                pbil_primary.relationship_type_id = PRINCIPAL_TYPE
+                pbil_primary.date_of_birth = datetime.now()
+                DBSession.add(pbil_primary)
+                DBSession.flush()
+                print(f'CREATED: {pbil_primary}')
+
+                choice = random.choice(range(1, 10))
+                pbil_spouse = PolicyBenefitInsuredLife()
+                pbil_spouse.policy_benefit_id = pb_spouse.id
+                pbil_spouse.entity_person_id = choice
+                pbil_spouse.relationship_type_id = SPOUSE_TYPE
+                pbil_spouse.date_of_birth = datetime.now()
+                DBSession.add(pbil_spouse)
+                DBSession.flush()
+                print(f'CREATED: {pbil_spouse}')
+
+        self.fake_questions()
+
+    def fake_questions(self, *args, **kwargs):
+        questions = [
+            ('Was the insured under the influence', [('Yes', False), ('No', True)]),
+            ('Was the incident as a result of an accident', [('Yes', False), ('No', True)]),
+            ('Was the incident as a result of self harm', [('Yes', False), ('No', True)]),
+            ('Is the cause of the claim a pre existing condition', [('Yes', False), ('No', True)]),
+        ]
+        for q, answers in questions:
+            claim_question = ClaimQuestion.by_attr_first('text', q)
+            if not claim_question:
+                claim_question = ClaimQuestion()
+                claim_question.text = q
+                DBSession.add(claim_question)
+                DBSession.flush()
+                print(f'CREATED: {claim_question}')
+
+            for a, correct in answers:
+                cqa = ClaimQuestionAnswer()
+                cqa.claim_question_id = claim_question.id
+                cqa.answer_text = a
+                DBSession.add(cqa)
+                DBSession.flush()
+                print(f'CREATED: {cqa}')
+
+                if correct:
+                    bcql = BenefitClaimQuestionLink()
+                    bcql.benefit_id = 1
+                    bcql.claim_question_id = claim_question.id
+                    bcql.claim_question_correct_answer_id = cqa.id
+                    DBSession.add(bcql)
+                    DBSession.flush()
+                    print(f'CREATED: {bcql}')

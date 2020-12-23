@@ -1,0 +1,1219 @@
+# -*- coding: utf-8 -*-
+"""LocationController controller module"""
+
+import os
+import json
+from datetime import datetime
+from pkg_resources import resource_filename
+
+from tg import expose, require, redirect, validate, url, request, response
+from tg import predicates
+
+from rocket.model import *
+
+from rocket.lib.base import BaseController
+from rocket.lib.tg_utils import *
+from rocket.lib.tg_generic_reportlab import PDFCreator, Paragraph
+from rocket.lib.tgfileuploader import FileUploader
+from rocket.controllers.common import CommonController
+
+from sqlalchemy import func, desc, asc
+
+FILENAME = os.path.abspath(resource_filename('rocket', 'public'))
+PUBLIC_DIRNAME = os.path.join(FILENAME)
+PDF_DIRNAME = os.path.join(PUBLIC_DIRNAME, 'pdf')
+IMAGES_DIRNAME = os.path.join(PUBLIC_DIRNAME, 'images')
+CATALOG_DIRNAME = os.path.join(IMAGES_DIRNAME, 'catalog_pictures')
+
+SEARCHKEY = 'Country_SearchKeyword'
+
+SEARCHKEY_COUNTRY = 'Country_SearchKeyword'
+SEARCHKEY_REGION = 'Region_SearchKeyword'
+SEARCHKEY_DISTRICT = 'District_SearchKeyword'
+SEARCHKEY_CENTRE = 'Centre_SearchKeyword'
+
+COMMON = CommonController()
+LIMIT = 20
+
+__all__ = ['LocationController']
+
+
+class LocationController(BaseController):
+    """Docstring for setup."""
+
+    @expose()
+    def _default(self, *args, **kwargs):
+        return 'This page is not available.'
+
+    allow_only = predicates.has_any_permission('Administrator', 'CatalogMaintenance')
+
+    @expose('rocket.templates.generic')
+    def index(self, *args, **kwargs):
+        html = self.get_country_html(*args, **kwargs)
+        javascript = self.get_javascript_country_onload(*args, **kwargs)
+        title = "Region / District / Centre"
+        return dict(title=title, html=html, javascript=javascript)
+
+    @expose()
+    def get_country_htmltbl(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+        dbase_query = self.get_country_list(**kwargs)
+        img_active = "<img src='/images/icon_check.png' />"
+        img_inactive = "<img src='/images/icon_cross.png' />"
+        outputlist = []
+        for item in dbase_query:
+            radio = create_radio_html(**{'class' : 'country_select',
+                                         'name_key' : 'country_name',
+                                         'name_value' : item.name,
+                                         'id_key' : 'country_id',
+                                         'id_value' : item.id })
+            outputlist.append({
+                'radio': radio,
+                'name': item.name,
+                'code': item.code,
+                'active': img_active if item.bln_active else img_inactive,
+            })
+        dbcolumnlist = [
+            'radio',
+            'name',
+            'code',
+            'active',
+                ]
+        theadlist = [
+            '',
+            'Name',
+            'Country Code',
+            'Active',
+                ]
+        tdclasslist = [
+            'width_80',
+            '',
+            '',
+            'text-right'
+        ]
+        html = build_html_table(outputlist, dbcolumnlist, theadlist, "country_table", tdclasslist)
+        javascript = """
+        <script nonce='1234'>
+        $(document).ready(function(){
+            $('.country_select').click(function(){
+                var kwargs = 'country_id=' + $(this).attr('country_id');
+                kwargs += '&country_name=' + $(this).attr('country_name');
+                $('#div_region').load('/location/get_country_region_html?' + encodeURI(kwargs), function(data){
+                    $('#div_district').empty();
+                    $('#div_centre').empty();
+                    return false;
+                });
+            })
+            $('.country_select:eq(0)').trigger('click');
+        });
+        </script>
+        """
+        return html + javascript
+
+    def get_country_list(self, *args, **kwargs):
+        kwargs['searchkey'] = SEARCHKEY_COUNTRY
+        searchphrase = COMMON.get_searchphrase(**kwargs)
+
+        dbase_query = DBSession.query(Country). \
+            filter(Country.bln_active == True)
+        if searchphrase:
+            searchphrase = "%" + searchphrase + "%"
+            dbase_query = dbase_query.filter(Country.name.like(searchphrase))
+
+        dbase_query = dbase_query.order_by(asc(Country.name)). \
+            limit(LIMIT)
+        return dbase_query
+
+    @expose()
+    def get_country_html(self, *args, **kwargs):
+        kwargs['searchkey'] = SEARCHKEY_COUNTRY
+
+        searchphrase = COMMON.get_searchphrase(**kwargs)
+        countrytable = self.get_country_htmltbl(**kwargs)
+        html = f"""
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                <div class="card-header">
+                    <div class="row d-flex">
+                        <div class="col-md-12">
+                            <h4 class="card-title">Country</h4>
+                        </div>
+                    </div>
+                    <div class="row d-flex align-items-center">
+                        <div class="col-md-4">
+                            <input id='search' type="text" class="form-control search" name="searchphrase" placeholder="Search by Name or Country Code" value='{searchphrase}'>
+                        </div>
+                        <div class="col-md-8">
+                            <button id='btn_search' class="btn btn-primary action_search">Search</button>
+                            <button id='btn_reset' class="btn btn-primary">Reset</button>
+                        </div>
+                    </div>
+                    <hr>
+                </div>
+                <div class="card-body">
+                    <div id='div_country_table' class="table-responsive">
+                        {countrytable}
+                    </div>
+                </div>
+            </div>
+        </div>
+        </div>
+        <div id="div_region"  class="row"></div>
+        <div id="div_district" class="row"></div>
+        <div id="div_centre" class="row"></div>
+        """
+        return html
+
+    @expose()
+    def get_javascript_country_onload(self, *args, **kwargs):
+        javascript = """
+        $('#btn_search').click(function(){
+            var kwargs = 'searchphrase='+$('#search').val();
+            $('#div_country_table').load('/location/get_country_htmltbl', kwargs, function(data){
+                $('#div_region').empty();
+                $('#div_district').empty();
+                $('#div_centre').empty();
+                return false;
+            });
+        })
+        $('#btn_reset').click(function(){
+            $('#search').val('').focus();
+            $('#div_country_table').load('/location/get_country_htmltbl', 'reset=true', function(data){
+                $('#div_region').empty();
+                $('#div_district').empty();
+                $('#div_centre').empty();
+                return false;
+            });
+        })
+        """
+        return javascript
+
+    def get_region_list(self, *args, **kwargs):
+        kwargs['searchkey'] = SEARCHKEY_REGION
+        country_id = kwargs.get('country_id', None)
+        searchphrase = COMMON.get_searchphrase(**kwargs)
+
+        dbase_query = DBSession.query(Region). \
+            filter(Region.bln_active == True) .\
+            filter(Region.country_id == country_id)
+        if searchphrase:
+            searchphrase = "%" + searchphrase + "%"
+            dbase_query = dbase_query.filter(Region.name.like(searchphrase))
+
+        dbase_query = dbase_query.order_by(asc(Region.name)). \
+            limit(LIMIT)
+        return dbase_query
+
+    @expose()
+    def get_country_region_table(self, *args, **kwargs):
+        dbase_query = self.get_region_list(**kwargs)
+        outputlist = []
+        for item in dbase_query:
+            radio = create_radio_html(**{'class' : 'region_select',
+                'name_key' : 'region_name',
+                'name_value' : item.name,
+                'id_key' : 'region_id',
+                'id_value' : item.id })
+            outputlist.append({
+                'radio' : radio,
+                'name': f"""<div class='edit edit_dialog_region'
+                            region_id='{item.id}'
+                            country_id='{kwargs.get('country_id', None)}'
+                            country_name='{kwargs.get('country_name', None)}'>{item.name}</div>"""
+                            })
+        dbcolumnlist = [
+                'radio',
+                'name',
+                ]
+        theadlist = [
+                '',
+                'Name',
+                ]
+        tdclasslist = [
+            'width_80',
+            'action_link'
+        ]
+        regiontable = build_html_table(outputlist, dbcolumnlist, theadlist, "region_table", tdclasslist)
+
+        javascript = """
+        <script nonce='1234'>
+            $('.region_select').click(function(){
+                var kwargs = 'region_id=' + $(this).attr('region_id');
+                kwargs += '&region_name=' + $(this).attr('region_name');
+                $('#div_district').load('/location/get_region_district_html?' + encodeURI(kwargs), function(data){
+                    $('#div_centre').empty();
+                    return false;
+                });
+            });
+            $('.region_select:eq(0)').trigger('click');
+            $(".edit_dialog_region").click(function(){
+                var kwargs = 'country_id='+ $(this).attr('country_id');
+                kwargs += '&country_name=' + $(this).attr('country_name');
+                kwargs += '&region_id=' + $(this).attr('region_id');
+                $('#dialogdiv').load('/location/get_dialog_edit_region?' + encodeURI(kwargs), function(data){
+                    return false;
+                });
+            });
+
+        </script>
+        """
+        return regiontable + javascript
+
+    @expose()
+    def get_country_region_html(self, *args, **kwargs):
+        regiontable = self.get_country_region_table(**kwargs)
+        searchphrase = COMMON.get_searchphrase(**kwargs)
+        html = f"""
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header">
+                    <div class="row d-flex">
+                        <div class="col-md-6">
+                            <h4 class="card-title">Regions for {kwargs.get('country_name', '')}</h4>
+                        </div>
+                        <div class="col-md-6 text-right">
+                            <button id="new_dialog_region" country_id="{kwargs.get('country_id', None)}" country_name="{kwargs.get('country_name','')}" class="btn btn-primary ml-auto">Create a new Region</button>
+                        </div>
+                    </div>
+                    <div class="row d-flex align-items-center">
+                        <div class="col-md-4">
+                            <input id='region_search' type="text" class="form-control search" name="searchphrase" placeholder="Search by Name" value='{searchphrase}'>
+                        </div>
+                        <div class="col-md-8">
+                            <button id='btn_region_search' class="btn btn-primary action_search" country_id="{kwargs.get('country_id', None)}">Search</button>
+                            <button id='btn_region_reset' class="btn btn-primary" country_id="{kwargs.get('country_id', None)}">Reset</button>
+                        </div>
+                    </div>
+                    <hr>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive" id='div_region_table'>
+                        {regiontable}
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        javascript = """
+        <script nonce='1234'>
+        $(document).ready(function(){
+            $('#new_dialog_region').click(function(){
+                var kwargs = 'country_id='+ $(this).attr('country_id');
+                kwargs += '&country_name=' + $(this).attr('country_name');
+                $('#dialogdiv').load('/location/get_dialog_new_region?' + encodeURI(kwargs), function(data){
+                    return false;
+                });
+            });
+            $('#btn_region_search').click(function(){
+                var searchphrase = $('#region_search').val();
+                //var kwargs = 'searchphrase='+$('#region_search').val();
+                var country_id = $(this).attr('country_id');
+                var kwargs = {
+                    'searchphrase': searchphrase,
+                    'country_id': country_id,
+                }
+                $('#div_region_table').load('/location/get_country_region_table', kwargs, function(data){
+                    //$('#div_region').empty();
+                    $('#div_district').empty();
+                    $('#div_centre').empty();
+                    return false;
+                });
+            })
+            $('#btn_region_reset').click(function(){
+                var country_id = $(this).attr('country_id');
+                var kwargs = {
+                    'country_id': country_id,
+                    'reset': 'true',
+                }
+                $('#region_search').val('').focus();
+                $('#div_region_table').load('/location/get_country_region_table', kwargs, function(data){
+                    //$('#div_region').empty();
+                    $('#div_district').empty();
+                    $('#div_centre').empty();
+                    return false;
+                });
+            });
+        });
+        </script>
+        """
+        return html + javascript
+
+    @expose()
+    def get_dialog_new_region(self, *args, **kwargs):
+        html = f"""
+        <div class="modal fade" id="dialog_new_region" tabindex="-1" role="dialog" aria-labelledby="myModalLabel" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <div class="col-md-12">
+                            <h4 class="card-title">New Region for {kwargs.get('country_name','')}</h4>
+                        </div>
+                    </div>
+                    <div class="modal-body">
+                        <form id='form_new_region'>
+                            <div class="col-md-12">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label" required for="name">Name</label>
+                                    <div class="col-md-9">
+                                        <input style='display: none;' id="country_id" type="text" name="country_id" class="form-control"
+                                            country_name="{kwargs.get('country_name', '')}" value="{kwargs.get('country_id', None)}">
+                                        <input id="name" type="text" name="name" maxlength='255' class="form-control" required='true'>
+                                    </div>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                    <div class="modal-footer">
+                        <button id='save_new_region' class="btn btn-primary">Save</button>
+                        <button class="btn btn-outline-primary region_back">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        javascript = """
+        <script nonce='1234'>
+            setFormValidation('#form_new_region');
+            $('#save_new_region').click(function(){
+                 var valid = FormIsValid("#form_new_region");
+                 if(valid){
+                    var formserial = getFormData('#form_new_region');
+                    var data = {data : JSON.stringify(formserial)};
+                    $.post('/location/save_new_region?', data, function(data){
+                        var result = JSON.parse(data);
+                        if(result.success === true){
+                            $('#dialog_new_region').modal('hide');
+                            var kwargs = 'country_id=' + $('#country_id').val();
+                            kwargs += '&country_name=' + $('#country_id').attr('country_name');
+                            $('#div_region').load('/location/get_country_region_html?' + encodeURI(kwargs), function(data){
+                                $('#div_district').empty();
+                                $('#div_centre').empty();
+                                return false;
+                            });
+                        };
+                        showNotification(result.status, result.message);
+                        return false;
+                    });
+                 }
+            });
+            $('.region_back').click(function(){
+                $('#dialog_new_region').modal('hide');
+            });
+            $('#dialog_new_region').modal();
+        </script>
+        """
+        return html + javascript
+
+    @expose()
+    def save_new_region(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+        data = json.loads(kwargs.get('data', json.dumps({})))
+        country_id = data.get('country_id', None)
+        if not data: return json.dumps({'success': False, 'message': 'Missing Country.', 'status': 'danger' })
+        this = Country.by_id(country_id)
+        if not this: return json.dumps({'success': False, 'message': 'Unable to find Country.', 'status': 'danger' })
+        name = data.get('name', '')
+
+        exists = DBSession.query(Region).\
+            filter(Region.name == name).\
+            filter(Region.bln_active == True).\
+            first()
+        if exists:
+            return json.dumps({'success': False, 'message': 'May not create duplicate region.', 'status': 'danger' })
+
+        region = Region()
+        region.country_id = country_id
+        region.name = name
+        region.added_by = usernow.id
+        DBSession.add(region)
+        DBSession.flush()
+        return json.dumps({'success': True, 'region_id': region.id, 'message': 'Region successfully created.', 'status': 'success' })
+
+    @expose()
+    def get_dialog_edit_region(self, *args, **kwargs):
+        region_id = kwargs.get('region_id', None)
+        if not region_id: return ''
+        this = Region.by_id(region_id)
+        if not this: return ''
+        checked = 'checked' if this.bln_active else ''
+        selectbox_country = COMMON.get_selectbox_country(**{'id': 'country_id', 'required': True, 'selected': this.country_id})
+        html = f"""
+        <div class="modal fade" id="dialog_edit_region" tabindex="-1" role="dialog" aria-labelledby="myModalLabel" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <div class="col-md-12">
+                            <h4 class="card-title">Edit Region for {kwargs.get('country_name', '')}</h4>
+                        </div>
+                    </div>
+                    <div class="modal-body">
+                        <form id='form_edit_region'>
+                            <div class="col-md-12">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label" required for="name">Name</label>
+                                    <div class="col-md-9">
+                                        <input style='display: none;' id="country_id" country_name='{kwargs.get('country_name', '')}'' type="text" name="country_id" class="form-control" value='{kwargs.get('country_id', None)}'>
+                                        <input style='display: none;' id="region_id" type="text" name="region_id" class="form-control" value='{kwargs.get('region_id', None)}'>
+                                        <input id="name" type="text" name="name" class="form-control" maxlength='255' required='true' value='{this.name}'>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-12">
+                                <div class="form-group row">
+                                    <label class="col-3 col-form-label" for="active" required>Active</label>
+                                    <div class="col-9">
+                                        <div class="form-check">
+                                            <label class="form-check-label">
+                                                <input class="form-check-input" type="checkbox" name="active" id="active" {checked}/>
+                                                <span class="form-check-sign"></span>
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                    <div class="modal-footer">
+                        <button id='save_edit_region' class="btn btn-primary">Save</button>
+                        <button class="btn btn-outline-primary region_back">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        javascript = """
+        <script nonce='1234'>
+            setFormValidation('#form_edit_region');
+            $('#save_edit_region').click(function(){
+                 var valid = FormIsValid("#form_edit_region");
+                 if(valid){
+                    var formserial = getFormData('#form_edit_region');
+                    var data = {data : JSON.stringify(formserial)};
+                    $.post('/location/save_edit_region?', data, function(data){
+                        var result = JSON.parse(data);
+                        if(result.success === true){
+                            $('#dialog_edit_region').modal('hide');
+                            var kwargs = 'country_id=' + $('#country_id').val();
+                            kwargs += '&country_name=' + $('#country_id').attr('country_name');
+                            $('#div_region').load('/location/get_country_region_html?' + encodeURI(kwargs), function(data){
+                                $('#div_district').empty();
+                                $('#div_centre').empty();
+                                return false;
+                            });
+                        };
+                        showNotification(result.status, result.message);
+                        return false;
+                    });
+                 }
+            });
+            $('.region_back').click(function(){
+                $('#dialog_edit_region').modal('hide');
+            });
+            $('#dialog_edit_region').modal();
+        </script>
+        """
+        return html + javascript
+
+    def get_district_list(self, *args, **kwargs):
+        kwargs['searchkey'] = SEARCHKEY_DISTRICT
+        region_id = kwargs.get('region_id', None)
+        searchphrase = COMMON.get_searchphrase(**kwargs)
+
+        dbase_query = DBSession.query(District). \
+            filter(District.bln_active == True) .\
+            filter(District.region_id == region_id)
+        if searchphrase:
+            searchphrase = "%" + searchphrase + "%"
+            dbase_query = dbase_query.filter(District.name.like(searchphrase))
+
+        dbase_query = dbase_query.order_by(asc(District.name)). \
+            limit(LIMIT)
+        return dbase_query
+
+    @expose()
+    def get_district_table(self, *args, **kwargs):
+        dbase_query = self.get_district_list(**kwargs)
+        outputlist = []
+        for item in dbase_query:
+            radio = create_radio_html(**{'class': 'district_select',
+                'name_key': 'district_name',
+                'name_value': item.name,
+                'id_key': 'district_id',
+                'id_value': item.id})
+            outputlist.append({
+                'radio': radio,
+                'name': f"""<div class='edit edit_dialog_district action_link'
+                                district_id='{item.id}'
+                                region_id='{kwargs.get('region_id', None)}'
+                                region_name='{kwargs.get('region_name', '')}'>{item.name}</div>
+                        """})
+        dbcolumnlist = [
+            'radio',
+            'name',
+                ]
+        theadlist = [
+            '',
+            'Name',
+                ]
+        tdclasslist = [
+            'width_80',
+            'action_link'
+        ]
+        districttable = build_html_table(outputlist, dbcolumnlist, theadlist, "district_table", tdclasslist)
+
+        javascript = """
+        <script nonce='1234'>
+            $('.district_select').click(function(){
+                var kwargs = 'district_id=' + $(this).attr('district_id');
+                kwargs += '&district_name=' + $(this).attr('district_name');
+                $('#div_centre').load('/location/get_district_centre_html?' + encodeURI(kwargs), function(data){
+                    return false;
+                });
+            })
+            $('.district_select:eq(0)').trigger('click');
+
+            $(".edit_dialog_district").click(function(){
+                var kwargs = 'region_id='+ $(this).attr('region_id');
+                kwargs += '&region_name=' + $(this).attr('region_name');
+                kwargs += '&district_id=' + $(this).attr('district_id');
+                $('#dialogdiv').load('/location/get_dialog_edit_district?' + encodeURI(kwargs), function(data){
+                    return false;
+                });
+            });
+        </script>
+        """
+        return districttable + javascript
+
+    @expose()
+    def get_region_district_html(self, *args, **kwargs):
+        districttable = self.get_district_table(**kwargs)
+        searchphrase = COMMON.get_searchphrase(**kwargs)
+        html = f"""
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="row d-flex">
+                            <div class="col-md-6">
+                                <h4 class="card-title">Districts for {kwargs.get('region_name', '')}</h4>
+                            </div>
+                            <div class="col-md-6 text-right">
+                                <button id="new_dialog_district" region_name="{kwargs.get('region_name', '')}" region_id="{kwargs.get('region_id', None)}" class="btn btn-primary ml-auto">Create a new District</button>
+                            </div>
+                        </div>
+                        <div class="row d-flex align-items-center">
+                            <div class="col-md-4">
+                                <input id='district_search' type="text" class="form-control search" name="searchphrase" placeholder="Search by Name" value='{searchphrase}'>
+                            </div>
+                            <div class="col-md-8">
+                                <button id='btn_district_search' class="btn btn-primary action_search" region_id="{kwargs.get('region_id', None)}">Search</button>
+                                <button id='btn_district_reset' class="btn btn-primary" region_id="{kwargs.get('region_id', None)}">Reset</button>
+                            </div>
+                        </div>
+                        <hr>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive" id='div_district_table'>
+                            {districttable}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        """
+        javascript = """
+        <script nonce='1234'>
+        $(document).ready(function(){
+            $("#new_dialog_district").click(function(){
+                var kwargs = "region_id="+ $(this).attr('region_id');
+                kwargs += '&region_name=' + $(this).attr('region_name');
+                $('#dialogdiv').load('/location/get_dialog_new_district?' + encodeURI(kwargs), function(data){
+                    return false;
+                });
+            });
+            $('#btn_district_search').click(function(){
+                var searchphrase = $('#district_search').val();
+                var region_id = $(this).attr('region_id');
+                var kwargs = {
+                    'searchphrase': searchphrase,
+                    'region_id': region_id,
+                }
+                $('#div_district_table').load('/location/get_district_table', kwargs, function(data){
+                    //$('#div_region').empty();
+                    //$('#div_district').empty();
+                    $('#div_centre').empty();
+                    return false;
+                });
+            })
+            $('#btn_district_reset').click(function(){
+                var region_id = $(this).attr('region_id');
+                var kwargs = {
+                    'region_id': region_id,
+                    'reset': 'true',
+                }
+                $('#district_search').val('').focus();
+                $('#div_district_table').load('/location/get_district_table', kwargs, function(data){
+                    //$('#div_region').empty();
+                    //$('#div_district').empty();
+                    $('#div_centre').empty();
+                    return false;
+                });
+            });
+        });
+        </script>
+        """
+        return html + javascript
+
+    @expose()
+    def save_edit_region(self, *args, **kwargs):
+        data = json.loads(kwargs.get('data', json.dumps({})))
+        if not data: return json.dumps({'success': False, 'message': 'Missing Data.', 'status': 'danger'})
+
+        usernow = request.identity.get('user', {})
+        this = Country.by_id(data.get('country_id', None))
+        if not this: return json.dumps({'success': False, 'message': 'Country not found.', 'status': 'danger'})
+        region_id = data.get('region_id', None)
+        name = data.get('name', None)
+        active = True if data.get('active', False) else False
+
+        exists = DBSession.query(Region).\
+            filter(Region.name == name).\
+            filter(Region.id is not region_id).\
+            filter(Region.bln_active == True).\
+            first()
+        if exists:
+            return json.dumps({'success': False, 'message': 'May not create duplicate region.', 'status': 'danger' })
+
+        region = Region.by_id(region_id)
+        region.name = name
+        region.bln_active = active
+        DBSession.flush()
+        # TGJ: If this is made inactive.... should we deactivate the districts and centres?? What happens now to them? Do they become orphans.
+        return json.dumps({'success': True, 'region_id': region.id, 'message': 'Region successfully updated.', 'status': 'success' })
+
+    @expose()
+    def get_dialog_new_district(self, *args, **kwargs):
+        html = f"""
+        <div class="modal fade" id="dialog_new_district" tabindex="-1" role="dialog" aria-labelledby="myModalLabel" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <div class="col-md-12">
+                            <h4 class="card-title">New District for for {kwargs.get('region_name', '')}</h4>
+                        </div>
+                    </div>
+                    <div class="modal-body">
+                        <form id='form_new_district'>
+                            <div class="col-md-12">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label" required for="name">Name</label>
+                                    <div class="col-md-9">
+                                      <input style='display: none;' id="region_id" region_name='{kwargs.get('region_name', '')}'type="text" name="region_id" class="form-control" value='{kwargs.get('region_id', None)}'>
+                                      <input id="name" type="text" maxlength='255' name="name" class="form-control" required='true'>
+                                    </div>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                    <div class="modal-footer">
+                        <button id='save_new_district' class="btn btn-primary">Save</button>
+                        <button class="btn btn-outline-primary district_back">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        javascript = """
+        <script nonce='1234'>
+            setFormValidation('#form_new_district');
+            $('#save_new_district').click(function(){
+                 var valid = FormIsValid("#form_new_district");
+                 if(valid){
+                    var formserial = getFormData('#form_new_district');
+                    var data = {data : JSON.stringify(formserial)};
+                    $.post('/location/save_new_district?', data, function(data){
+                        var result = JSON.parse(data);
+                        if(result.success === true){
+                            $('#dialog_new_district').modal('hide');
+                            var kwargs = 'region_id=' + $('#region_id').val();
+                            kwargs += '&region_name=' + $('#region_id').attr('region_name');
+                            $('#div_district').load('/location/get_region_district_html?' + encodeURI(kwargs), function(data){
+                                $('#div_centre').empty();
+                                return false;
+                            });
+                        };
+                        showNotification(result.status, result.message);
+                        return false;
+                    });
+                 }
+            });
+            $('.district_back').click(function(){
+                $('#dialog_new_district').modal('hide');
+            });
+            $('#dialog_new_district').modal();
+        </script>
+        """
+        return html + javascript
+
+    @expose()
+    def save_new_district(self, *args, **kwargs):
+        data = json.loads(kwargs.get('data', json.dumps({})))
+        if not data: return json.dumps({'success': False, 'message': 'Missing Data.', 'status': 'danger'})
+        region_id = data.get('region_id', None)
+        this = Region.by_id(region_id)
+        if not this: return json.dumps({'success': False, 'message': 'Region not found.', 'status': 'danger'})
+        usernow = request.identity.get('user', {})
+        name = data.get('name', '')
+
+        exists = DBSession.query(District).\
+            filter(District.name == name).\
+            filter(District.bln_active == True).\
+            first()
+        if exists:
+            return json.dumps({'success': False, 'message': 'May not create duplicate district.', 'status': 'danger'})
+
+        district = District()
+        district.region_id = region_id
+        district.name = name
+        district.added_by = usernow.id
+        DBSession.add(district)
+        DBSession.flush()
+        return json.dumps({'success': True, 'district_id': district.id, 'message': 'District created successfully.', 'status': 'success'})
+
+    @expose()
+    def get_dialog_edit_district(self, *args, **kwargs):
+        district_id = kwargs.get('district_id', None)
+        if not district_id: return ''
+        this = District.by_id(district_id)
+        if not this: return ''
+        checked = 'checked' if this.bln_active else ''
+        html = f"""
+        <div class="modal fade" id="dialog_edit_district" tabindex="-1" role="dialog" aria-labelledby="myModalLabel" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <div class="col-md-12">
+                            <h4 class="card-title">Edit District for {kwargs.get('region_name', '')}</h4>
+                        </div>
+                    </div>
+                    <div class="modal-body">
+                        <form id='form_edit_district'>
+                            <div class="col-md-12">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label" required for="name">Name</label>
+                                    <div class="col-md-9">
+                                        <input style='display: none;' id="region_id" region_name='{kwargs.get('region_name', '')}' type="text" name="region_id" class="form-control" value='{kwargs.get('region_id', None)}'>
+                                        <input style='display: none;' id="district_id" type="text" name="district_id" class="form-control" value='{this.id}'>
+                                        <input id="name" type="text" name="name" maxlength='255' class="form-control" required='true' value='{this.name}'>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-12">
+                                <div class="form-group row">
+                                    <label class="col-3 col-form-label" for="active" required>Active</label>
+                                    <div class="col-9">
+                                        <div class="form-check">
+                                            <label class="form-check-label">
+                                                <input class="form-check-input" type="checkbox" name="active" id="active" {checked}/>
+                                                <span class="form-check-sign"></span>
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                    <div class="modal-footer">
+                        <button id='save_edit_district' class="btn btn-primary">Save</button>
+                        <button class="btn btn-outline-primary district_back">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        javascript = """
+        <script nonce='1234'>
+            setFormValidation('#form_edit_district');
+            $('#save_edit_district').click(function(){
+                 var valid = FormIsValid("#form_edit_district");
+                 if(valid){
+                    var formserial = getFormData('#form_edit_district');
+                    var data = {data : JSON.stringify(formserial)};
+
+                    $.post('/location/save_edit_district?', data, function(data){
+                        var result = JSON.parse(data);
+                        if(result.success === true){
+                            $('#dialog_edit_district').modal('hide');
+                            var kwargs = 'region_id=' + $('#region_id').val();
+                            kwargs += '&region_name=' + $('#region_id').attr('region_name');
+                            $('#div_district').load('/location/get_region_district_html?' + encodeURI(kwargs), function(data){
+                                $('#div_centre').empty();
+                                $('#dialog_edit_district').modal('hide');
+                                return false;
+                            });
+                        };
+                        showNotification(result.status, result.message);
+                        return false;
+                    });
+                 }
+            });
+            $('.district_back').click(function(){
+                $('#dialog_edit_district').modal('hide');
+            });
+            $('#dialog_edit_district').modal();
+        </script>
+        """
+        return html + javascript
+
+    @expose()
+    def save_edit_district(self, *args, **kwargs):
+        data = json.loads(kwargs.get('data', json.dumps({})))
+        if not data: return json.dumps({'success': False, 'message': 'Missing Data.', 'status': 'danger'})
+        this = Region.by_id(data.get('region_id', None))
+        if not this: return json.dumps({'success': False, 'message': 'Region not found.', 'status': 'danger'})
+        district_id = data.get('district_id', None)
+        name = data.get('name', None)
+        active = True if data.get('active', False) else False
+
+        exists = DBSession.query(District).\
+            filter(District.name == name).\
+            filter(District.id is not district_id).\
+            filter(District.bln_active == True).\
+            first()
+        if exists:
+            return json.dumps({'success': False, 'message': 'May not create duplicate district.', 'status': 'danger'})
+
+        usernow = request.identity.get('user', {})
+        district = District.by_id(district_id)
+        district.name = name
+        district.bln_active = active
+        DBSession.flush()
+        return json.dumps({'success': True, 'district_id': district.id, 'message': 'District edited successfully.', 'status': 'success'})
+
+    def get_centre_list(self, *args, **kwargs):
+        kwargs['searchkey'] = SEARCHKEY_CENTRE
+        district_id = kwargs.get('district_id', None)
+        searchphrase = COMMON.get_searchphrase(**kwargs)
+
+        dbase_query = DBSession.query(Centre). \
+            filter(Centre.bln_active == True) .\
+            filter(Centre.district_id == district_id)
+        if searchphrase:
+            searchphrase = "%" + searchphrase + "%"
+            dbase_query = dbase_query.filter(Centre.name.like(searchphrase))
+
+        dbase_query = dbase_query.order_by(asc(Centre.name)). \
+            limit(LIMIT)
+        return dbase_query
+
+    @expose()
+    def get_district_centre_table(self, *args, **kwargs):
+        dbase_query = self.get_centre_list(**kwargs)
+        outputlist = []
+        for item in dbase_query:
+            name = f"""<div class='edit edit_dialog_centre'
+                            centre_id='{item.id}'
+                            district_id='{kwargs.get('district_id', None)}'
+                            district_name='{kwargs.get('district_name', '')}'
+                      > {item.name} </div> """
+            outputlist.append({
+                'name': name,
+                            })
+        dbcolumnlist = [
+                'name',
+                ]
+        theadlist = [
+                'Name',
+                ]
+        tdclasslist = [
+            'action_link'
+        ]
+        districttable = build_html_table(outputlist, dbcolumnlist, theadlist, "district_table", tdclasslist)
+
+        javascript = """
+        <script nonce='1234'>
+            $(".edit_dialog_centre").click(function(){
+                var kwargs = 'district_id='+ $(this).attr('district_id');
+                kwargs += '&district_name=' + $(this).attr('district_name');
+                kwargs += '&centre_id=' + $(this).attr('centre_id');
+                $('#dialogdiv').load('/location/get_dialog_edit_centre?' + encodeURI(kwargs), function(data){
+                    return false;
+                });
+            });
+        </script>
+        """
+        return districttable + javascript
+
+    @expose()
+    def get_district_centre_html(self, *args, **kwargs):
+        districttable = self.get_district_centre_table(**kwargs)
+        searchphrase = COMMON.get_searchphrase(**kwargs)
+        html = f"""
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header">
+                    <div class="row d-flex">
+                        <div class="col-md-6">
+                            <h4 class="card-title">Centres for {kwargs.get('district_name', '')}</h4>
+                        </div>
+                        <div class="col-md-6 text-right">
+                            <button id="new_dialog_centre" district_id="{kwargs.get('district_id', None)}" district_name="{kwargs.get('district_name', '')}" class="btn btn-primary ml-auto">Create a new Centre</button>
+                        </div>
+                    </div>
+                    <div class="row d-flex align-items-center">
+                        <div class="col-md-4">
+                            <input id='centre_search' type="text" class="form-control search" name="searchphrase" placeholder="Search by Name" value='{searchphrase}'>
+                        </div>
+                        <div class="col-md-8">
+                            <button id='btn_centre_search' class="btn btn-primary action_search" district_id="{kwargs.get('district_id', None)}">Search</button>
+                            <button id='btn_centre_reset' class="btn btn-primary" district_id="{kwargs.get('district_id', None)}">Reset</button>
+                        </div>
+                    </div>
+                    <hr>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive" id='div_centre_table'>
+                        {districttable}
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        javascript = """
+        <script nonce='1234'>
+        $('#new_dialog_centre').click(function(){
+            var kwargs = 'district_id='+ $(this).attr('district_id');
+            kwargs += '&district_name=' + $(this).attr('district_name');
+            $('#dialogdiv').load('/location/get_dialog_new_centre?' + encodeURI(kwargs), function(data){
+                return false;
+            });
+        });
+        $('#btn_centre_search').click(function(){
+            var searchphrase = $('#centre_search').val();
+            var district_id = $(this).attr('district_id');
+            var kwargs = {
+                'searchphrase': searchphrase,
+                'district_id': district_id,
+            }
+            $('#div_centre_table').load('/location/get_district_centre_table', kwargs, function(data){
+                //$('#div_region').empty();
+                //$('#div_district').empty();
+                //$('#div_centre').empty();
+                return false;
+            });
+        })
+        $('#btn_centre_reset').click(function(){
+            var district_id = $(this).attr('district_id');
+            var kwargs = {
+                'district_id': district_id,
+                'reset': 'true',
+            }
+            $('#centre_search').val('').focus();
+            $('#div_centre_table').load('/location/get_district_centre_table', kwargs, function(data){
+                //$('#div_region').empty();
+                //$('#div_district').empty();
+                //$('#div_centre').empty();
+                return false;
+            });
+        });
+        </script>
+        """
+        return html + javascript
+
+    @expose()
+    def get_dialog_new_centre(self, *args, **kwargs):
+        html = f"""
+        <div class="modal fade" id="dialog_new_centre" tabindex="-1" role="dialog" aria-labelledby="myModalLabel" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <div class="col-md-12">
+                            <h4 class="card-title">New Centre for {kwargs.get('district_name', '')}</h4>
+                        </div>
+                    </div>
+                    <div class="modal-body">
+                        <form id='form_new_centre'>
+                            <div class="col-md-12">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label" required for="name">Name</label>
+                                    <div class="col-md-9">
+                                        <input style='display: none;' id='district_id' district_name='{kwargs.get('district_name', '')}' type='text' name='district_id' class='form-control' value='{kwargs.get('district_id', None)}'>
+                                        <input id="name" type="text" name="name" maxlength='50' class="form-control" required='true'>
+                                    </div>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                    <div class="modal-footer">
+                        <button id='save_new_centre' class="btn btn-primary">Save</button>
+                        <button class="btn btn-outline-primary centre_back">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        javascript = """
+        <script nonce='1234'>
+            setFormValidation('#form_new_centre');
+            $('#save_new_centre').click(function(){
+                 var valid = FormIsValid("#form_new_centre");
+                 if(valid){
+                    var formserial = getFormData('#form_new_centre');
+                    var data = {data : JSON.stringify(formserial)};
+                    $.post('/location/save_new_centre?', data, function(data){
+                        var result = JSON.parse(data);
+                        if(result.success === true){
+                            $('#dialog_new_centre').modal('hide');
+                            var kwargs = 'district_id=' + $('#district_id').val();
+                            kwargs += '&district_name=' + $('#district_id').attr('district_name');
+                            $('#div_centre').load('/location/get_district_centre_html?' + encodeURI(kwargs), function(data){
+                                return false;
+                            });
+                        };
+                        showNotification(result.status, result.message);
+                        return false;
+                    });
+                 }
+            });
+            $('.centre_back').click(function(){
+                $('#dialog_new_centre').modal('hide');
+            });
+            $('#dialog_new_centre').modal();
+        </script>
+        """
+        return html + javascript
+
+    @expose()
+    def save_new_centre(self, *args, **kwargs):
+        data = json.loads(kwargs.get('data', json.dumps({})))
+        if not data: return json.dumps({'success': False, 'message': 'Missing Data.', 'status': 'danger'})
+        district_id = data.get('district_id', None)
+        this = District.by_id(district_id)
+        if not this: return json.dumps({'success': False, 'message': 'District not found.', 'status': 'danger'})
+        usernow = request.identity.get('user', {})
+        name = data.get('name', '')
+
+        exists = DBSession.query(Centre).\
+            filter(Centre.name == name).\
+            filter(Centre.bln_active == True).\
+            first()
+        if exists:
+            return json.dumps({'success': False, 'message': 'May not create duplicate centre.', 'status': 'danger'})
+
+        centre = Centre()
+        centre.district_id = district_id
+        centre.name = name
+        centre.added_by = usernow.id
+        DBSession.add(centre)
+        DBSession.flush()
+        return json.dumps({'success': True, 'centre_id': centre.id, 'message': 'Centre created successfully.', 'status': 'success'})
+
+    @expose()
+    def get_dialog_edit_centre(self, *args, **kwargs):
+        centre_id = kwargs.get('centre_id', None)
+        if not centre_id: return ''
+        this = Centre.by_id(centre_id)
+        if not this: return ''
+        checked = 'checked' if this.bln_active else ''
+        selectbox_districts = COMMON.get_selectbox_district( **{'id': 'district_id', 'required': True, 'selected': this.district_id})
+        html = f"""
+        <div class="modal fade" id="dialog_edit_centre" tabindex="-1" role="dialog" aria-labelledby="myModalLabel" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <div class="col-md-12">
+                            <h4 class="card-title">Edit centre for {kwargs.get('district_name', '')}</h4>
+                        </div>
+                    </div>
+                    <div class="modal-body">
+                        <form id='form_edit_centre'>
+                            <div class="col-md-12">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label" required for="name">Name</label>
+                                    <div class="col-md-9">
+                                        <input style='display: none;' id="district_id" type="text" district_name='{kwargs.get('district_name', '')}' name="district_id" class="form-control" value='{kwargs.get('district_id', None)}'>
+                                        <input style='display: none;' id="centre_id" type="text" name="centre_id" class="form-control" value='{kwargs.get('centre_id', None)}'>
+                                        <input id="name" type="text" name="name" maxlength='50' class="form-control" required='true' value='{this.name}'>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-12">
+                                <div class="form-group row">
+                                    <label class="col-3 col-form-label" for="active" required>Active</label>
+                                    <div class="col-9">
+                                        <div class="form-check">
+                                            <label class="form-check-label">
+                                                <input class="form-check-input" type="checkbox" name="active" id="active" {checked}/>
+                                                <span class="form-check-sign"></span>
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                    <div class="modal-footer">
+                        <button id='save_edit_centre' class="btn btn-primary">Save</button>
+                        <button class="btn btn-outline-primary centre_back">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        javascript = """
+        <script nonce='1234'>
+            setFormValidation('#form_edit_centre');
+            $('#save_edit_centre').click(function(){
+                 var valid = FormIsValid("#form_edit_centre");
+                 if(valid){
+                    var formserial = getFormData('#form_edit_centre');
+                    var data = {data : JSON.stringify(formserial)};
+                    $.post('/location/save_edit_centre?', data, function(data){
+                        var result = JSON.parse(data);
+                        if(result.success === true){
+                            $('#dialog_edit_centre').modal('hide');
+                            var kwargs = 'district_id=' + $('#district_id').val();
+                            kwargs += '&district_name=' + $('#district_id').attr('district_name');
+                            $('#div_centre').load('/location/get_district_centre_html?' + encodeURI(kwargs), function(data){
+                                return false;
+                            });
+                        };
+                        showNotification(result.status, result.message);
+                        return false;
+                    });
+                 }
+            });
+            $('.centre_back').click(function(){
+                $('#dialog_edit_centre').modal('hide');
+            });
+            $('#dialog_edit_centre').modal();
+        </script>
+        """
+        return html + javascript
+
+    @expose()
+    def save_edit_centre(self, *args, **kwargs):
+        data = json.loads(kwargs.get('data', json.dumps({})))
+        if not data: return json.dumps({'success': False, 'message': 'Missing Data.', 'status': 'danger'})
+        usernow = request.identity.get('user', {})
+        district_id = data.get('district_id', None)
+        this = District.by_id(district_id)
+        if not this: return json.dumps({'success': False, 'message': 'District not found.', 'status': 'danger'})
+        centre_id = data.get('centre_id', None)
+        name = data.get('name', '')
+        active = True if data.get('active', False) else False
+
+        exists = DBSession.query(Centre).\
+            filter(Centre.name == name).\
+            filter(Centre.id is not centre_id).\
+            filter(Centre.bln_active == True).\
+            first()
+        if exists:
+            return json.dumps({'success': False, 'message': 'May not create duplicate centre.', 'status': 'danger'})
+
+        centre = Centre.by_id(centre_id)
+        if not centre.district_id:
+            centre.district_id = district_id
+        centre.name = name
+        centre.bln_active = active
+        DBSession.flush()
+        return json.dumps({'success': True, 'centre_id': centre.id, 'message': 'Centre edited successfully.', 'status': 'success'})

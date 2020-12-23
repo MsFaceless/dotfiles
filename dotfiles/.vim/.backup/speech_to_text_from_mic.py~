@@ -1,0 +1,17 @@
+#!/bin/python
+
+import speech_recognition as sr
+
+r = sr.Recognizer()
+
+with sr.Microphone() as source:
+    print('you can talk now')
+    text = r.listen(source)
+    print('youre done talking now')
+
+try:
+    plaintext = r.recognize_google(text)
+    print('you said')
+    print(plaintext)
+except Exception as e:
+    print(e)

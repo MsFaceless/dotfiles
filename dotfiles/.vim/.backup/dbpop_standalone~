@@ -1,0 +1,1 @@
+echo "drop database if exists vaultdb; create database vaultdb collate 'utf8mb4_bin'; grant all on vaultdb.* to 'developer'@'localhost' identified by 'developpass';" | sudo mysql -uroot -p;

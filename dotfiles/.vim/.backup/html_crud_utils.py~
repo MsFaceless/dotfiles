@@ -1,0 +1,115 @@
+#!/bin/python
+""" CrudListHtml """
+
+import decimal
+
+from calabash import model
+from calabash.model import DBSession
+from calabash.lib.html_utils import build_html_table
+
+EXCLUDE_LIST = ['id', 'added_by', 'added', 'active']
+
+class CrudListHtml():
+    """ CrudListHtml """
+
+    def __init__(self, **kwargs):
+        """ __init__ """
+        self.model = kwargs.get('model', None)
+        if not self.model:
+            raise Exception
+
+        self.follow_ids = kwargs.get('follow_ids', True)
+        self.show_new_button = kwargs.get('show_new_button', True)
+
+        self.dbase_query = kwargs.get('dbase_query', self.model.get_all('id'))
+
+        self.set_tablename()
+        self.set_table_lists()
+        self.set_table_row_list()
+
+    def get_html(self):
+        """ get_html """
+        html = ""
+        if self.show_new_button:
+            html += self.get_new_button()
+
+        html += build_html_table(
+            self.table_row_list,
+            self.table_column_list,
+            self.table_header_list,
+            self.table_name,
+            self.html_style_list
+        )
+        return html
+
+    def get_new_button(self):
+        """ get_new_button """
+        formatted_name = self.table_name.replace('tbl_', '')
+        formatted_name = formatted_name.replace('_', ' ')
+        formatted_name = formatted_name.title()
+        return f"""
+        <button id="btn_new">Add New {formatted_name}</button>
+        """
+
+    def set_tablename(self):
+        """ set_tablename """
+        self.table_name = self.model.__tablename__
+
+    def set_table_lists(self):
+        """ set_table_lists """
+        table_column_list, table_header_list = [], []
+        for item in self.model.__table__.columns:
+            name = str(item.name)
+            if name not in EXCLUDE_LIST:
+                table_column_list.append(name)
+
+                formatted_name = name.replace('_id', '')
+                formatted_name = formatted_name.replace('_', ' ')
+                formatted_name = formatted_name.title()
+                table_header_list.append(formatted_name)
+        self.table_column_list = table_column_list
+        self.table_header_list = table_header_list
+        self.html_style_list = ['' for x in self.table_header_list]
+
+    def set_table_row_list(self):
+        """ set_table_row_list """
+        outputlist = []
+        for row in self.dbase_query:
+            rowdict = {}
+            for key in self.table_column_list:
+                value = getattr(row, key)
+                value = self.format_value_by_type(value, key)
+                rowdict[key] = value
+            outputlist.append(rowdict)
+        self.table_row_list = outputlist
+
+    def format_value_by_type(self, value='', column_name=''):
+        """ format_value_by_type """
+
+        if self.follow_ids and column_name.endswith('_id'):
+            return self.get_child_table_value(value, column_name)
+
+        if isinstance(value, int):
+            return value
+
+        if isinstance(value, str):
+            return value.title()
+
+        if isinstance(value, decimal.Decimal):
+            return float(value)
+
+        return value
+
+    @classmethod
+    def get_child_table_value(cls, value='', column_name=''):
+        """ get_child_table_value """
+        table_name = column_name.replace('_id', '')
+        table_name = table_name.title()
+        table_name = table_name.replace('_', '')
+        table_name = getattr(model, table_name, None)
+        if not table_name:
+            return value
+        row = DBSession.query(table_name).get(value)
+        if not row:
+            return value
+        return str(row.name).title().replace("_", " ")

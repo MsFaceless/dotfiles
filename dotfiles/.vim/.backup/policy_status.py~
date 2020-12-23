@@ -1,0 +1,273 @@
+# -*- coding: utf-8 -*-
+"""Policy Status module"""
+
+import logging
+
+from tg import predicates, require, expose, request, redirect
+from tg.i18n import ugettext as _
+from tg.i18n import lazy_ugettext as l_
+
+from rocket.model import *
+
+from rocket.lib.tg_utils import *
+from rocket.lib.base import BaseController
+from rocket.lib.type_utils import TypeDictionary
+
+from rocket.controllers.common import CommonController
+from rocket.controllers.product import ProductController
+
+from sqlalchemy import func, desc, asc, or_
+
+LOGGER = logging.getLogger(__name__)
+
+TYPEUTIL = TypeDictionary()
+COMMON = CommonController()
+DBQUERY_LIMIT = 15
+
+POLICY_ID = 1
+
+
+class PolicyStatusController(BaseController):
+
+    ###############################################################################
+    # Policy Status - List
+    ###############################################################################
+
+    @require(predicates.not_anonymous())
+    @expose('rocket.templates.generic')
+    def status(self, *args, **kwargs):
+        html = self.get_policy_statuses_html()
+        javascript = self.get_javascript_policy_status_onload()
+        title = _("Policy Status")
+        return dict(title=title, html=html, javascript=javascript)
+
+    @expose()
+    def get_policy_statuses_html(self, *args, **kwargs):
+        outputlist = []
+        dbase_query = DBSession.query(PolicyStatus). \
+            filter(PolicyStatus.active == True). \
+            filter(PolicyStatus.policy_id == POLICY_ID). \
+            order_by(PolicyStatus.date_set.desc()). \
+            limit(DBQUERY_LIMIT)
+        for item in dbase_query:
+            policy_status_type = TYPEUTIL.get_pretty_name("policy_status_type",
+                                                          item.policy_status_type_id)
+            date_set = item.date_set
+            policy_status_id = item.id
+            if item.current_status:
+                state = 'True'
+            else:
+                state = ''
+
+            outputlist.append({
+                'status_type': f"<div class='edit policy_status_edit' policy_status_id='{policy_status_id}'>{policy_status_type}</div>",
+                'date_set': date_set,
+                'current_status': state,
+                'deactivate': f"<div class='policy_status_deactivate' policy_status_id='{policy_status_id}'>Deactivate</div>"
+            })
+        dbcolumnlist = [
+            'status_type',
+            'date_set',
+            'current_status',
+            'deactivate',
+        ]
+        theadlist = [
+            'Status Type',
+            'Date Set',
+            'Current Status',
+            '',
+        ]
+        tdclasslist = [
+            '',
+            '',
+            '',
+            'action_link text-right',
+        ]
+        htmltable = build_html_table(outputlist, dbcolumnlist, theadlist, "policy_status_table", tdclasslist)
+        html = f"""
+            <div class="row">
+                <div class="col-md-12">
+                    <div class="card">
+                        <div class="card-header">
+                            <div class="row d-flex">
+                                <div class="col-md-6">
+                                     <h4 class="card-title">{_('Policy  Status')}</h4>
+                                </div>
+                                <div class="col-md-6 text-right">
+                                    <button id="create_new_policy_status" class="btn btn-primary policy_id='{POLICY_ID}' ml-auto">Create New Policy  Status</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div id='div_policy_status_table' class="table-responsive">
+                                {htmltable}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        """
+        return html
+
+    @expose()
+    def get_javascript_policy_status_onload(self, *args, **kwargs):
+        javascript = """
+        $("#create_new_policy_status").click(function(){
+            var policy_id = $(this).attr('policy_id');
+            var kwargs = {'policy_id' : policy_id};
+            $.redirect('/policy_status/new', kwargs);
+        });
+        $('.policy_status_deactivate').click(function() {
+            var policy_status_id = $(this).attr('policy_status_id');
+            var kwargs = {'policy_status_id': policy_status_id};
+            $.post('/policy_status/deactivate_policy_status?', kwargs, function(data) {
+                $.redirect('/policy_status/status');
+                return false;
+            });
+            return false;
+        });
+        """
+        return javascript
+
+    @expose()
+    def deactivate_policy_status(self, *args, **kwargs):
+        policy_status_id = kwargs.get('policy_status_id', None)
+        if not policy_status_id:
+            print("Could not find policy_status_id to deactivate")
+            return ''
+        policy_status = PolicyStatus.by_id(policy_status_id)
+        if not policy_status:
+            print("Could not find active policy_status")
+            return ''
+
+        policy_status.active = False
+        DBSession.add(policy_status)
+        DBSession.flush()
+        return ''
+
+###############################################################################
+# Policy  Status - New
+###############################################################################
+
+    @require(predicates.not_anonymous())
+    @expose('rocket.templates.generic')
+    def new(self, *args, **kwargs):
+        html = self.get_new_policy_status_html(**kwargs)
+        javascript = self.get_new_policy_status_javascript_onload()
+        title = _("New Policy  Status")
+        return dict(title=title, html=html, javascript=javascript)
+
+    def get_new_policy_status_html(self, *args, **kwargs):
+        policy_status_type_selectbox = self.policy_status_type_selectbox()
+        html = f"""
+            <div class="row">
+                <div class="col-md-12">
+                    <div class="card">
+                        <div class="card-header">
+                            <div class="row d-flex">
+                                <div class="col-md-6">
+                                     <h4 class="card-title">{_('New Policy  Status')}</h4>
+                                </div>
+                                <div class="col-md-6 text-right">
+                                    <button id="save_new_policy_status" class="btn btn-primary policy_id='{POLICY_ID}' ml-auto">Save New Policy  Status</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <form id="form_new_policy_status">
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <div class="form-group row">
+                                            <label class="col-md-3 col-form-label" required>{_('Status Type')}</label>
+                                            <div class="col-md-9">
+                                                {policy_status_type_selectbox}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-group row">
+                                            <label class="col-md-3 col-form-label" required>{_('Date Set')}</label>
+                                            <div class="col-md-9">
+                                                <input type="text" class="form-control" name="date_set" id="date_set" required='true'>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div>
+                                    <div class="col-md-6">
+                                        <div class="form-group row">
+                                            <label class="col-md-3 col-form-label" required>{_('Reason')}</label>
+                                            <div class="col-md-9">
+                                                <textarea required="true" name='reason' type="text" class="form-control" rows="3" maxlength='250'></textarea>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        """
+        return html
+
+    def policy_status_type_selectbox(self, *args, **kwargs):
+        kwargs['required'] = True
+        kwargs['outputdict'] = TYPEUTIL.get_dict_of_types("policy_status_type")
+        kwargs['id'] = 'policy_status_type_id'
+        return create_selectbox_html(**kwargs)
+
+    def get_new_policy_status_javascript_onload(self, *args, **kwargs):
+        javascript = """
+            createDatepicker('#date_set');
+            setFormValidation('#form_new_policy_status');
+
+            $('#save_new_policy_status').click(function(){
+                var valid = FormIsValid('#form_new_policy_status');
+                if(valid) {
+                    var formserial = $('#form_new_policy_status').serialize();
+                    $.post('/policy_status/add_to_db_new_policy_status?', formserial, function(data){
+                        $.redirect('/policy_status/status');
+                        return false;
+                    });
+                };
+            });
+        """
+        return javascript
+
+    @expose()
+    def add_to_db_new_policy_status(self, *args, **kwargs):
+        print(kwargs)
+        usernow = request.identity.get('user', {})
+        date_set = kwargs.get('date_set', None)
+        if not date_set:
+            print("No date_set")
+            return ''
+        policy_status_type_id = kwargs['policy_status_type_id']
+        if not policy_status_type_id:
+            print("No policy_status_type_id")
+            return ''
+        reason = kwargs['reason']
+        if not reason:
+            print("No reason")
+            return ''
+
+        old_statuses = DBSession.query(PolicyStatus). \
+            filter(PolicyStatus.policy_id == POLICY_ID). \
+            filter(PolicyStatus.current_status == True). \
+            all()
+        for old in old_statuses:
+            old.current_status = False
+            DBSession.flush()
+
+        policy_status = PolicyStatus()
+        policy_status.policy_id = POLICY_ID
+        policy_status.policy_status_type_id = policy_status_type_id
+        policy_status.date_set = str_to_date(date_set)
+        policy_status.reason = reason
+        policy_status.current_status = True
+        policy_status.added_by = usernow.id
+
+        DBSession.add(policy_status)
+        DBSession.flush()
+        return ''

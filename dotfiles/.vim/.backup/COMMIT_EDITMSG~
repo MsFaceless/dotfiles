@@ -1,0 +1,22 @@
+
+# Please enter the commit message for your changes. Lines starting
+# with '#' will be ignored, and an empty message aborts the commit.
+#
+# On branch master
+# Your branch is up to date with 'origin/master'.
+#
+# Changes to be committed:
+#	deleted:    codezone/awsdeetz.txt
+#	deleted:    codezone/known_hosts
+#
+# Changes not staged for commit:
+#	modified:   .vim/bundle/Vundle.vim (modified content)
+#	modified:   .vim/bundle/YouCompleteMe (modified content)
+#	modified:   .vim/bundle/omnisharp-vim (modified content)
+#	modified:   .vim/bundle/tagbar (modified content)
+#	modified:   .vim/bundle/typescript-vim (modified content)
+#	modified:   .vim/bundle/ultisnips (modified content)
+#	modified:   .vim/bundle/vim-airline (modified content)
+#	modified:   .vim/bundle/vim-airline-themes (modified content)
+#	modified:   .vim/bundle/vim-snippets (modified content)
+#

@@ -1,0 +1,41 @@
+<!doctype html>
+<html>
+<head>
+    <title>Generic Title Here</title>
+    <style>
+        #scroll_container {
+            background: #e6e5e2;
+            width: 99vw;
+
+            /* needed for horizontal scroll */
+            overflow-x: auto;
+            white-space: nowrap;
+        }
+        .scroll_item {
+            background: pink;
+            width: 16%;
+            margin: 5px;
+            height: 35px;
+            text-align: center;
+
+            /* needed for horizontal scroll */
+            display: inline-block;
+        }
+    </style>
+</head>
+<body>
+    <div id='scroll_container'>
+        <div class='scroll_item'>Item 1</div>
+        <div class='scroll_item'>Item 2</div>
+        <div class='scroll_item'>Item 3</div>
+        <div class='scroll_item'>Item 4</div>
+        <div class='scroll_item'>Item 5</div>
+        <div class='scroll_item'>Item 6</div>
+        <div class='scroll_item'>Item 7</div>
+        <div class='scroll_item'>Item 8</div>
+        <div class='scroll_item'>Item 9</div>
+        <div class='scroll_item'>Item 10</div>
+    </div>
+</body>
+</html>
+

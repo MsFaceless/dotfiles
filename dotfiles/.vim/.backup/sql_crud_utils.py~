@@ -1,0 +1,449 @@
+# -*- coding: utf-8 -*-
+
+from rocket.model import DBSession
+from rocket.lib.type_utils import TypeDictionary as TD
+from rocket import model
+from sqlalchemy import types
+from dateutil import parser
+import datetime
+
+
+class Cruds:
+
+    def create_entry(self, **kwargs):
+        crud_builder = CRUDBuilder()
+        result = crud_builder \
+            .with_crud_type('create') \
+            .with_kwargs(kwargs=kwargs) \
+            .with_table_setup() \
+            .with_non_editable_keys(['id', 'added', 'active']) \
+            .with_check_types() \
+            .with_add_entry_to_database() \
+            .build_create_entry()
+        return result
+
+    def update_entry(self, **kwargs):
+        crud_builder = CRUDBuilder()
+        result = crud_builder \
+            .with_crud_type('update') \
+            .with_kwargs(kwargs=kwargs) \
+            .with_entry_id() \
+            .with_table_setup() \
+            .with_non_editable_keys(['id', 'added', 'active']) \
+            .with_check_types() \
+            .with_check_validity_of_update() \
+            .with_check_if_entry_exists() \
+            .with_update_entry_in_database() \
+            .build_update_entry()
+        return result
+
+    def check_exists_all(self, **kwargs):
+        crud_builder = CRUDBuilder()
+        result = crud_builder \
+            .with_kwargs(kwargs=kwargs) \
+            .with_table_setup() \
+            .build_check_exists_all()
+        return result
+
+    def delete_entry(self, **kwargs):
+        crud_builder = CRUDBuilder()
+        result = crud_builder \
+            .with_crud_type('delete') \
+            .with_kwargs(kwargs=kwargs) \
+            .with_entry_id() \
+            .with_table_setup() \
+            .with_check_if_entry_exists() \
+            .build_delete()
+        return result
+
+    def delete_list_of_entries(self, entities_list: list):
+        entries_deleted = 0
+        error_list = []
+        for entry in entities_list:
+            deletion = self.delete_entry(**entry)
+            if not deletion.get('success', None):
+                error_list.append(entry)
+                continue
+            entries_deleted += 1
+        if error_list:
+            return {'success': False, 'data': f'All entries deleted except for: {error_list}'}
+        return {'success': True, 'data': f'{entries_deleted} entries deleted'}
+
+    def create_related_entries(self, _entries_created=[], **kwargs):
+        """A method to write entries into multiple tables with parent-child relationships.
+
+                ..INPUT FORMAT::
+
+                Start the dictionary with the key '_children'. The value of '_children' is a
+                list of table dictionaries. One can embed child tables by adding the entry
+                '_children' into the table dictionaries and once more the value of '_children'
+                will be a list of table dictionaries.
+
+                NOTE: All child tables require a _parent_id column. The _parent_id value will be
+                the column name linking to the parent table name. The parent table does not
+                require a _parent_id
+                    e.g.
+                        '_parent_id': 'wallet_catalog_id'
+
+                ..INPUT FORMAT EXAMPLE::
+
+                {_children: [
+                    {'table_name': 'ParentTableName_1',
+                            .
+                     '_children': [
+                            {'table_name': 'TableName',
+                             '_parent_id': 'ParentTableName_1_id'
+                                    .
+                             '_children': [
+                                    .
+                                    ]
+                            },
+                            {'table_name': 'TableName',
+                             '_parent_id': 'ParentTableName_1_id'
+                                    .
+                             '_children': [
+                                    .
+                                    ]
+                            }
+                    },
+                    {'table_name': 'ParentTableName_2',
+                            .
+                     '_children': [
+                            {'table_name': 'TableName',
+                             '_parent_id': 'ParentTableName_2_id'
+                                    .
+                             '_children': [
+                                    .
+                                    ]
+                            },
+                            {'table_name': 'TableName',
+                             '_parent_id': 'ParentTableName_2_id'
+                                    .
+                             '_children': [
+                                    .
+                                    ]
+                            }
+                    }]
+                }
+                """
+        # next_tier_list = []
+        # if '_children' not in kwargs:
+        #     self.delete_list_of_entries(_entries_created)
+        #     return {'success': False, 'data': 'Missing _children key'}
+        # for i in kwargs['_children']:
+        #     parent_entry = self.create_entry(**i)
+        #     if not parent_entry.get('success', None):
+        #         self.delete_list_of_entries(_entries_created)
+        #         return parent_entry
+        #     added_by = i.get('added_by')
+        #     parent_id = parent_entry.get('data')
+        #     _entries_created.append({'table_name': i.get('table_name', None), 'id': parent_id})
+        #     if '_children' in i:
+        #         for y in i['_children']:
+        #             if '_parent_id' not in y:
+        #                 self.delete_list_of_entries(_entries_created)
+        #                 return {'success': False, 'data': 'Incorrect format, missing _parent_id'}
+        #             y.update({y['_parent_id']: parent_id, 'added_by': added_by})
+        #             y.pop('_parent_id', None)
+        #             next_tier_list.append(y)
+        # if next_tier_list:
+        #     kwargs = {'_children': next_tier_list}
+        #     return self.create_related_entries(_entries_created, **kwargs)
+        # return {'success': True, 'data': _entries_created}
+
+        _entries_created = []
+        while kwargs:
+            next_tier_list = []
+            if '_children' not in kwargs:
+                self.delete_list_of_entries(_entries_created)
+                return {'success': False, 'data': 'Missing _children key'}
+            for i in kwargs['_children']:
+                parent_entry = self.create_entry(**i)
+                if not parent_entry.get('success', None):
+                    self.delete_list_of_entries(_entries_created)
+                    return parent_entry
+                added_by = i.get('added_by')
+                parent_id = parent_entry.get('data')
+                _entries_created.append({'table_name': i.get('table_name', None), 'id': parent_id})
+                if '_children' in i:
+                    for y in i['_children']:
+                        if '_parent_id' not in y:
+                            self.delete_list_of_entries(_entries_created)
+                            return {'success': False, 'data': 'Incorrect format, missing _parent_id'}
+                        y.update({y['_parent_id']: parent_id, 'added_by': added_by})
+                        y.pop('_parent_id', None)
+                        next_tier_list.append(y)
+            if next_tier_list:
+                kwargs = {'_children': next_tier_list}
+            else:
+                break
+        return {'success': True, 'data': _entries_created}
+
+class DataBaseTableBuilder:
+
+    def __init__(self):
+        self.table_object = None
+        self.model_schema = {}
+
+    def with_table_object(self, table_name: str):
+        self.table_object = getattr(model, table_name, None)
+        return self
+
+    def with_model_schema(self, keys_to_remove=['id', 'added', 'active']):
+        if self.table_object:
+            self.model_schema = {
+                m.key: {'nullable': m.nullable, 'default': m.default, 'type': m.type} for  # TODO update types
+                m in self.table_object.__table__.columns if m.key not in keys_to_remove}
+        return self
+
+    def with_needed_entries(self):
+        if self.model_schema:
+            for i in self.model_schema:
+                if self.model_schema.get('nullable', None) or self.model_schema.get('default', None):
+                    self.model_schema[i].update({'needed': False})
+                else:
+                    self.model_schema[i].update({'needed': True})
+        return self
+
+    def build(self):
+        return {"table_object": self.table_object,
+                "model_schema": self.model_schema,
+                }
+
+
+class CRUDBuilder:
+
+    def __init__(self):
+        self.crud_type_id = ""
+        self.kwargs = {}
+        self.table_name = ""
+        self.result = {}
+        self.table_object = None
+        self.model_schema = {}
+        self.result = {}
+        self.entry_id = None
+        self.db_query = None
+
+    def with_crud_type(self, crud_type: str):
+        self.crud_type_id = TD().get_id_of_name('audit_type', crud_type)
+        if not self.crud_type_id:
+            self.result = {'success': False, 'data': f'Cannot find {crud_type} in audit_type'}
+        return self
+
+    def with_kwargs(self, kwargs):
+        if not self.result:
+            self.kwargs = kwargs
+        return self
+
+    def __get_table_name(self):
+        if not self.result:
+            self.table_name = self.kwargs.get('table_name', None)
+            if not self.table_name:
+                self.result = {'success': False, 'data': 'Missing table_name'}
+        return self
+
+    def with_entry_id(self):
+        if self.kwargs:
+            self.entry_id = self.kwargs.get('id', None)
+            if not self.entry_id:
+                self.result = {'success': False, 'data': 'Missing id field'}
+        return self
+
+    def with_table_setup(self):
+        self.__get_table_name()
+        if not self.result:
+            table_builder = DataBaseTableBuilder()
+            table_setup_dict = table_builder \
+                .with_table_object(table_name=self.table_name) \
+                .with_model_schema() \
+                .with_needed_entries() \
+                .build()
+            table_object = table_setup_dict.get('table_object', None)
+            model_schema = table_setup_dict.get('model_schema', None)
+            if not table_object:
+                self.result = {'success': False, 'data': f'could not find table {self.table_name} in database'}
+                return self
+            self.table_object = table_object
+            self.model_schema = model_schema
+        return self
+
+    def with_check_if_entry_exists(self):
+        if not self.result:
+            self.db_query = DBSession.query(self.table_object).get(self.entry_id)
+            if not self.db_query:
+                self.result = {'success': False, 'data': f'Entry {self.entry_id} does not exist'}
+            elif not self.db_query.active:
+                self.result = {'success': False, 'data': f'Entry {self.entry_id} does not exist'}
+        return self
+
+    def with_non_editable_keys(self, list_of_keys: list):
+        if not self.result:
+            for key in list_of_keys:
+                self.kwargs.pop(key, None)
+        return self
+
+    def with_check_types(self):  # TODO update to work with new type checker class
+        if not self.result:
+            type_comparator = TypeComparator()
+            type_dict = {key: {'sql_alchemy_type': value['type']} for key, value in
+                         self.model_schema.items()}
+            data_dict = {key: self.kwargs[key] for key in type_dict if key in self.kwargs}
+            for k, v in data_dict.items():
+                if not type_comparator.case(v, type_dict[k]['sql_alchemy_type']):
+                    self.result = {'success': False, 'data': f'{k} is of the wrong type'}
+                    return self
+        return self
+
+    def with_check_validity_of_update(self):
+        if not self.result:
+            for i in self.kwargs.keys():
+                if self.model_schema.get(i, None) and self.model_schema[i].get('needed', None) and self.kwargs[i] is None:
+                    self.result = {'success': False, 'data': f"cannot leave column {i} empty in table {self.table_name}"}
+                    return self
+        return self
+
+    def with_add_entry_to_database(self):
+        if not self.result:
+            dict_to_send = {k: v for k, v in self.kwargs.items() if k in self.model_schema.keys()}
+            try:
+                to_send = self.table_object(**dict_to_send)
+                DBSession.add(to_send)
+                DBSession.flush()
+                self.entry_id = to_send.id
+            except Exception as e:
+                print(e)
+                self.result = {'success': False, 'data': str(e)}
+        return self
+
+    def with_update_entry_in_database(self):
+        if not self.result:
+            dict_to_send = {k: v for k, v in self.kwargs.items() if k in self.model_schema.keys()}
+            try:
+                specific_entry = self.db_query
+                for key, value in dict_to_send.items():
+                    setattr(specific_entry, key, value)
+                DBSession.add(specific_entry)
+                DBSession.flush()
+            except Exception as e:
+                self.result = {'success': False, 'data': str(e)}
+        return self
+
+    def __make_audit(self):
+        if not self.result:
+            added_by = self.kwargs.get('added_by', None)
+            audit = model.Audit()
+            audit.table_name = self.table_name
+            audit.audit_type_id = self.crud_type_id
+            audit.primary_key = self.entry_id
+            audit.added_by = added_by
+            DBSession.add(audit)
+            DBSession.flush()
+
+    def build_check_exists_all(self):
+        if not self.result:
+            dict_to_send = {k: v for k, v in self.kwargs.items() if k in self.model_schema.keys()}
+            dict_to_send['active'] = True
+            db_query = DBSession.query(self.table_object).filter_by(**dict_to_send).first()
+            if db_query:
+                self.result = {'success': True, 'data': True}
+            else:
+                self.result = {'success': True, 'data': False}
+        return self.result
+
+    def build_delete(self):
+        if not self.result:
+            self.db_query.active = False
+            DBSession.add(self.db_query)
+            DBSession.flush()
+            self.result = {'success': True}
+            self.__make_audit()
+        return self.result
+
+    def build_create_entry(self):
+        if not self.result:
+            self.result = {'success': True, 'data': self.entry_id}
+            self.__make_audit()
+        return self.result
+
+    def build_update_entry(self):
+        if not self.result:
+            self.result = {'success': True, 'data': self.entry_id}
+            self.__make_audit()
+        return self.result
+
+
+class TypeComparator:  # TODO this class needs a major rewrite
+
+    # length_dict = {m.key: m.type.length for m in ClientBranchListRequest.__table__.columns if
+    #                m.type.python_type == str}
+    #
+    # @staticmethod
+    # def _check_type(value):
+    #     if isinstance(value, float):
+    #         if math.isnan(value):
+    #             return ""
+    #         else:
+    #             return str(int(value))
+    #     else:
+    #         return str(value)
+    #
+    # len(self._check_type(x)) > value)
+
+    """ Compares incoming data with their respective fields in the database.
+        Comparison is made on type and parameters such as length. The class
+        also takes into consideration whether incoming data can be cast into
+        the appropriate type."""
+
+    def case(self, incoming_data, sqla_type_object: types):
+        method_call = getattr(self, sqla_type_object.__visit_name__.lower(), lambda *args: 'Invalid')(incoming_data,
+                                                                                                      sqla_type_object)
+        return method_call
+
+    def numeric(self, incoming_data, sqla_type_object: types):
+        try:
+            float(incoming_data)
+            return True
+        except TypeError:
+            return False
+
+    def integer(self, incoming_data, sqla_type_object: types):
+        try:
+            int(incoming_data)
+            return True
+        except TypeError:
+            return False
+
+    def string(self, incoming_data, sqla_type_object: types):
+        string_length = sqla_type_object.length
+        if len(incoming_data) >= string_length:
+            return False
+        try:
+            str(incoming_data)
+            return True
+        except TypeError:
+            return False
+
+    def varchar(self, incoming_data, sqla_type_object: types):
+        return self.string(incoming_data, sqla_type_object)
+
+    def unicode(self, incoming_data, sqla_type_object: types):
+        return self.string(incoming_data, sqla_type_object)
+
+    def date(self, incoming_data, sqla_type_object: types):
+        try:
+            if isinstance(incoming_data, datetime.datetime):
+                return True
+            parser.parse(incoming_data)
+            return True
+        except TypeError:
+            return False
+
+    def datetime(self, incoming_data, sqla_type_object: types):
+        return self.date(incoming_data, sqla_type_object)
+
+    def boolean(self, incoming_data, sqla_type_object: types):
+        try:
+            bool(incoming_data)
+            return True
+        except TypeError:
+            return False

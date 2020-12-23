@@ -1,0 +1,511 @@
+# -*- coding: utf-8 -*-
+"""Policy Benefit Asset Property module"""
+
+import logging
+
+from tg import predicates, require, expose, request, redirect
+from tg.i18n import ugettext as _
+from tg.i18n import lazy_ugettext as l_
+
+from rocket.model import *
+
+from rocket.lib.tg_utils import *
+from rocket.lib.base import BaseController
+from rocket.lib.type_utils import TypeDictionary
+
+from rocket.controllers.common import CommonController
+from rocket.controllers.product import ProductController
+
+from sqlalchemy import func, desc, asc, or_
+
+LOGGER = logging.getLogger(__name__)
+
+TYPEUTIL = TypeDictionary()
+COMMON = CommonController()
+DBQUERY_LIMIT = 15
+
+POLICY_BENEFIT_INSURED_ASSET_ID = 2
+
+
+class PolicyBenefitAssetPropertyController(BaseController):
+
+    @require(predicates.not_anonymous())
+    @expose('rocket.templates.generic')
+    def index(self, *args, **kwargs):
+        html = self.get_policy_benefit_asset_property_html()
+        javascript = self.get_javascript_policy_benefit_asset_property_onload()
+        title = _("Policy Benefit Asset Property")
+        return dict(title=title, html=html, javascript=javascript)
+
+    @expose()
+    def get_policy_benefit_asset_property_html(self, *args, **kwargs):
+        outputlist = []
+        dbase_query = DBSession.query(PolicyBenefitInsuredAssetProperty). \
+            filter(PolicyBenefitInsuredAssetProperty.active == True). \
+            filter(PolicyBenefitInsuredAssetProperty.policy_benefit_insured_asset_id == POLICY_BENEFIT_INSURED_ASSET_ID). \
+            order_by(PolicyBenefitInsuredAssetProperty.added.desc()). \
+            limit(DBQUERY_LIMIT)
+
+        for item in dbase_query:
+            # Get Property Address
+            property_address = item.property_address
+
+            # Get Property Description
+            property_description = item.description
+
+            # Get Property Turnover
+            property_turnover = item.turnover
+
+            # Get Property Rate Table Line Item Id
+            rate_table_line_item_id = item.rate_table_line_item_property_id
+
+            # Get Policy Benefit Insured Asset Property Id
+            policy_benefit_insured_asset_property_id = item.id
+
+            outputlist.append({
+                'property_address': f"<div class='edit asset_property_edit' policy_benefit_insured_asset_property_id='{policy_benefit_insured_asset_property_id}' rate_table_line_item_id='{rate_table_line_item_id}' property_turnover='{property_turnover}' property_description='{property_description}' property_address='{property_address}'>{property_address}</div>",
+                'property_description': property_description[:30],
+                'property_turnover': '{turnover:0.2f}'.format(turnover=float(property_turnover)),
+                'deactivate': f"<div class='policy_benefit_asset_property_deactivate' policy_benefit_insured_asset_property_id='{policy_benefit_insured_asset_property_id}'>Deactivate</div>"
+            })
+        dbcolumnlist = [
+            'property_address',
+            'property_description',
+            'property_turnover',
+            'deactivate',
+        ]
+        theadlist = [
+            'Address',
+            'Description',
+            'Turnover',
+            '',
+        ]
+        tdclasslist = [
+            'action_link',
+            '',
+            '',
+            'action_link text-right',
+        ]
+        htmltable = build_html_table(outputlist, dbcolumnlist, theadlist, "policy_benefit_asset_property_table",
+                                     tdclasslist)
+        html = f"""
+                    <div class="row">
+                        <div class="col-md-12">
+                            <div class="card">
+                                <div class="card-header">
+                                    <div class="row d-flex">
+                                        <div class="col-md-6">
+                                             <h4 class="card-title">{_('Policy Benefit Asset Property')}</h4>
+                                        </div>
+                                        <div class="col-md-6 text-right">
+                                            <button id="create_new_policy_benefit_asset_property" class="btn btn-primary policy_benefit_insured_asset_id='{POLICY_BENEFIT_INSURED_ASSET_ID}' ml-auto">Create New Policy Benefit Asset Property</button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="card-body">
+                                    <div id='div_policy_benefit_asset_property_table' class="table-responsive">
+                                        {htmltable}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                """
+        return html
+
+    @expose()
+    def get_javascript_policy_benefit_asset_property_onload(self, *args, **kwargs):
+        javascript = """
+                $("#create_new_policy_benefit_asset_property").click(function(){
+                    var policy_benefit_insured_asset_id = $(this).attr('policy_benefit_insured_asset_id');
+                    var kwargs = {'policy_benefit_insured_asset_id' : policy_benefit_insured_asset_id};
+                    $.redirect('/policy_benefit_asset_property/new', kwargs);
+                });
+                $('.policy_benefit_asset_property_deactivate').click(function() {
+                    var policy_benefit_insured_asset_property_id = $(this).attr('policy_benefit_insured_asset_property_id');
+                    var kwargs = {'policy_benefit_insured_asset_property_id': policy_benefit_insured_asset_property_id};
+                    $.post('/policy_benefit_asset_property/deactivate_policy_benefit_asset_property?', kwargs, function(data) {
+                        $.redirect('/policy_benefit_asset_property/index');
+                        return false;
+                    });
+                    return false;
+                });
+                $('.asset_property_edit').click(function() {
+                    var policy_benefit_insured_asset_property_id = $(this).attr('policy_benefit_insured_asset_property_id');
+                    var property_turnover = $(this).attr('property_turnover');
+                    var property_description = $(this).attr('property_description');
+                    var rate_table_line_item_id = $(this).attr('rate_table_line_item_id');
+                    var property_address = $(this).attr('property_address');
+                    var kwargs = {'policy_benefit_insured_asset_property_id': policy_benefit_insured_asset_property_id,
+                        'property_turnover': property_turnover,
+                        'property_description': property_description,
+                        'rate_table_line_item_id': rate_table_line_item_id,
+                        'property_address': property_address,
+                    };
+                    $.redirect('/policy_benefit_asset_property/edit', kwargs);
+                });
+                """
+        return javascript
+
+    @expose()
+    def deactivate_policy_benefit_asset_property(self, *args, **kwargs):
+        policy_benefit_insured_asset_property_id = kwargs.get('policy_benefit_insured_asset_property_id', None)
+        if not policy_benefit_insured_asset_property_id:
+            print("Could not find policy_benefit_insured_asset_property_id to deactivate")
+            return ''
+        policy_benefit_insured_asset_property = PolicyBenefitInsuredAssetProperty.by_id(
+            policy_benefit_insured_asset_property_id)
+        if not policy_benefit_insured_asset_property:
+            print("Could not find active policy_benefit_insured_asset")
+            return ''
+
+        policy_benefit_insured_asset_property.active = False
+        DBSession.add(policy_benefit_insured_asset_property)
+        DBSession.flush()
+        return ''
+
+###############################################################################
+# Policy Benefit Asset Property - Edit
+###############################################################################
+
+    @require(predicates.not_anonymous())
+    @expose('rocket.templates.generic')
+    def edit(self, *args, **kwargs):
+        html = self.get_edit_policy_benefit_asset_property_html(**kwargs)
+        javascript = self.get_edit_policy_benefit_asset_property_javascript_onload()
+        title = _("Edit Policy Benefit Asset Property")
+        return dict(title=title, html=html, javascript=javascript)
+
+    def get_edit_policy_benefit_asset_property_html(self, *args, **kwargs):
+        print(kwargs)
+        rate_table_line_item_id = kwargs.get('rate_table_line_item_id', None)
+        if not rate_table_line_item_id:
+            print("no rate_table_line_item_id")
+            return ''
+        rate_table_line_item_selectbox = self.rate_table_line_item_selectbox(**kwargs)
+        policy_benefit_insured_asset_property_id = kwargs.get('policy_benefit_insured_asset_property_id', None)
+        if not policy_benefit_insured_asset_property_id:
+            print("no policy_benefit_insured_asset_property_id")
+            return ''
+        property_turnover = kwargs.get('property_turnover', None)
+        if not property_turnover:
+            print("no property_turnover")
+            return ''
+        property_address = kwargs.get('property_address', None)
+        if not property_address:
+            print("no property_address")
+            return ''
+        property_description = kwargs.get('property_description', None)
+        if not property_description:
+            print("no property_description")
+            return ''
+        html = f"""
+                <div class="row">
+                    <div class="col-md-12">
+                        <div class="card">
+                            <div class="card-header">
+                                <div class="row d-flex">
+                                    <div class="col-md-6">
+                                         <h4 class="card-title">{_('Edit Policy Benefit Asset Property')}</h4>
+                                    </div>
+                                    <div class="col-md-6 text-right">
+                                        <button id="save_edit_policy_benefit_asset_property" class="btn btn-primary" policy_benefit_insured_asset_property_id='{policy_benefit_insured_asset_property_id}' ml-auto">Save Edit Policy Benefit Asset Property</button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="card-body">
+                                <form id="form_edit_policy_benefit_asset_property">
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <div class="form-group row">
+                                                <label class="col-md-3 col-form-label" required>{_('Turnover')}</label>
+                                                <div class="col-md-9">
+                                                    <input id="property_turnover" type="text" name="property_turnover" class="form-control" required='true' value='{property_turnover}'>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="form-group row" id=div_rate_table_line_item>
+                                                <label class="col-md-3 col-form-label" required>{_('Rate Table Line Item')}</label>
+                                                <div class="col-md-9">
+                                                    {rate_table_line_item_selectbox}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <div class="form-group row">
+                                                <label class="col-md-3 col-form-label" required>{_('Address')}</label>
+                                                <div class="col-md-9">
+                                                    <textarea required="true" name='property_address' type="text" class="form-control" rows="3" maxlength='250'>{property_address}</textarea>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="form-group row">
+                                                <label class="col-md-3 col-form-label" required>{_('Description')}</label>
+                                                <div class="col-md-9">
+                                                    <textarea required="true" name='property_description' type="text" class="form-control" rows="3" maxlength='250'>{property_description}</textarea>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            """
+        return html
+
+    def get_edit_policy_benefit_asset_property_javascript_onload(self, *args, **kwargs):
+        javascript = """
+            setFormValidation('#form_edit_policy_benefit_asset_property');
+            
+            $('input#property_turnover').change(function() {
+                var property_turnover = $(this).val();
+                var kwargs = {'property_turnover': property_turnover};
+                $('#div_rate_table_line_item').load('/policy_benefit_asset_property/get_edit_rate_table_div?', kwargs, function(data) {
+                    return false;
+                });
+                return false;
+            });
+            
+            $('#save_edit_policy_benefit_asset_property').click(function(){
+                var policy_benefit_insured_asset_property_id = $(this).attr('policy_benefit_insured_asset_property_id');
+                
+                var valid = FormIsValid('#form_edit_policy_benefit_asset_property');
+                if(valid) {
+                    var formserial = $('#form_edit_policy_benefit_asset_property').serialize();
+                    formserial += '&policy_benefit_insured_asset_property_id='+policy_benefit_insured_asset_property_id;
+                    $.post('/policy_benefit_asset_property/add_to_db_edit_policy_benefit_asset_property?', formserial, function(data){
+                        $.redirect('/policy_benefit_asset_property/index');
+                        return false;
+                    });
+                };
+            });
+            
+        """
+        return javascript
+
+    @expose()
+    def get_edit_rate_table_div(self, *args, **kwargs):
+        rate_table_line_item_selectbox = self.rate_table_line_item_selectbox(**kwargs)
+        html = f"""
+            <label class="col-md-3 col-form-label" required>{_('Rate Table Line Item')}</label>
+            <div class="col-md-9">
+                {rate_table_line_item_selectbox}
+            </div>
+        """
+        return html
+
+    @expose()
+    def add_to_db_edit_policy_benefit_asset_property(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+
+        policy_benefit_insured_asset_property_id = kwargs.get('policy_benefit_insured_asset_property_id', None)
+        if not policy_benefit_insured_asset_property_id:
+            print("no policy_benefit_insured_asset_property_id")
+            return ''
+        property_turnover = kwargs.get('property_turnover', None)
+        if not property_turnover:
+            print("no property_turnover")
+            return ''
+        property_address = kwargs.get('property_address', None)
+        if not property_address:
+            print("no property_address")
+            return ''
+        property_description = kwargs.get('property_description', None)
+        if not property_description:
+            print("no property_description")
+            return ''
+        rate_table_line_item_id = kwargs.get('rate_table_line_item_id', None)
+        if not rate_table_line_item_id:
+            print("no rate_table_line_item_id")
+            return ''
+
+        policy_benefit_insured_asset_property = PolicyBenefitInsuredAssetProperty.by_id(policy_benefit_insured_asset_property_id)
+        policy_benefit_insured_asset_property.rate_table_line_item_property_id = rate_table_line_item_id
+        policy_benefit_insured_asset_property.turnover = property_turnover
+        policy_benefit_insured_asset_property.description = property_description
+        policy_benefit_insured_asset_property.property_address = property_address
+        policy_benefit_insured_asset_property.added_by = usernow.id
+
+        DBSession.add(policy_benefit_insured_asset_property)
+        DBSession.flush()
+        return ''
+
+###############################################################################
+# Policy Benefit Asset Vehicle - New
+###############################################################################
+
+    @require(predicates.not_anonymous())
+    @expose('rocket.templates.generic')
+    def new(self, *args, **kwargs):
+        html = self.get_new_policy_benefit_asset_property_html(**kwargs)
+        javascript = self.get_new_policy_benefit_asset_property_javascript_onload()
+        title = _("New Policy Benefit Asset Vehicle")
+        return dict(title=title, html=html, javascript=javascript)
+
+    def get_new_policy_benefit_asset_property_html(self, *args, **kwargs):
+        rate_table_line_item_selectbox = self.rate_table_line_item_selectbox()
+        html = f"""
+                <div class="row">
+                    <div class="col-md-12">
+                        <div class="card">
+                            <div class="card-header">
+                                <div class="row d-flex">
+                                    <div class="col-md-6">
+                                         <h4 class="card-title">{_('New Policy Benefit Asset Property')}</h4>
+                                    </div>
+                                    <div class="col-md-6 text-right">
+                                        <button id="save_new_policy_benefit_asset_property" class="btn btn-primary policy_benefit_insured_asset_id='{POLICY_BENEFIT_INSURED_ASSET_ID}' ml-auto">Save New Policy Benefit Asset Property</button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="card-body">
+                                <form id="form_new_policy_benefit_asset_property">
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <div class="form-group row">
+                                                <label class="col-md-3 col-form-label" required>{_('Turnover')}</label>
+                                                <div class="col-md-9">
+                                                    <input id="property_turnover" type="text" name="property_turnover" class="form-control" required='true'>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="form-group row" id=div_rate_table_line_item>
+                                                <label class="col-md-3 col-form-label" required>{_('Rate Table Line Item')}</label>
+                                                <div class="col-md-9">
+                                                    {rate_table_line_item_selectbox}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <div class="form-group row">
+                                                <label class="col-md-3 col-form-label" required>{_('Address')}</label>
+                                                <div class="col-md-9">
+                                                    <textarea required="true" name='property_address' type="text" class="form-control" rows="3" maxlength='250'></textarea>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="form-group row">
+                                                <label class="col-md-3 col-form-label" required>{_('Description')}</label>
+                                                <div class="col-md-9">
+                                                    <textarea required="true" name='property_description' type="text" class="form-control" rows="3" maxlength='250'></textarea>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            """
+        return html
+
+    @expose()
+    def get_new_policy_benefit_asset_property_javascript_onload(self, *args, **kwargs):
+        javascript = """
+            setFormValidation('#form_new_policy_benefit_asset_property');
+            
+            $('input#property_turnover').change(function() {
+                var property_turnover = $(this).val();
+                var kwargs = {'property_turnover': property_turnover};
+                $('#div_rate_table_line_item').load('/policy_benefit_asset_property/get_edit_rate_table_div?', kwargs, function(data) {
+                    return false;
+                });
+                return false;
+            });
+            
+            $('#save_new_policy_benefit_asset_property').click(function(){
+                var valid = FormIsValid('#form_new_policy_benefit_asset_property');
+                if(valid) {
+                    var formserial = $('#form_new_policy_benefit_asset_property').serialize();
+                    $.post('/policy_benefit_asset_property/add_to_db_new_policy_benefit_asset_property?', formserial, function(data){
+                        $.redirect('/policy_benefit_asset_property/index');
+                        return false;
+                    });
+                };
+            });
+        """
+        return javascript
+
+    def rate_table_line_item_selectbox(self, *args, **kwargs):
+        """Note that the rate table is determined by the selected product benefit"""
+        selected = kwargs.get('rate_table_line_item_id', None)
+        if selected:
+            kwargs['selected'] = int(selected)
+
+        property_turnover = kwargs.get('property_turnover', 0)
+
+        policy_benefit_insured_asset = PolicyBenefitInsuredAsset.by_id(POLICY_BENEFIT_INSURED_ASSET_ID)
+        policy_benefit_id = policy_benefit_insured_asset.policy_benefit_id
+        policy_benefit = PolicyBenefit.by_id(policy_benefit_id)
+        product_benefit_id = policy_benefit.product_benefit_id
+        benefit_rate_table = BenefitRateTable.by_attr_first('benefit_id', product_benefit_id)
+        rate_table_id = benefit_rate_table.rate_table_id
+
+        rate_table_line_items = DBSession.query(RateTableLineItemTurnover). \
+            filter(RateTableLineItemTurnover.active == True). \
+            filter(RateTableLineItemTurnover.rate_table_id == rate_table_id). \
+            filter(RateTableLineItemTurnover.minimum_turnover <= float(property_turnover)). \
+            filter(RateTableLineItemTurnover.maximum_turnover >= float(property_turnover)). \
+            all()
+
+        outputdict = {}
+        for item in rate_table_line_items:
+            dropdown_text = "Amount: R {amount:0.2f}, Sum Insured: R {sum_insured:0.2f}".format(amount=item.amount, sum_insured=item.sum_insured)
+            outputdict.update({item.id: dropdown_text})
+
+        kwargs['required'] = True
+        kwargs['outputdict'] = outputdict
+        kwargs['id'] = 'rate_table_line_item_id'
+        return create_selectbox_html(**kwargs)
+
+    @expose()
+    def add_to_db_new_policy_benefit_asset_property(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+
+        property_turnover = kwargs.get('property_turnover', None)
+        if not property_turnover:
+            print("no property_turnover")
+            return ''
+        rate_table_line_item_id = kwargs.get('rate_table_line_item_id', None)
+        if not rate_table_line_item_id:
+            print("no rate_table_line_item_id")
+            return ''
+        property_address = kwargs.get('property_address', None)
+        if not property_address:
+            print("no property_address")
+            return ''
+        property_description = kwargs.get('property_description', None)
+        if not property_description:
+            print("no property_description")
+            return ''
+
+        old_policy_benefit_insured_asset_property = DBSession.query(PolicyBenefitInsuredAssetProperty). \
+            filter(PolicyBenefitInsuredAssetProperty.policy_benefit_insured_asset_id == POLICY_BENEFIT_INSURED_ASSET_ID). \
+            filter(PolicyBenefitInsuredAssetProperty.active == True). \
+            all()
+        for old in old_policy_benefit_insured_asset_property:
+            old.active = False
+            DBSession.flush()
+
+        policy_benefit_insured_asset_property = PolicyBenefitInsuredAssetProperty()
+        policy_benefit_insured_asset_property.policy_benefit_insured_asset_id = POLICY_BENEFIT_INSURED_ASSET_ID
+        policy_benefit_insured_asset_property.turnover = property_turnover
+        policy_benefit_insured_asset_property.rate_table_line_item_property_id = rate_table_line_item_id
+        policy_benefit_insured_asset_property.property_address = property_address
+        policy_benefit_insured_asset_property.description = property_description
+        policy_benefit_insured_asset_property.added_by = usernow.id
+
+        DBSession.add(policy_benefit_insured_asset_property)
+        DBSession.flush()
+        return ''

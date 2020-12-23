@@ -1,0 +1,8 @@
+#!/bin/sh
+mysqldump \
+rocketdb \
+-udeveloper \
+-pdeveloppass \
+-N \
+-e 'show tables like "audit\_%"' \
+> rocketdb_data_only.sql \

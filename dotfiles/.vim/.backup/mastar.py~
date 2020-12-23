@@ -1,0 +1,89 @@
+import requests
+from datetime import datetime, date, time, timedelta
+import csv
+import os
+import pickle
+import json
+import numpy as np
+import cv2
+import shutil
+#from cv2 import dnn_superres
+from lib import betterparse as bp
+
+datetimeformatstring = "%Y%m%d%H%M%S"
+timeformatstring = "%H%M%S"
+dateformatstring = "%Y%m%d"
+curdir = os.path.abspath(os.path.curdir)
+input_dir = os.path.abspath(os.path.join(curdir, "input_data"))
+output_dir = os.path.abspath(os.path.join(curdir, "output_data"))
+
+def parse_data():
+    daysdict = bp.parse_directory_filenames_to_daysdict(target_dir=input_dir)
+    day_device_dict = bp.parse_daysdict_to_day_device_dict(daysdict=daysdict)
+    day_device_sequence_dict = {day:{device_id :{} for device_id in device_dict.keys()} for day, device_dict in day_device_dict.items()}
+
+    for day, device_dict in day_device_dict.items():
+
+        for device_id, record_list in device_dict.items():
+            sequence_dict = bp.parse_day_device_dict_to_day_device_sequence_dict(day=day, device_id=device_id, record_list=record_list)
+            day_device_sequence_dict[day][device_id]= sequence_dict
+    return day_device_sequence_dict
+
+def dump_day_device_sequence_dict(day_device_sequence_dict=None):
+    if not day_device_sequence_dict: return False
+    #print(day_device_sequence_dict)
+    #print(day_device_sequence_dict)
+    if os.path.exists(output_dir): shutil.rmtree(output_dir)
+    if not os.path.exists(output_dir): os.mkdir(output_dir)
+    for day, device_dict in day_device_sequence_dict.items():
+        day_dir = os.path.join(output_dir, day)
+        if not os.path.exists(day_dir): os.mkdir(day_dir)
+        print(f"Day: {day}")
+        for device_id, channel_dict in device_dict.items():
+            device_dir = os.path.join(day_dir, str(device_id))
+            if not os.path.exists(device_dir): os.mkdir(device_dir)
+            print(f"Device ID: {device_id}")
+            for sequence_id, sequence in channel_dict.items():
+                sequence_dir = os.path.join(device_dir, str(sequence_id))
+                if not os.path.exists(sequence_dir): os.mkdir(sequence_dir)
+                print(f"Sequence ID: {sequence_id}")
+                sequence_files = []
+
+                start_record = sequence.get('start')
+                start_filename = start_record.get('filename')
+                og_start_filename = os.path.join(input_dir, start_filename)
+
+                op_start_filename_string = f"{start_record.get('timestamp_string')}_{start_record.get('channel')}.jpg" 
+                op_start_filename = os.path.join(sequence_dir, op_start_filename_string)
+                sequence_files.append({'input':og_start_filename, 'output':op_start_filename})
+
+                sequence_records = sequence.get('records')
+                for frame_id in sequence_records.keys():
+                    record = sequence_records.get(frame_id)
+                    og_filename = os.path.join(input_dir, record.get('filename'))
+                    record_filename = f"{record.get('timestamp_string')}_{record.get('channel')}.jpg" 
+                    output_filename = os.path.join(sequence_dir, record_filename)
+                    sequence_files.append({'input':og_filename, 'output':output_filename})
+
+                end_record = sequence.get('end')
+                end_filename = end_record.get('filename')
+                og_end_filename = os.path.join(input_dir, end_filename)
+
+                op_end_filename_string = f"{end_record.get('timestamp_string')}_{end_record.get('channel')}.jpg" 
+                op_end_filename = os.path.join(sequence_dir, op_end_filename_string)
+                sequence_files.append({'input':og_end_filename, 'output':op_end_filename})
+                for filename_dict in sequence_files:
+                    og_filename = filename_dict.get('input')
+                    op_filename = filename_dict.get('output')
+                    print("Infile")
+                    print(og_filename)
+                    print("Outfile")
+                    print(op_filename)
+                    with open(og_filename, "rb") as og:
+                        with open(op_filename, "wb") as op: op.write(og.read())
+
+    return True
+
+if __name__ == "__main__":
+    day_device_sequence_dict = parse_data()
+    dump_day_device_sequence_dict(day_device_sequence_dict)

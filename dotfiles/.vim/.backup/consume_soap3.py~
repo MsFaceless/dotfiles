@@ -1,0 +1,79 @@
+#!/bin/python
+
+from zeep import Client
+from datetime import datetime
+import random
+import xlwt
+
+book = xlwt.Workbook(encoding='utf-8')
+sheet = book.add_sheet('Sheet 1')
+sheet.write(0, 0, 'Start Time') # column, row, text
+sheet.write(0, 1, 'End Time')
+sheet.write(0, 2, 'Duration')
+sheet.write(0, 3, 'Success')
+sheet.write(0, 4, 'Service Name')
+
+GroupId = 2
+TenantId = 24
+TestMSISDN = 26876061459
+OtherMSISDN = 26876052182
+MSList = [str(TestMSISDN), str(OtherMSISDN)]
+url = 'http://secure.omvim.com/DotVIMIntegration/MemberService.asmx?wsdl'
+
+for i in xrange(4000):
+
+    start = datetime.now()
+    MSISDN = random.choice(MSList)
+    client = Client(url)
+
+    # Print available
+    # print(dir(client.service))
+
+    choice = random.choice(MSList)
+    if i < 1000:
+        service_name = 'CheckMember'
+        result = client.service.CheckMember({
+                'TenantId' : TenantId,
+                'MSISDN' : MSISDN,
+            })
+
+    elif i >= 2000 and i < 3000:
+        service_name = 'GetMember'
+        result = client.service.GetMember({
+                'TenantId' : int(TenantId),
+                'MSISDN' : choice,
+            })
+
+    elif i >= 3000 and i < 4000:
+        service_name = 'GetTransactions'
+        result = client.service.GetTransactions({
+                'TenantId' : TenantId,
+                'MSISDN' : MSISDN,
+                'GroupID' : GroupId,
+            })
+
+    else:
+        service_name = 'CheckBeneficiary'
+        result = client.service.CheckBeneficiary({
+                'TenantId' : TenantId,
+                'MSISDN' : MSISDN,
+                'GroupID' : GroupId,
+            })
+
+    end = datetime.now()
+
+    strstart = start.strftime('%d/%m/%Y %H:%m:%s')
+    strend = end.strftime('%d/%m/%Y %H:%m:%s')
+    strduration = (end-start).total_seconds()
+    #strresult = result.Success
+    strresult = ''
+
+    sheet.write(i+2, 0, strstart)
+    sheet.write(i+2, 1, strend)
+    sheet.write(i+2, 2, strduration)
+    sheet.write(i+2, 3, strresult)
+    sheet.write(i+2, 4, service_name)
+    if i % 10 == 0: print(i, service_name, strduration)
+
+book.save('MemberServiceResults.xls')
+print('Done')

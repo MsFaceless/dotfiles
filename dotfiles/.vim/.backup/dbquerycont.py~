@@ -1,0 +1,1521 @@
+# -*- coding: utf-8 -*-
+"""JistConsolesAdministrationController controller module"""
+
+import os
+import json
+import random
+from hashlib import sha1
+from datetime import datetime
+from tg import expose, redirect, validate, flash, url, request, response
+from pkg_resources import resource_filename
+
+from hardware_catalogue.lib.base import BaseController
+from hardware_catalogue.lib.jist_utils import dbsafe
+from hardware_catalogue.lib.jistfileuploader import JistFileUploader
+from hardware_catalogue.model import DBSession
+from hardware_catalogue.model import DBS_JistEstimating
+from hardware_catalogue.model import User, Group
+from hardware_catalogue.model import DMSMetaData, DMSCabinets, DMSDrawers, DMSCabinets_UserGroup_Link, DMSDrawers_UserGroup_Link  
+from hardware_catalogue.model import JistBusinessList, JistBusinessInformationHeaders, JistBusinessInformationValues
+from hardware_catalogue.model import EstClientList, EstClientContacts, EstClientSites
+from hardware_catalogue.model import EstGenericBills, EstGenericBillItems, EstGenericBillItemWorkings
+
+from sqlalchemy import func, desc, asc
+
+FILENAME = os.path.abspath(resource_filename('hardware_catalogue', 'public'))
+PUBLIC_DIRNAME = os.path.join(FILENAME)
+DMS_DIRNAME = os.path.join(PUBLIC_DIRNAME, 'dms')
+PDF_DIRNAME = os.path.join(PUBLIC_DIRNAME, 'pdf')
+IMAGES_DIRNAME = os.path.join(PUBLIC_DIRNAME, 'images')
+STAFFPIC_DIRNAME = os.path.join(IMAGES_DIRNAME, 'staff_pictures')
+BUSINESSLOGO_DIRNAME = os.path.join(IMAGES_DIRNAME, 'business_logos')
+
+__all__ = ['DatabaseQueryController']
+
+
+class DatabaseQueryController(BaseController):
+
+###############################################################################
+# DMS 
+###############################################################################
+
+    @expose()
+    def get_tbldms_cabinets_active_all(self, *args, **kwargs):
+        return DBSession.query(DMSCabinets). \
+                filter(DMSCabinets.active==1). \
+                order_by(asc(DMSCabinets.id)).all()
+
+    @expose()
+    def get_tbldms_cabinet_by_cabinet_id(self, *args, **kwargs):
+        return DBSession.query(DMSCabinets). \
+                filter(DMSCabinets.id==kwargs.get('cabinet_id',None)). \
+                first()
+
+    @expose()
+    def get_tbldms_drawers_by_cabinet_id(self, *args, **kwargs):
+        return DBSession.query(DMSDrawers). \
+                filter(DMSDrawers.cabinet_id==kwargs.get('cabinet_id',None)). \
+                filter(DMSDrawers.active==1). \
+                order_by(asc(DMSDrawers.id)). \
+                all()
+
+    @expose()
+    def get_tbldms_drawer_by_drawer_id(self, *args, **kwargs):
+        return DBSession.query(DMSDrawers). \
+                filter(DMSDrawers.id==kwargs.get('drawer_id',None)). \
+                first()
+
+    @expose()
+    def set_user_drawer(self, *args, **kwargs):
+        usernow = request.identity['user']
+        users_all = self.get_active_user_list()
+        user = self.get_user_by_id(**{'user_id':usernow.user_id})
+        userpermissions = user.permissions
+        usergroups = user.groups
+        admin_logged = False
+        adminmanager_logged = False
+        for permis in usergroups:
+            if permis.group_name=='dms_manager':
+                adminmanager_logged = True
+        if not adminmanager_logged: return "Only for People with Admin Manage Rights"
+        for user in users_all:
+            try:
+                drawer_one = DBSession.query(DMSDrawers). \
+                        filter(DMSDrawers.drawer_name==user.user_name).one()
+            except:
+                drawer = DMSDrawers()
+                drawer.drawer_name = user.user_name
+                drawer.cabinet_id = 1
+                drawer.useridnew = usernow.user_id
+                drawer.active = 1
+                drawer.businessid = usernow.businessid
+                DBSession.add(drawer)
+                DBSession.flush()
+                self.link_cabinet_to_jistuser(**{'cabinet_id':1,'user_id':user.user_id})
+                self.link_drawer_to_jistuser(**{'drawer_id':drawer.id,'user_id':user.user_id})
+
+    @expose()
+    def link_cabinet_to_jistuser(self, *args, **kwargs):
+        cabinet_id = kwargs['cabinet_id']
+        user_id = kwargs['user_id']
+        try:
+            fleetone = DBSession.query(DMSCabinets_UserGroup_Link). \
+                    filter(DMSCabinets_UserGroup_Link.cabinet_id==cabinet_id). \
+                    filter(DMSCabinets_UserGroup_Link.user_id==user_id). \
+                    one()
+            return
+        except:
+            pass
+        usernow = request.identity['user']
+        newlink = DMSCabinets_UserGroup_Link()
+        newlink.cabinet_id = kwargs['cabinet_id']
+        newlink.user_id = kwargs['user_id']
+        newlink.useridnew = usernow.user_id
+        newlink.businessid = usernow.businessid
+        DBSession.add(newlink)
+        DBSession.flush()
+
+    @expose()
+    def unlink_cabinet_to_jistuser(self, *args, **kwargs):
+        cabinet_id = kwargs['cabinet_id']
+        user_id = kwargs['user_id']
+        fleetone = DBSession.query(DMSCabinets_UserGroup_Link). \
+                filter(DMSCabinets_UserGroup_Link.cabinet_id==cabinet_id). \
+                filter(DMSCabinets_UserGroup_Link.user_id==user_id). \
+                one()
+        DBSession.delete(fleetone)
+        DBSession.flush()
+
+    @expose()
+    def link_drawer_to_jistuser(self, *args, **kwargs):
+        drawer_id = kwargs['drawer_id']
+        user_id = kwargs['user_id']
+        try:
+            fleetone = DBSession.query(DMSDrawers_UserGroup_Link). \
+                    filter(DMSDrawers_UserGroup_Link.drawer_id==drawer_id). \
+                    filter(DMSDrawers_UserGroup_Link.user_id==user_id). \
+                    one()
+            return
+        except:
+            pass
+        usernow = request.identity['user']
+        newlink = DMSDrawers_UserGroup_Link()
+        newlink.drawer_id = kwargs['drawer_id']
+        newlink.user_id = kwargs['user_id']
+        newlink.useridnew = usernow.user_id
+        newlink.businessid = usernow.businessid
+        DBSession.add(newlink)
+        DBSession.flush()
+
+    @expose()
+    def unlink_drawer_to_jistuser(self, *args, **kwargs):
+        drawer_id = kwargs['drawer_id']
+        user_id = kwargs['user_id']
+        drawerone = DBSession.query(DMSDrawers_UserGroup_Link). \
+                filter(DMSDrawers_UserGroup_Link.drawer_id==drawer_id). \
+                filter(DMSDrawers_UserGroup_Link.user_id==user_id). \
+                one()
+        DBSession.delete(drawerone)
+        DBSession.flush()
+
+    @expose()
+    def set_users_to_cabinets_drawers(self, *args, **kwargs):
+        usernow = request.identity['user']
+        user = self.get_user_by_id(**{'user_id':usernow.user_id})
+
+        adminmanager_logged = False
+        for permis in user.groups:
+            if permis.group_name=='dms_manager':
+                adminmanager_logged = True
+        if not adminmanager_logged: return "Only for People with Admin Manage Rights"
+
+        dmsaccess_group = DBSession.query(Group).filter(Group.group_name=='dms_access').one()
+        cabinets = DBSession.query(DMSCabinets).all()
+        drawers = DBSession.query(DMSDrawers).all()
+
+        for user in dmsaccess_group.users:
+            for cab in cabinets:
+                try:
+                    exists = DBSession.query(DMSCabinets_UserGroup_Link). \
+                            filter(DMSCabinets_UserGroup_Link.cabinet_id==cab.id). \
+                            filter(DMSCabinets_UserGroup_Link.user_id==user.user_id). \
+                            one()
+                except:
+                    new = DMSCabinets_UserGroup_Link()
+                    new.cabinet_id = cab.id
+                    new.user_id = user.user_id
+                    new.useridnew = usernow.user_id
+                    new.dateadded = datetime.now()
+                    new.businessid = usernow.businessid
+                    DBSession.add(new)
+                    DBSession.flush()
+
+            for dra in drawers:
+                try:
+                    exists = DBSession.query(DMSDrawers_UserGroup_Link). \
+                            filter(DMSDrawers_UserGroup_Link.drawer_id==dra.id). \
+                            filter(DMSDrawers_UserGroup_Link.user_id==user.user_id). \
+                            one()
+                except:
+                    new = DMSDrawers_UserGroup_Link()
+                    new.drawer_id = dra.id
+                    new.user_id = user.user_id
+                    new.useridnew = usernow.user_id
+                    new.dateadded = datetime.now()
+                    new.businessid = usernow.businessid
+                    DBSession.add(new)
+                    DBSession.flush()
+
+    @expose()
+    def save_new_cabinet(self, *args, **kwargs):
+        usernow = request.identity['user']
+        user = self.get_user_by_id(**{'user_id':usernow.user_id})
+        userpermissions = user.permissions
+        admin_logged = False
+        adminmanager_logged = False
+        for permis in userpermissions:
+            if permis.permission_name=='dms_access':
+                admin_logged = True
+            if permis.permission_name=='dms_manager':
+                adminmanager_logged = True
+        if not adminmanager_logged: return "Only for People with Admin Manage Rights"
+        cabinet = DMSCabinets()
+        cabinet.cabinet_name = kwargs['new_cabinet_name']
+        cabinet.useridnew = usernow.user_id
+        cabinet.active = 1
+        cabinet.businessid = usernow.businessid
+        DBSession.add(cabinet)
+        DBSession.flush()
+
+    @expose()
+    def save_edit_cabinet(self, *args, **kwargs):
+        cabinet_id = kwargs['edit_cabinet_id']
+        usernow = request.identity['user']
+        user = self.get_user_by_id(**{'user_id':usernow.user_id})
+        userpermissions = user.permissions
+        admin_logged = False
+        adminmanager_logged = False
+        for permis in userpermissions:
+            if permis.permission_name=='dms_access':
+                admin_logged = True
+            if permis.permission_name=='dms_manager':
+                adminmanager_logged = True
+        if not adminmanager_logged: return "Only for People with Admin Manage Rights"
+        cabinet = DBSession.query(DMSCabinets).filter(DMSCabinets.id==cabinet_id). \
+               order_by(asc(DMSCabinets.id)).one()
+        cabinet.cabinet_name = kwargs['edit_cabinet_name']
+        cabinet.businessid = usernow.businessid
+        DBSession.flush()
+
+    @expose()
+    def save_new_drawer(self, *args, **kwargs):
+        usernow = request.identity['user']
+        user = self.get_user_by_id(**{'user_id':usernow.user_id})
+        userpermissions = user.permissions
+        admin_logged = False
+        adminmanager_logged = False
+        for permis in userpermissions:
+            if permis.permission_name=='dms_manager':
+                admin_logged = True
+            if permis.permission_name=='dms_manager':
+                adminmanager_logged = True
+        if not adminmanager_logged: return "Only for People with Admin Manage Rights"
+        drawer = DMSDrawers()
+        drawer.drawer_name = kwargs['new_drawer_name']
+        drawer.cabinet_id = kwargs['cabinet_id']
+        drawer.useridnew = usernow.user_id
+        drawer.active = 1
+        drawer.businessid = usernow.businessid
+        DBSession.add(drawer)
+        DBSession.flush()
+
+    @expose()
+    def save_edit_drawer(self, *args, **kwargs):
+        usernow = request.identity['user']
+        user = self.get_user_by_id(**{'user_id':usernow.user_id})
+        userpermissions = user.permissions
+        admin_logged = False
+        adminmanager_logged = False
+        for permis in userpermissions:
+            if permis.permission_name=='dms_access':
+                admin_logged = True
+            if permis.permission_name=='dms_manager':
+                adminmanager_logged = True
+        if not adminmanager_logged: return "Only for People with Admin Manage Rights"
+        drawer = DBSession.query(DMSDrawers).filter(DMSDrawers.id==kwargs['drawer_id']). \
+                                one()
+        drawer.drawer_name = kwargs['edit_drawer_name']
+        drawer.businessid = usernow.businessid
+        DBSession.flush()
+
+    @expose()
+    def get_tbldms_user_cabinet_links(self, *args, **kwargs):
+        return DBSession.query(DMSCabinets_UserGroup_Link). \
+                filter(DMSCabinets_UserGroup_Link.user_id==kwargs.get('user_id',None)). \
+                all()
+
+    @expose()
+    def get_tbldms_cabinet_user_links(self, *args, **kwargs):
+        return DBSession.query(DMSCabinets_UserGroup_Link). \
+                filter(DMSCabinets_UserGroup_Link.cabinet_id==kwargs.get('cabinet_id',None)). \
+                all()
+
+    @expose()
+    def get_tbldms_drawer_user_links(self, *args, **kwargs):
+        return DBSession.query(DMSDrawers_UserGroup_Link). \
+                filter(DMSDrawers_UserGroup_Link.drawer_id==kwargs.get('drawer_id',None)). \
+                all()
+
+    @expose()
+    def get_tbldms_user_drawer_links(self, *args, **kwargs):
+        return DBSession.query(DMSDrawers_UserGroup_Link). \
+                filter(DMSDrawers_UserGroup_Link.user_id==kwargs.get('user_id',None)). \
+                all()
+
+    @expose()
+    def get_tbldms_metadata_by_drawer_id_count(self, *args, **kwargs):
+        return DBSession.query(DMSMetaData). \
+                filter(DMSMetaData.drawer_id==kwargs.get('drawer_id',None)). \
+                filter(DMSMetaData.active==1). \
+                value(func.count(DMSMetaData.id))
+
+    @expose()
+    def get_tbldms_metadata_by_dms_id(self, *args, **kwargs):
+        return DBSession.query(DMSMetaData). \
+                filter(DMSMetaData.id==kwargs.get('dms_id',None)). \
+                first()
+
+    @expose()
+    def uploadfile_dmsmetadata(self, *arg, **kwargs):
+        usernow = request.identity['user']
+        if not usernow: return json.dumps({"success": False})
+        uFile = kwargs['qqfile']
+        filedate =  kwargs['filedate']
+        filedescription = kwargs['filedescription']
+        filesubject = kwargs['filesubject']
+        drawer_id = kwargs['drawer_id']
+        if not filedate: filedate = datetime.date(datetime.now())
+        kwargs['user_id'] = usernow.user_id
+        kwargs['allowed_extensions'] = ['.md', '.txt', '.csv', '.ods', '.odp', '.odg', '.odt', '.xls', '.xlsx', '.doc', '.docx', ".pdf", ".jpg", ".jpeg", ".JPG", ".JPEG", ".png", ".*"]
+        kwargs['upload_dir'] = DMS_DIRNAME 
+        uploader = JistFileUploader(**kwargs)
+        big_file_path = uploader.handle_file_upload()
+        big_file_base = os.path.basename(big_file_path)
+        new_file = DMSMetaData( drawer_id=drawer_id,
+                                filename=big_file_base,
+                                filesubject = filesubject,
+                                description=filedescription,
+                                docdate=filedate,
+                                original_file_name = uploader.getName(),
+                                useridnew=usernow.user_id,
+                                businessid=usernow.businessid
+                                )
+        DBSession.add(new_file)
+        DBSession.flush()
+        return json.dumps({"success": True})
+
+    @expose()
+    def get_tbldms_metadata_by_drawer_id(self, *arg, **kwargs):
+        drawer_id = kwargs['drawer_id']
+        blndescription = False
+        blnsubject = False
+        blnfilename = False
+        blndocstart = False
+        blndocend = False
+        blnuploadstart = False
+        blnuploadend = False
+        blndocdate = False
+        blnuploaddate = False
+        blnjistuser = False
+
+        blndocdate_jistuser = False
+        blndocdate_subject = False
+        blndocdate_description = False
+
+        if kwargs.get('jist_user',None) != 'None': blnjistuser = True
+        if kwargs.get('file_description',None): blndescription = True
+        if kwargs.get('file_subject',None): blnsubject = True
+        if kwargs.get('file_filename',None): blnfilename = True
+        if kwargs.get('doc_start_date',None): blndocstart = True
+        if kwargs.get('doc_end_date',None): blndocend = True
+        if kwargs.get('upload_start_date',None): blnuploadstart = True
+        if kwargs.get('upload_end_date',None): blnuploadend = True
+
+
+        if blndocstart and blndocend and blnjistuser: blndocdate_jistuser = True
+        if blndocstart and blndocend and blnsubject: blndocdate_subject = True
+        if blndocstart and blndocend and blndescription: blndocdate_description = True
+        if blndocstart and blndocend: blndocdate = True
+        if blnuploadstart and blnuploadend: blnuploaddate = True
+
+        if blndocdate_jistuser:
+            dbase_query = DBSession.query(DMSMetaData). \
+                    filter(DMSMetaData.drawer_id==drawer_id). \
+                    filter(DMSMetaData.docdate>=kwargs.get('doc_start_date',None)). \
+                    filter(DMSMetaData.docdate<=kwargs.get('doc_end_date',None)). \
+                    filter(DMSMetaData.useridnew==kwargs.get('jist_user',None)). \
+                    filter(DMSMetaData.active==1). \
+                    filter(DMSMetaData.businessid==usernow.businessid). \
+                    order_by(asc(DMSMetaData.id)).limit(100)
+        elif blndocdate_subject:
+            searchphrase = "%"+kwargs.get('file_subject',None)+"%"
+            dbase_query = DBSession.query(DMSMetaData). \
+                    filter(DMSMetaData.drawer_id==drawer_id). \
+                    filter(DMSMetaData.docdate>=kwargs.get('doc_start_date',None)). \
+                    filter(DMSMetaData.docdate<=kwargs.get('doc_end_date',None)). \
+                    filter(DMSMetaData.filesubject.like(searchphrase)). \
+                    filter(DMSMetaData.active==1). \
+                    filter(DMSMetaData.businessid==usernow.businessid). \
+                    order_by(asc(DMSMetaData.id)).limit(100)
+        elif blndocdate_description:
+            searchphrase = "%"+kwargs.get('file_description',None)+"%"
+            dbase_query = DBSession.query(DMSMetaData). \
+                    filter(DMSMetaData.drawer_id==drawer_id). \
+                    filter(DMSMetaData.docdate>=kwargs.get('doc_start_date',None)). \
+                    filter(DMSMetaData.docdate<=kwargs.get('doc_end_date',None)). \
+                    filter(DMSMetaData.description.like(searchphrase)). \
+                    filter(DMSMetaData.active==1). \
+                    filter(DMSMetaData.businessid==usernow.businessid). \
+                    order_by(asc(DMSMetaData.id)).limit(100)
+        elif blndocdate:
+            dbase_query = DBSession.query(DMSMetaData). \
+                    filter(DMSMetaData.drawer_id==drawer_id). \
+                    filter(DMSMetaData.docdate>=kwargs.get('doc_start_date',None)). \
+                    filter(DMSMetaData.docdate<=kwargs.get('doc_end_date',None)). \
+                    filter(DMSMetaData.active==1). \
+                    filter(DMSMetaData.businessid==usernow.businessid). \
+                    order_by(asc(DMSMetaData.id)).limit(100)
+        elif blnjistuser:
+            dbase_query = DBSession.query(DMSMetaData). \
+                    filter(DMSMetaData.drawer_id==drawer_id). \
+                    filter(DMSMetaData.useridnew==kwargs.get('jist_user',None)). \
+                    filter(DMSMetaData.active==1). \
+                    filter(DMSMetaData.businessid==usernow.businessid). \
+                    order_by(asc(DMSMetaData.id)).limit(100)
+        elif blnsubject:
+            searchphrase = "%"+kwargs.get('file_subject',None)+"%"
+            dbase_query = DBSession.query(DMSMetaData). \
+                    filter(DMSMetaData.drawer_id==drawer_id). \
+                    filter(DMSMetaData.filesubject.like(searchphrase)). \
+                    filter(DMSMetaData.active==1). \
+                    filter(DMSMetaData.businessid==usernow.businessid). \
+                    order_by(asc(DMSMetaData.id)).limit(100)
+        elif blndescription:
+            searchphrase = "%"+kwargs.get('file_description',None)+"%"
+            dbase_query = DBSession.query(DMSMetaData). \
+                    filter(DMSMetaData.drawer_id==drawer_id). \
+                    filter(DMSMetaData.description.like(searchphrase)). \
+                    filter(DMSMetaData.active==1). \
+                    filter(DMSMetaData.businessid==usernow.businessid). \
+                    order_by(asc(DMSMetaData.id)).limit(100)
+        else:
+            dbase_query = DBSession.query(DMSMetaData). \
+                    filter(DMSMetaData.drawer_id==drawer_id). \
+                    filter(DMSMetaData.active==1). \
+                    filter(DMSMetaData.businessid==usernow.businessid). \
+                    order_by(asc(DMSMetaData.id)).limit(100)
+        return dbase_query
+
+    @expose()
+    def download_dmsmetadata_file(self, *arg, **kwargs):
+        try:
+            file_id = arg[0]
+            metadata = DBSession.query(DMSMetaData). \
+                    filter(DMSMetaData.id==file_id). \
+                    one()
+        except:
+            return
+        content_types = {
+            'display': {'.png': 'image/jpeg', '.jpeg':'image/jpeg',
+                        '.jpg':'image/jpeg', '.gif':'image/jpeg',
+                        '.txt': 'text/plain', '.JPG':'image/jpeg', '.JPEG':'image/jpeg'
+                        },
+            'download': {'.pdf':'application/pdf', '.zip':'application/zip', '.rar':'application/x-rar-compressed'}
+        }
+
+        for file_type in content_types['download']:
+            if metadata.filename.endswith(file_type):
+                response.headers["Content-Type"] = content_types['download'][file_type]
+                response.headers["Content-Disposition"] = "attachment; filename= '{0}'".format(metadata.filename)
+                user_path = os.path.join(DMS_DIRNAME, str(metadata.useridnew))
+                file_path = os.path.join(user_path, str(metadata.filename))
+                filecontent = open(file_path, "rb")
+                return filecontent
+            else:
+                response.headers["Content-Type"] = content_types['download'][file_type]
+                response.headers["Content-Disposition"] = "attachment; filename= '{0}'".format(metadata.filename)
+                user_path = os.path.join(DMS_DIRNAME, str(metadata.useridnew))
+                file_path = os.path.join(user_path, str(metadata.filename))
+                filecontent = open(file_path, "rb")
+                return filecontent
+
+        if metadata.filename.find(".") == -1:
+            response.headers["Content-Type"] = "text/plain"
+            pic_path = os.path.join(jno_path, str(fileid))
+            pic_name = os.path.join(pic_path, str(metadata.filename))
+            filecontent = open(pic_name, "rb")
+            return filecontent
+
+    @expose()
+    def save_edit_dmsitem(self, *args, **kwargs):
+        try:
+            dms_id = kwargs['dms_id']
+            docdate = kwargs['doc_date']
+            subject = kwargs['subject']
+            description = kwargs['description']
+        except:
+            return
+        metadata = DBSession.query(DMSMetaData). \
+                filter(DMSMetaData.id==dms_id). \
+                one()
+        metadata.docdate = docdate
+        metadata.filesubject = subject
+        metadata.description = description
+        DBSession.flush()
+
+    @expose()
+    def save_copy_dmsitem(self, *args, **kwargs):
+        try:
+            dms_id = kwargs['dms_id']
+            drawer_to = kwargs['drawer_selected_copy']
+            cabinet_to = kwargs['cabinet_selected_copy']
+        except:
+            return
+        metadata = DBSession.query(DMSMetaData). \
+                filter(DMSMetaData.id==dms_id). \
+                one()
+        new_file = DMSMetaData(drawer_id=drawer_to,
+                               filename=metadata.filename,
+                               filesubject = metadata.filesubject,
+                               description=metadata.description,
+                               docdate=metadata.docdate,
+                               original_file_name = metadata.original_file_name,
+                               useridnew=metadata.useridnew,
+                               datecreated=metadata.datecreated,
+                               businessid=metadata.businessid)
+        DBSession.add(new_file)
+        DBSession.flush()
+
+    @expose()
+    def save_move_dmsitem(self, *args, **kwargs):
+        try:
+            dms_id = kwargs['dms_id']
+            drawer_to = kwargs['drawer_selected_copy']
+            cabinet_to = kwargs['cabinet_selected_move']
+        except:
+            return
+        metadata = DBSession.query(DMSMetaData). \
+                filter(DMSMetaData.id==dms_id). \
+                one()
+        metadata.drawer_id = drawer_to
+        DBSession.flush()
+
+    @expose()
+    def delete_dms_file(self, *arg, **kwargs):
+        usernow = request.identity['user']
+        dms_id = kwargs['dms_id']
+        metadata = DBSession.query(DMSMetaData). \
+                filter(DMSMetaData.id==dms_id).one()
+        metadata.active = 0
+        DBSession.flush()
+
+###############################################################################
+# tg_group, tg_group_permission
+###############################################################################
+
+    @expose()
+    def update_usernow_businessid(self, *args, **kwargs):
+        usernow = request.identity['user']
+        user = self.get_user_by_id(**{'user_id':usernow.user_id})
+        user.businessid = kwargs.get('business_id',1)
+        DBSession.flush()
+
+    @expose()
+    def get_usernow_group_list(self, *args, **kwargs):
+        usernow = request.identity['user']
+        return [str(x.group_name) for x in usernow.groups]
+
+    @expose()
+    def get_groups_by_user_id(self, *args, **kwargs):
+        return DBSession.query(User). \
+                filter(User.user_id==kwargs.get('user_id',None)). \
+                one().groups
+
+    @expose()
+    def get_all_groups_list(self, *args, **kwargs):
+        return DBSession.query(Group).all()
+
+#################################################
+# tg_user, tg_user_group
+#################################################
+
+    @expose()
+    def get_random_hash(self, *args, **kwargs):
+        return sha1(str(random.random()).encode('utf-8')).hexdigest().upper()
+
+    @expose()
+    def update_user_hash(self, *args, **kwargs):
+        """ Update column user_hash on tg_user table """
+        usernow = request.identity['user']
+        hash_value = self.get_random_hash()
+        user = self.get_user_by_id(**kwargs)
+        user.user_hash = hash_value
+        user.useridedited = usernow.user_id
+        user.dateedited = datetime.now()
+        DBSession.flush()
+        return hash_value
+
+    @expose()
+    def upload_user_picture(self, *args, **kwargs):
+        user_id = kwargs.get('user_id', None)
+        if not user_id: json.dumps({"success": False})
+        user_new_hash = self.update_user_hash(**kwargs)
+        kwargs['upload_dir'] = STAFFPIC_DIRNAME
+        kwargs['resize'] = (50, 50)
+        uploader = JistFileUploader(**kwargs)
+        uploader.handle_file_upload(name='{0}.png'.format(user_new_hash))
+        return json.dumps({"success": True})
+
+    def get_active_user_count(self, *args, **kwargs):
+        return DBSession.query(User). \
+                filter(User.active == 1). \
+                value(func.count(User.user_id))
+
+    def get_all_user_count(self, *args, **kwargs):
+        return DBSession.query(User). \
+                value(func.count(User.user_id))
+
+    def get_active_user_list(self, *args, **kwargs):
+        user_id = kwargs.get('user_id', None)
+        user_name = kwargs.get('user_name', None)
+        display_name = kwargs.get('display_name', None)
+        email_address = kwargs.get('email_address', None)
+        if user_id:
+            dbase_query = DBSession.query(User). \
+                    filter(User.user_id == user_id). \
+                    filter(User.active == 1). \
+                    all()
+        elif user_name:
+            dbase_query = DBSession.query(User). \
+                    filter(User.user_name == user_name). \
+                    filter(User.active == 1). \
+                    all()
+        elif display_name:
+            dbase_query = DBSession.query(User). \
+                    filter(User.display_name == display_name). \
+                    filter(User.active == 1). \
+                    all()
+        elif email_address:
+            dbase_query = DBSession.query(User). \
+                    filter(User.email_address == email_address). \
+                    filter(User.active == 1). \
+                    all()
+        else:
+            dbase_query = DBSession.query(User). \
+                    filter(User.active == 1). \
+                    all()
+        return dbase_query
+
+    def get_user_by_id(self, *args, **kwargs):
+        return DBSession.query(User). \
+                filter(User.user_id==kwargs.get('user_id',None)). \
+                first()
+
+    @expose()
+    def save_user_new(self, *args, **kwargs):
+        usernow = request.identity['user']
+        user = User()
+        user.user_name = kwargs.get('user_name', None)
+        user.user_hash = self.get_random_hash()
+        user.display_name = kwargs.get('display_name', None)
+        user.email_address = kwargs.get('email_address', None)
+        DBSession.add(user)
+        DBSession.flush()
+
+    @expose()
+    def save_user_edit(self, *args, **kwargs):
+        usernow = request.identity['user']
+        user = DBSession.query(User).filter(User.user_id == kwargs.get('user_id',None)).one()
+        user.user_name = kwargs.get('user_name', None)
+        user.display_name = kwargs.get('display_name', None)
+        user.email_address = kwargs.get('email_address', None)
+
+        password = kwargs.get('password', None)
+        if password:
+            user.password = kwargs.get('password', None)
+
+        user.active = int(kwargs.get('active', True))
+        DBSession.add(user)
+        DBSession.flush()
+
+#################################################
+# tg_user_group
+#################################################
+
+    @expose()
+    def save_user_group_add(self, *args, **kwargs):
+        usernow = request.identity['user']
+        user = DBSession.query(User).filter(User.user_id == kwargs.get('user_id',None)).one()
+        group = DBSession.query(Group).filter(Group.group_id == kwargs.get('group_id',None)).one()
+        user.groups.append(group)
+        DBSession.flush()
+
+    @expose()
+    def save_user_group_delete(self, *args, **kwargs):
+        usernow = request.identity['user']
+        user = DBSession.query(User).filter(User.user_id == kwargs.get('user_id',None)).one()
+        group = DBSession.query(Group).filter(Group.group_id == kwargs.get('group_id')).one()
+        for user_group in user.groups:
+            if user_group == group:
+                user.groups.remove(user_group)
+                DBSession.flush()
+
+#################################################
+# tg_user_business
+#################################################
+
+    @expose()
+    def save_user_business_add(self, *args, **kwargs):
+        user = self.get_user_by_id(**kwargs)
+        business = self.get_tbljistbusinesslist_by_business_id(**kwargs)
+        user.businesses.append(business)
+        DBSession.flush()
+
+    @expose()
+    def save_user_business_delete(self, *args, **kwargs):
+        user = self.get_user_by_id(**kwargs)
+        business = self.get_tbljistbusinesslist_by_business_id(**kwargs)
+        for thisbusiness in user.businesses:
+            if thisbusiness == business:
+                user.businesses.remove(business)
+                DBSession.flush()
+
+###############################################################################
+# JistBusinessList
+###############################################################################
+
+    def get_tbljistbusinesslist_active_all(self, *args, **kwargs):
+        return DBSession.query(JistBusinessList). \
+                    filter(JistBusinessList.active==1). \
+                    order_by(asc(JistBusinessList.business_id)).all()
+
+    def get_tbljistbusinesslist_dbase_query(self, *args, **kwargs):
+        usernow = request.identity['user']
+        limit = kwargs.get('limit', 100)
+        business_name = kwargs.get('business_name', None)
+        business_desc = kwargs.get('business_desc', None)
+        if business_desc:
+            searchphrase = "%"+business_desc+"%"
+            dbase_query = DBSession.query(JistBusinessList). \
+                        filter(JistBusinessList.business_desc.like(searchphrase)). \
+                        filter(JistBusinessList.active==1). \
+                        filter(JistBusinessList.businessid==usernow.businessid). \
+                        order_by(desc(JistBusinessList.business_desc)).limit(limit)
+        elif business_name:
+            searchphrase = "%"+business_name+"%"
+            dbase_query = DBSession.query(JistBusinessList). \
+                        filter(JistBusinessList.business_name.like(searchphrase)). \
+                        filter(JistBusinessList.active==1). \
+                        filter(JistBusinessList.businessid==usernow.businessid). \
+                        order_by(desc(JistBusinessList.business_name)).limit(limit)
+        else:
+            dbase_query = DBSession.query(JistBusinessList). \
+                    filter(JistBusinessList.active==1). \
+                    filter(JistBusinessList.businessid==usernow.businessid). \
+                    order_by(desc(JistBusinessList.business_id)).limit(limit)
+        return dbase_query
+
+    def get_tbljistbusinesslist_dbase_query_count_all(self, *args, **kwargs):
+        usernow = request.identity['user']
+        return DBSession.query(JistBusinessList). \
+                filter(JistBusinessList.active==1). \
+                filter(JistBusinessList.businessid==usernow.businessid). \
+                value(func.count(JistBusinessList.business_id))
+
+    @expose()
+    def get_tbljistbusinesslist_by_business_id(self, *args, **kwargs):
+        return DBSession.query(JistBusinessList). \
+                filter(JistBusinessList.business_id==kwargs.get('business_id',None)). \
+                first()
+
+    @expose()
+    def save_business_new(self, *args, **kwargs):
+        usernow = request.identity['user']
+        this_business = JistBusinessList()
+        this_business.business_name = dbsafe(kwargs.get('business_name', None))
+        this_business.business_desc = dbsafe(kwargs.get('business_desc', None))
+        this_business.useridnew = usernow.user_id
+        this_business.useridedited = usernow.user_id
+        DBSession.add(this_business)
+        DBSession.flush()
+
+    @expose()
+    def save_business_edit(self, *args, **kwargs):
+        this_business = DBSession.query(JistBusinessList). \
+                         filter(JistBusinessList.business_id==kwargs.get('business_id',None)).one()
+        usernow = request.identity['user']
+        this_business.business_name = dbsafe(kwargs.get('business_name', None))
+        this_business.business_desc = dbsafe(kwargs.get('business_desc', None))
+        this_business.active = int(kwargs.get('business_active', 1))
+        this_business.dateedited = datetime.now()
+        this_business.useridedited = usernow.user_id
+        DBSession.flush()
+
+    @expose()
+    def upload_business_logo(self, *args, **kwargs):
+        business_id = kwargs.get('business_id', None)
+        if not business_id: json.dumps({"success": False})
+        business = self.get_tbljistbusinesslist_by_business_id(**kwargs)
+        filename = business.business_name.replace(' ','').lower()
+        kwargs['upload_dir'] = BUSINESSLOGO_DIRNAME 
+        uploader = JistFileUploader(**kwargs)
+        uploader.handle_file_upload(name='{0}.png'.format(filename))
+        return json.dumps({"success": True})
+
+    def get_usernow_business_logopath(self, *args, **kwargs):
+        usernow = request.identity['user']
+        business = self.get_tbljistbusinesslist_by_business_id(**{'business_id':usernow.businessid})
+        filename = '{0}.png'.format(business.business_name.replace(' ','').lower())
+        logopath = os.path.join(BUSINESSLOGO_DIRNAME, filename)
+        if os.path.exists(logopath): return logopath
+        return False
+
+###############################################################################
+# JistBusinessInformationHeaders
+###############################################################################
+
+    @expose()
+    def get_tbljistbusinessinfoheaders_dbase_query(self, *args, **kwargs):
+        usernow = request.identity['user']
+        limit = kwargs.get('limit', 100)
+        header_name = kwargs.get('header_name', None)
+        if header_name:
+            searchphrase = "%"+header_name+"%"
+            dbase_query = DBSession.query(JistBusinessInformationHeaders). \
+                        filter(JistBusinessInformationHeaders.header_name.like(searchphrase)). \
+                        filter(JistBusinessInformationHeaders.active==1). \
+                        filter(JistBusinessInformationHeaders.businessid==usernow.businessid). \
+                        order_by(desc(JistBusinessInformationHeaders.header_name)).limit(limit)
+        else:
+            dbase_query = DBSession.query(JistBusinessInformationHeaders). \
+                    filter(JistBusinessInformationHeaders.active==1). \
+                    filter(JistBusinessInformationHeaders.businessid==usernow.businessid). \
+                    order_by(asc(JistBusinessInformationHeaders.header_index)).limit(limit)
+        return dbase_query
+
+    @expose()
+    def get_tbljistbusinessinfoheaders_dbase_query_count_all(self, *args, **kwargs):
+        usernow = request.identity['user']
+        return DBSession.query(JistBusinessInformationHeaders). \
+                filter(JistBusinessInformationHeaders.active==1). \
+                filter(JistBusinessInformationHeaders.businessid==usernow.businessid). \
+                value(func.count(JistBusinessInformationHeaders.header_id))
+
+    @expose()
+    def get_tbljistbusinessinfoheaders_by_header_id(self, *args, **kwargs):
+        return DBSession.query(JistBusinessInformationHeaders). \
+                filter(JistBusinessInformationHeaders.header_id==kwargs.get('header_id',None)). \
+                first()
+
+    @expose()
+    def save_businessheader_new(self, *args, **kwargs):
+        usernow = request.identity['user']
+        this_header = JistBusinessInformationHeaders()
+        this_header.header_index = kwargs.get('header_index', None)
+        this_header.header_name = dbsafe(kwargs.get('header_name', None))
+        this_header.useridnew = usernow.user_id
+        this_header.useridedited = usernow.user_id
+        DBSession.add(this_header)
+        DBSession.flush()
+
+    @expose()
+    def save_businessheader_edit(self, *args, **kwargs):
+        this_header = DBSession.query(JistBusinessInformationHeaders). \
+                         filter(JistBusinessInformationHeaders.header_id==kwargs.get('header_id',None)).one()
+        usernow = request.identity['user']
+        this_header.header_index = kwargs.get('header_index', None)
+        this_header.header_name = dbsafe(kwargs.get('header_name', None))
+        this_header.active = int(kwargs.get('header_active', 1))
+        this_header.dateedited = datetime.now()
+        this_header.useridedited = usernow.user_id
+        DBSession.flush()
+
+###############################################################################
+# JistBusinessInformationValues
+###############################################################################
+
+    @expose()
+    def get_tbljistbusinessinfovalues_dbase_query(self, *args, **kwargs):
+        usernow = request.identity['user']
+        limit = kwargs.get('limit',100)
+        business_id = kwargs.get('business_id', None)
+        value_header_id = kwargs.get('value_header_id', None)
+        if str(value_header_id) == 'None': value_header_id = None
+        value_name = kwargs.get('value_name', None)
+        value_desc = kwargs.get('value_desc', None)
+        if value_desc:
+            searchphrase = "%"+value_desc+"%"
+            dbase_query = DBSession.query(JistBusinessInformationValues). \
+                        filter(JistBusinessInformationValues.value_business_id==business_id). \
+                        filter(JistBusinessInformationValues.value_desc.like(searchphrase)). \
+                        filter(JistBusinessInformationValues.active==1). \
+                        filter(JistBusinessInformationValues.businessid==usernow.businessid). \
+                        order_by(asc(JistBusinessInformationValues.value_index)). \
+                        order_by(asc(JistBusinessInformationValues.value_id)).limit(limit)
+        elif value_name:
+            searchphrase = "%"+value_name+"%"
+            dbase_query = DBSession.query(JistBusinessInformationValues). \
+                        filter(JistBusinessInformationValues.value_business_id==business_id). \
+                        filter(JistBusinessInformationValues.value_name.like(searchphrase)). \
+                        filter(JistBusinessInformationValues.active==1). \
+                        filter(JistBusinessInformationValues.businessid==usernow.businessid). \
+                        order_by(asc(JistBusinessInformationValues.value_index)). \
+                        order_by(asc(JistBusinessInformationValues.value_id)).limit(limit)
+        elif value_header_id:
+            dbase_query = DBSession.query(JistBusinessInformationValues). \
+                        filter(JistBusinessInformationValues.value_business_id==business_id). \
+                        filter(JistBusinessInformationValues.value_header_id==value_header_id). \
+                        filter(JistBusinessInformationValues.active==1). \
+                        filter(JistBusinessInformationValues.businessid==usernow.businessid). \
+                        order_by(asc(JistBusinessInformationValues.value_index)). \
+                        order_by(asc(JistBusinessInformationValues.value_id)).limit(limit)
+        else:
+            dbase_query = DBSession.query(JistBusinessInformationValues). \
+                    filter(JistBusinessInformationValues.value_business_id==business_id). \
+                    filter(JistBusinessInformationValues.active==1). \
+                    filter(JistBusinessInformationValues.businessid==usernow.businessid). \
+                    order_by(asc(JistBusinessInformationValues.value_index)). \
+                    order_by(asc(JistBusinessInformationValues.value_id)).limit(limit)
+        return dbase_query
+
+    @expose()
+    def get_tbljistbusinessinfovalues_dbase_query_count_all(self, *args, **kwargs):
+        usernow = request.identity['user']
+        return DBSession.query(JistBusinessInformationValues). \
+                filter(JistBusinessInformationValues.active==1). \
+                filter(JistBusinessInformationValues.businessid==usernow.businessid). \
+                value(func.count(JistBusinessInformationValues.value_id))
+
+    @expose()
+    def get_tbljistbusinessinfovalues_by_value_id(self, *args, **kwargs):
+        return DBSession.query(JistBusinessInformationValues). \
+                filter(JistBusinessInformationValues.value_id==kwargs.get('value_id',None)). \
+                first()
+
+    @expose()
+    def save_businessvalue_new(self, *args, **kwargs):
+        usernow = request.identity['user']
+        this_value = JistBusinessInformationValues()
+        this_value.value_business_id = kwargs.get('value_business_id', None)
+        this_value.value_header_id = kwargs.get('value_header_id', None)
+        this_value.value_index = kwargs.get('value_index', None)
+        this_value.value_name = dbsafe(kwargs.get('value_name', None))
+        this_value.value_desc = dbsafe(kwargs.get('value_desc', None))
+        this_value.useridnew = usernow.user_id
+        this_value.useridedited = usernow.user_id
+        DBSession.add(this_value)
+        DBSession.flush()
+
+    @expose()
+    def save_businessvalue_edit(self, *args, **kwargs):
+        this_value = DBSession.query(JistBusinessInformationValues). \
+                         filter(JistBusinessInformationValues.value_id==kwargs.get('value_id',None)).one()
+        usernow = request.identity['user']
+        this_value.value_business_id = kwargs.get('value_business_id', None)
+        this_value.value_header_id = kwargs.get('value_header_id', None)
+        this_value.value_index = kwargs.get('value_index', None)
+        this_value.value_name = dbsafe(kwargs.get('value_name', None))
+        this_value.value_desc = dbsafe(kwargs.get('value_desc', None))
+        this_value.active = int(kwargs.get('value_active', 1))
+        this_value.dateedited = datetime.now()
+        this_value.useridedited = usernow.user_id
+        DBSession.flush()
+
+###############################################################################
+# EstClientList
+###############################################################################
+
+    @expose()
+    def get_tbljistclientlist_dbase_query(self, *args, **kwargs):
+        usernow = request.identity['user']
+        limit = kwargs.get('limit', 100)
+        client_name = kwargs.get('client_name',None) 
+        if client_name:
+            searchphrase = "%"+client_name+"%" 
+            dbase_query = DBS_JistEstimating.query(EstClientList). \
+                        filter(EstClientList.client_name.like(searchphrase)). \
+                        filter(EstClientList.active==1). \
+                        filter(EstClientList.businessid==usernow.businessid). \
+                        order_by(desc(EstClientList.client_name)).limit(limit)
+        else:
+            dbase_query = DBS_JistEstimating.query(EstClientList). \
+                        filter(EstClientList.active==1). \
+                        filter(EstClientList.businessid==usernow.businessid). \
+                        order_by(asc(EstClientList.client_id)).limit(limit)
+        return dbase_query
+
+    @expose()
+    def get_tbljistclientlist_dbase_query_count_all(self, *args, **kwargs):
+        usernow = request.identity['user']
+        return DBS_JistEstimating.query(EstClientList). \
+                filter(EstClientList.active==1). \
+                filter(EstClientList.businessid==usernow.businessid). \
+                value(func.count(EstClientList.client_id))
+
+    @expose()
+    def get_tbljistclientlist_by_client_id(self, *args, **kwargs):
+        return DBS_JistEstimating.query(EstClientList). \
+                filter(EstClientList.client_id==kwargs.get('client_id',None)). \
+                first()
+
+    @expose()
+    def save_client_new(self, *args, **kwargs):
+        usernow = request.identity['user']
+        this_client = EstClientList()
+        this_client.client_name = dbsafe(kwargs.get('client_name',None))
+        this_client.useridnew = usernow.user_id
+        this_client.useridedited = usernow.user_id
+        DBS_JistEstimating.add(this_client)
+        DBS_JistEstimating.flush()
+
+    @expose()
+    def save_client_edit(self, *args, **kwargs):
+        usernow = request.identity['user']
+        this_client = DBS_JistEstimating.query(EstClientList). \
+                         filter(EstClientList.client_id==kwargs.get('client_id',None)).one()
+        this_client.client_name = dbsafe(kwargs.get('client_name',None))
+        this_client.active = int(kwargs.get('client_active',1))
+        this_client.dateedited = datetime.now() 
+        this_client.useridedited = usernow.user_id
+        DBS_JistEstimating.flush()
+
+###############################################################################
+# EstClientContacts
+###############################################################################
+
+    @expose()
+    def get_tbljistclientcontact_dbase_query(self, *args, **kwargs):
+        usernow = request.identity['user']
+        limit = kwargs.get('limit', 100)
+        client_id = kwargs.get('client_id',None)
+        contact_name = kwargs.get('contact_name',None)
+        contact_surname = kwargs.get('contact_surname',None)
+        contact_cell = kwargs.get('contact_cell',None)
+        contact_tel = kwargs.get('contact_tel',None)
+        contact_email = kwargs.get('contact_email',None)
+        contact_fax = kwargs.get('contact_fax',None)
+        if contact_name:
+            searchphrase = "%"+contact_name+"%"
+            dbase_query = DBS_JistEstimating.query(EstClientContacts). \
+                        filter(EstClientContacts.contact_client_id==client_id). \
+                        filter(EstClientContacts.contact_name.like(searchphrase)). \
+                        filter(EstClientContacts.active==1). \
+                        filter(EstClientContacts.businessid==usernow.businessid). \
+                        order_by(desc(EstClientContacts.contact_name)).limit(limit)
+        elif contact_surname:
+            searchphrase = "%"+contact_surname+"%"
+            dbase_query = DBS_JistEstimating.query(EstClientContacts). \
+                        filter(EstClientContacts.contact_client_id==client_id). \
+                        filter(EstClientContacts.contact_surname.like(searchphrase)). \
+                        filter(EstClientContacts.active==1). \
+                        filter(EstClientContacts.businessid==usernow.businessid). \
+                        order_by(desc(EstClientContacts.contact_surname)).limit(limit)
+        elif contact_cell:
+            searchphrase = "%"+contact_cell+"%"
+            dbase_query = DBS_JistEstimating.query(EstClientContacts). \
+                        filter(EstClientContacts.contact_client_id==client_id). \
+                        filter(EstClientContacts.contact_cell.like(searchphrase)). \
+                        filter(EstClientContacts.active==1). \
+                        filter(EstClientContacts.businessid==usernow.businessid). \
+                        order_by(desc(EstClientContacts.contact_cell)).limit(limit)
+        elif contact_tel:
+            searchphrase = "%"+contact_tel+"%"
+            dbase_query = DBS_JistEstimating.query(EstClientContacts). \
+                        filter(EstClientContacts.contact_client_id==client_id). \
+                        filter(EstClientContacts.contact_tel.like(searchphrase)). \
+                        filter(EstClientContacts.active==1). \
+                        filter(EstClientContacts.businessid==usernow.businessid). \
+                        order_by(desc(EstClientContacts.contact_tel)).limit(limit)
+        elif contact_email:
+            searchphrase = "%"+contact_email+"%"
+            dbase_query = DBS_JistEstimating.query(EstClientContacts). \
+                        filter(EstClientContacts.contact_client_id==client_id). \
+                        filter(EstClientContacts.contact_email.like(searchphrase)). \
+                        filter(EstClientContacts.active==1). \
+                        filter(EstClientContacts.businessid==usernow.businessid). \
+                        order_by(desc(EstClientContacts.contact_email)).limit(limit)
+        elif contact_fax:
+            searchphrase = "%"+contact_fax+"%"
+            dbase_query = DBS_JistEstimating.query(EstClientContacts). \
+                        filter(EstClientContacts.contact_client_id==client_id). \
+                        filter(EstClientContacts.contact_fax.like(searchphrase)). \
+                        filter(EstClientContacts.active==1). \
+                        filter(EstClientContacts.businessid==usernow.businessid). \
+                        order_by(desc(EstClientContacts.contact_fax)).limit(limit)
+        else:
+            dbase_query = DBS_JistEstimating.query(EstClientContacts). \
+                        filter(EstClientContacts.contact_client_id==client_id). \
+                        filter(EstClientContacts.active==1). \
+                        filter(EstClientContacts.businessid==usernow.businessid). \
+                        order_by(desc(EstClientContacts.contact_id)).limit(limit)
+        return dbase_query
+
+    @expose()
+    def get_tbljistclientcontact_dbase_query_count_all(self, *args, **kwargs):
+        usernow = request.identity['user']
+        return DBS_JistEstimating.query(EstClientContacts). \
+                filter(EstClientContacts.active==1). \
+                filter(EstClientContacts.businessid==usernow.businessid). \
+                value(func.count(EstClientContacts.contact_id))
+
+    @expose()
+    def get_tbljistclientcontact_by_contact_id(self, *args, **kwargs):
+        return DBS_JistEstimating.query(EstClientContacts). \
+                filter(EstClientContacts.contact_id==kwargs.get('contact_id',None)). \
+                first()
+
+    @expose()
+    def save_clientcontact_new(self, *args, **kwargs):
+        usernow = request.identity['user']
+        this_contact = EstClientContacts()
+        this_contact.contact_client_id = kwargs.get('contact_client_id',None)
+        this_contact.contact_name = dbsafe(kwargs.get('contact_name',None))
+        this_contact.contact_surname = dbsafe(kwargs.get('contact_surname',None))
+        this_contact.contact_cell = dbsafe(kwargs.get('contact_cell',None))
+        this_contact.contact_tel = dbsafe(kwargs.get('contact_tel',None))
+        this_contact.contact_email = dbsafe(kwargs.get('contact_email',None))
+        this_contact.contact_fax = dbsafe(kwargs.get('contact_fax',None))
+        this_contact.useridnew = usernow.user_id
+        this_contact.useridedited = usernow.user_id
+        DBS_JistEstimating.add(this_contact)
+        DBS_JistEstimating.flush()
+
+    @expose()
+    def save_clientcontact_edit(self, *args, **kwargs):
+        this_contact = DBS_JistEstimating.query(EstClientContacts). \
+                         filter(EstClientContacts.contact_id==kwargs.get('contact_id',None)).one()
+        usernow = request.identity['user']
+        this_contact.contact_client_id = kwargs.get('contact_client_id',None)
+        this_contact.contact_name = dbsafe(kwargs.get('contact_name',None))
+        this_contact.contact_surname = dbsafe(kwargs.get('contact_surname',None))
+        this_contact.contact_cell = dbsafe(kwargs.get('contact_cell',None))
+        this_contact.contact_tel = dbsafe(kwargs.get('contact_tel',None))
+        this_contact.contact_email = dbsafe(kwargs.get('contact_email',None))
+        this_contact.contact_fax = dbsafe(kwargs.get('contact_fax',None))
+        this_contact.active = int(kwargs.get('contact_active',1))
+        this_contact.dateedited = datetime.now()
+        this_contact.useridedited = usernow.user_id
+        DBS_JistEstimating.flush()
+
+###############################################################################
+# EstClientList
+###############################################################################
+
+    @expose()
+    def get_tbljistclientsite_dbase_query(self, *args, **kwargs):
+        usernow = request.identity['user']
+        limit = kwargs.get('limit', 100)
+        client_id = kwargs.get('client_id',None)
+        site_name = kwargs.get('site_name',None)
+        site_address1 = kwargs.get('site_address1',None)
+        site_address2 = kwargs.get('site_address2',None)
+        site_area = kwargs.get('site_area',None) 
+        if site_name:
+            searchphrase = "%"+site_name+"%" 
+            dbase_query = DBS_JistEstimating.query(EstClientSites). \
+                        filter(EstClientSites.site_name.like(searchphrase)). \
+                        filter(EstClientSites.site_client_id==client_id). \
+                        filter(EstClientSites.active==1). \
+                        filter(EstClientSites.businessid==usernow.businessid). \
+                        order_by(desc(EstClientSites.site_name)).limit(limit)
+        elif site_address1:
+            searchphrase = "%"+site_address1+"%" 
+            dbase_query = DBS_JistEstimating.query(EstClientSites). \
+                        filter(EstClientSites.site_address1.like(searchphrase)). \
+                        filter(EstClientSites.site_client_id==client_id). \
+                        filter(EstClientSites.active==1). \
+                        filter(EstClientSites.businessid==usernow.businessid). \
+                        order_by(desc(EstClientSites.site_address1)).limit(limit)
+        elif site_address2:
+            searchphrase = "%"+site_address2+"%" 
+            dbase_query = DBS_JistEstimating.query(EstClientSites). \
+                        filter(EstClientSites.site_address2.like(searchphrase)). \
+                        filter(EstClientSites.site_client_id==client_id). \
+                        filter(EstClientSites.active==1). \
+                        filter(EstClientSites.businessid==usernow.businessid). \
+                        order_by(desc(EstClientSites.site_address2)).limit(limit)
+        elif site_area:
+            searchphrase = "%"+site_area+"%" 
+            dbase_query = DBS_JistEstimating.query(EstClientSites). \
+                        filter(EstClientSites.site_area.like(searchphrase)). \
+                        filter(EstClientSites.site_client_id==client_id). \
+                        filter(EstClientSites.active==1). \
+                        filter(EstClientSites.businessid==usernow.businessid). \
+                        order_by(desc(EstClientSites.site_area)).limit(limit)
+        else:
+            dbase_query = DBS_JistEstimating.query(EstClientSites). \
+                        filter(EstClientSites.site_client_id==client_id). \
+                        filter(EstClientSites.active==1). \
+                        filter(EstClientSites.businessid==usernow.businessid). \
+                        order_by(desc(EstClientSites.site_id)).limit(limit)
+        return dbase_query
+
+    @expose()
+    def get_tbljistclientsite_dbase_query_count_all(self, *args, **kwargs):
+        usernow = request.identity['user']
+        return DBS_JistEstimating.query(EstClientSites). \
+                filter(EstClientSites.active==1). \
+                filter(EstClientSites.businessid==usernow.businessid). \
+                value(func.count(EstClientSites.site_id))
+
+    @expose()
+    def get_tbljistclientsite_by_site_id(self, *args, **kwargs):
+        return DBS_JistEstimating.query(EstClientSites). \
+                filter(EstClientSites.site_id==kwargs.get('site_id',None)). \
+                first()
+
+    @expose()
+    def save_clientsite_new(self, *args, **kwargs):
+        usernow = request.identity['user']
+        this_site = EstClientSites()
+        this_site.site_client_id = kwargs.get('site_client_id',None)
+        this_site.site_name = dbsafe(kwargs.get('site_name',None))
+        this_site.site_address1 = dbsafe(kwargs.get('site_address1',None))
+        this_site.site_address2 = dbsafe(kwargs.get('site_address2',None))
+        this_site.site_area = dbsafe(kwargs.get('site_area',None))
+        this_site.useridnew = usernow.user_id
+        this_site.useridedited = usernow.user_id
+        DBS_JistEstimating.add(this_site)
+        DBS_JistEstimating.flush()
+
+    @expose()
+    def save_clientsite_edit(self, *args, **kwargs):
+        this_site = DBS_JistEstimating.query(EstClientSites). \
+                         filter(EstClientSites.site_id==kwargs.get('site_id',None)).one()
+        usernow = request.identity['user']
+        this_site.site_client_id = kwargs.get('site_client_id',None)
+        this_site.site_name = dbsafe(kwargs.get('site_name',None))
+        this_site.site_address1 = dbsafe(kwargs.get('site_address1',None))
+        this_site.site_address2 = dbsafe(kwargs.get('site_address2',None))
+        this_site.site_area = dbsafe(kwargs.get('site_area',None))
+        this_site.active = int(kwargs.get('site_active',None))
+        this_site.dateedited = datetime.now() 
+        this_site.useridedited = usernow.user_id
+        DBS_JistEstimating.flush()
+
+###############################################################################
+# EstGenericBills
+###############################################################################
+
+    @expose()
+    def get_tblestgenericbills_dbase_query(self, *args, **kwargs):
+        usernow = request.identity['user']
+        bill_name = kwargs.get('bill_name',None)
+        bill_desc = kwargs.get('bill_desc',None) 
+        if bill_name:
+            searchphrase = "%"+bill_name+"%" 
+            dbase_query = DBS_JistEstimating.query(EstGenericBills). \
+                        filter(EstGenericBills.bill_name.like(searchphrase)). \
+                        filter(EstGenericBills.active==1). \
+                        filter(EstGenericBills.businessid==usernow.businessid). \
+                        order_by(desc(EstGenericBills.bill_name)).limit(100)
+        elif bill_desc:
+            searchphrase = "%"+bill_desc+"%" 
+            dbase_query = DBS_JistEstimating.query(EstGenericBills). \
+                        filter(EstGenericBills.bill_desc.like(searchphrase)). \
+                        filter(EstGenericBills.active==1). \
+                        filter(EstGenericBills.businessid==usernow.businessid). \
+                        order_by(desc(EstGenericBills.bill_desc)).limit(100)
+        else:
+            dbase_query = DBS_JistEstimating.query(EstGenericBills). \
+                    filter(EstGenericBills.active==1). \
+                    filter(EstGenericBills.businessid==usernow.businessid). \
+                    order_by(desc(EstGenericBills.bill_id)).limit(100)
+        return dbase_query
+
+    @expose()
+    def get_tblestgenericbills_dbase_query_count_all(self, *args, **kwargs):
+        usernow = request.identity['user']
+        return DBS_JistEstimating.query(EstGenericBills). \
+                filter(EstGenericBills.active==1). \
+                filter(EstGenericBills.businessid==usernow.businessid). \
+                value(func.count(EstGenericBills.bill_id))
+
+    @expose()
+    def get_tblestgenericbill_by_bill_id(self, *args, **kwargs):
+        return DBS_JistEstimating.query(EstGenericBills). \
+                filter(EstGenericBills.bill_id==kwargs.get('bill_id',None)). \
+                first()
+
+    @expose()
+    def save_estgenericbill_new(self, *args, **kwargs):
+        usernow = request.identity['user']
+        this_bill = EstGenericBills()
+        this_bill.bill_index = kwargs.get('bill_index',None)
+        this_bill.bill_name = dbsafe(kwargs.get('bill_name',None))
+        this_bill.bill_desc = dbsafe(kwargs.get('bill_desc',None))
+        this_bill.businessid = usernow.businessid
+        this_bill.useridnew = usernow.user_id
+        this_bill.useridedited = usernow.user_id
+        DBS_JistEstimating.add(this_bill)
+        DBS_JistEstimating.flush()
+
+    @expose()
+    def save_estgenericbill_edit(self, *args, **kwargs):
+        this_bill = DBS_JistEstimating.query(EstGenericBills). \
+                         filter(EstGenericBills.bill_id==kwargs['bill_id']).one()
+        usernow = request.identity['user']
+        this_bill.bill_index = kwargs.get('bill_index',None)
+        this_bill.bill_name = dbsafe(kwargs.get('bill_name',None))
+        this_bill.bill_desc = dbsafe(kwargs.get('bill_desc',None))
+        this_bill.active = int(kwargs.get('bill_active',1))
+        this_bill.businessid = usernow.businessid
+        this_bill.dateedited = datetime.now() 
+        this_bill.useridedited = usernow.user_id
+        DBS_JistEstimating.flush()
+
+###############################################################################
+# EstGenericBillItems
+###############################################################################
+
+    @expose()
+    def get_tblestgenericbillitems_dbase_query(self, *args, **kwargs):
+        usernow = request.identity['user']
+        bill_id = kwargs.get('bill_id',None)
+        item_tender_ref = kwargs.get('item_tender_ref',None)
+        item_desc = kwargs.get('item_desc',None)
+        item_rate = kwargs.get('item_rate',None)
+        if item_tender_ref:
+            searchphrase = "%"+item_tender_ref+"%" 
+            dbase_query = DBS_JistEstimating.query(EstGenericBillItems). \
+                        filter(EstGenericBillItems.item_tender_ref.like(searchphrase)). \
+                        filter(EstGenericBillItems.item_bill_id==bill_id). \
+                        filter(EstGenericBillItems.active==1). \
+                        filter(EstGenericBillItems.businessid==usernow.businessid). \
+                        order_by(desc(EstGenericBillItems.item_tender_ref)).limit(100)
+        elif item_desc:
+            searchphrase = "%"+item_desc+"%" 
+            dbase_query = DBS_JistEstimating.query(EstGenericBillItems). \
+                        filter(EstGenericBillItems.item_desc.like(searchphrase)). \
+                        filter(EstGenericBillItems.item_bill_id==bill_id). \
+                        filter(EstGenericBillItems.active==1). \
+                        filter(EstGenericBillItems.businessid==usernow.businessid). \
+                        order_by(desc(EstGenericBillItems.item_desc)).limit(100)
+        elif item_rate:
+            searchphrase = "%"+item_rate+"%" 
+            dbase_query = DBS_JistEstimating.query(EstGenericBillItems). \
+                        filter(EstGenericBillItems.item_rate.like(searchphrase)). \
+                        filter(EstGenericBillItems.item_bill_id==bill_id). \
+                        filter(EstGenericBillItems.active==1). \
+                        filter(EstGenericBillItems.businessid==usernow.businessid). \
+                        order_by(desc(EstGenericBillItems.item_rate)).limit(100)
+        else:
+            dbase_query = DBS_JistEstimating.query(EstGenericBillItems). \
+                    filter(EstGenericBillItems.active==1). \
+                    filter(EstGenericBillItems.item_bill_id==bill_id). \
+                    filter(EstGenericBillItems.businessid==usernow.businessid). \
+                    order_by(desc(EstGenericBillItems.item_id)).limit(100)
+        return dbase_query
+
+    @expose()
+    def get_tblestgenericbillitems_dbase_query_count_all(self, *args, **kwargs):
+        usernow = request.identity['user']
+        return DBS_JistEstimating.query(EstGenericBillItems). \
+                filter(EstGenericBillItems.active==1). \
+                filter(EstGenericBillItems.businessid==usernow.businessid). \
+                value(func.count(EstGenericBillItems.item_id))
+
+    @expose()
+    def get_tblestgenericbillitem_by_item_id(self, *args, **kwargs):
+        return DBS_JistEstimating.query(EstGenericBillItems). \
+                filter(EstGenericBillItems.item_id==kwargs.get('item_id',None)). \
+                first()
+
+    @expose()
+    def save_billitem_new(self, *args, **kwargs):
+        usernow = request.identity['user']
+        this_item = EstGenericBillItems()
+        this_item.item_bill_id = kwargs.get('item_bill_id',None)
+        this_item.item_tender_ref = kwargs.get('item_tender_ref',None)
+        this_item.item_index = kwargs.get('item_index',None)
+        this_item.item_item = kwargs.get('item_item',None)
+        this_item.item_desc = dbsafe(kwargs.get('item_desc',None))
+        this_item.item_unit = kwargs.get('item_unit',None)
+        this_item.item_qty = kwargs.get('item_qty',None)
+        this_item.item_rate = kwargs.get('item_rate',None)
+        this_item.item_total = kwargs.get('item_total',None)
+        this_item.businessid = usernow.businessid
+        this_item.useridnew = usernow.user_id
+        this_item.useridedited = usernow.user_id
+        DBS_JistEstimating.add(this_item)
+        DBS_JistEstimating.flush()
+
+    @expose()
+    def save_billitem_edit(self, *args, **kwargs):
+        this_item = DBS_JistEstimating.query(EstGenericBillItems). \
+                         filter(EstGenericBillItems.item_id==kwargs['item_id']).one()
+        usernow = request.identity['user']
+        this_item.item_bill_id = kwargs.get('item_bill_id',None)
+        this_item.item_tender_ref = kwargs.get('item_tender_ref',None)
+        this_item.item_index = kwargs.get('item_index',None)
+        this_item.item_item = kwargs.get('item_item',None)
+        this_item.item_desc = dbsafe(kwargs.get('item_desc',None))
+        this_item.item_unit = kwargs.get('item_unit',None)
+        this_item.item_qty = kwargs.get('item_qty',None)
+        this_item.item_rate = kwargs.get('item_rate',None)
+        this_item.item_total = kwargs.get('item_total',None)
+        this_item.active = int(kwargs.get('item_active',1))
+        this_item.dateedited = datetime.now() 
+        this_item.useridedited = usernow.user_id
+        this_item.businessid = usernow.businessid
+        DBS_JistEstimating.flush()
+
+###############################################################################
+# EstGenericBillItemWorkings
+###############################################################################
+
+    @expose()
+    def get_tblestgenericbillitemworkings_dbase_query(self, *args, **kwargs):
+        usernow = request.identity['user']
+        item_id = kwargs.get('item_id',None)
+        working_desc = kwargs.get('working_desc',None)
+        working_rate = kwargs.get('working_rate',None)
+        if working_desc:
+            searchphrase = "%"+working_desc+"%" 
+            dbase_query = DBS_JistEstimating.query(EstGenericBillItemWorkings). \
+                        filter(EstGenericBillItemWorkings.working_item_id==item_id). \
+                        filter(EstGenericBillItemWorkings.working_desc.like(searchphrase)). \
+                        filter(EstGenericBillItemWorkings.active==1). \
+                        filter(EstGenericBillItemWorkings.businessid==usernow.businessid). \
+                        order_by(desc(EstGenericBillItemWorkings.working_desc)).limit(100)
+        elif working_rate:
+            searchphrase = "%"+working_rate+"%" 
+            dbase_query = DBS_JistEstimating.query(EstGenericBillItemWorkings). \
+                        filter(EstGenericBillItemWorkings.working_item_id==item_id). \
+                        filter(EstGenericBillItemWorkings.working_rate.like(searchphrase)). \
+                        filter(EstGenericBillItemWorkings.active==1). \
+                        filter(EstGenericBillItemWorkings.businessid==usernow.businessid). \
+                        order_by(desc(EstGenericBillItemWorkings.working_rate)).limit(100)
+        else:
+            dbase_query = DBS_JistEstimating.query(EstGenericBillItemWorkings). \
+                    filter(EstGenericBillItemWorkings.working_item_id==item_id). \
+                    filter(EstGenericBillItemWorkings.active==1). \
+                    filter(EstGenericBillItemWorkings.businessid==usernow.businessid). \
+                    order_by(desc(EstGenericBillItemWorkings.working_id)).limit(100)
+        return dbase_query
+
+    @expose()
+    def get_tblestgenericbillitemworkings_dbase_query_count_all(self, *args, **kwargs):
+        usernow = request.identity['user']
+        return DBS_JistEstimating.query(EstGenericBillItemWorkings). \
+                filter(EstGenericBillItemWorkings.businessid==usernow.businessid). \
+                filter(EstGenericBillItemWorkings.active==1). \
+                value(func.count(EstGenericBillItemWorkings.working_id))
+
+    @expose()
+    def get_tblestgenericbillitemworking_by_working_id(self, *args, **kwargs):
+        return DBS_JistEstimating.query(EstGenericBillItemWorkings). \
+                filter(EstGenericBillItemWorkings.working_id==kwargs.get('working_id',None)). \
+                first()
+
+    @expose()
+    def save_billitemworking_new(self, *args, **kwargs):
+        usernow = request.identity['user']
+        this_working = EstGenericBillItemWorkings()
+        this_working.working_item_id = kwargs.get('working_item_id',None)
+        this_working.working_index = kwargs.get('working_index',None)
+        this_working.working_item = kwargs.get('working_item',None)
+        this_working.working_desc = dbsafe(kwargs.get('working_desc',None))
+        this_working.working_unit = kwargs.get('working_unit',None)
+        this_working.working_qty = kwargs.get('working_qty',None)
+        this_working.working_rate = kwargs.get('working_rate',None)
+        this_working.working_total = kwargs.get('working_total',None)
+        this_working.useridnew = usernow.user_id
+        this_working.useridedited = usernow.user_id
+        DBS_JistEstimating.add(this_working)
+        DBS_JistEstimating.flush()
+
+        billitem = self.get_tblestgenericbillitem_by_item_id(**kwargs)
+        billworkingssum = DBS_JistEstimating.query(EstGenericBillItemWorkings). \
+                filter(EstGenericBillItemWorkings.working_item_id==kwargs.get('item_id',None)). \
+                filter(EstGenericBillItemWorkings.active==1). \
+                filter(EstGenericBillItemWorkings.businessid==usernow.businessid). \
+                value(func.sum(EstGenericBillItemWorkings.working_total))
+
+        bill_qty = billitem.item_qty
+        bill_rate = billworkingssum / bill_qty
+        billitem.item_rate = bill_rate
+        billitem.item_total = billworkingssum
+        DBS_JistEstimating.flush()
+
+
+    @expose()
+    def save_billitemworking_edit(self, *args, **kwargs):
+        this_working = DBS_JistEstimating.query(EstGenericBillItemWorkings). \
+                         filter(EstGenericBillItemWorkings.working_id==kwargs['working_id']).one()
+        usernow = request.identity['user']
+        this_working.working_item_id = kwargs.get('working_item_id',None)
+        this_working.working_index = kwargs.get('working_index',None)
+        this_working.working_item = kwargs.get('working_item',None)
+        this_working.working_desc = dbsafe(kwargs.get('working_desc',None))
+        this_working.working_unit = kwargs.get('working_unit',None)
+        this_working.working_qty = kwargs.get('working_qty',None)
+        this_working.working_rate = kwargs.get('working_rate',None)
+        this_working.working_total = kwargs.get('working_total',None)
+        this_working.active = int(kwargs.get('working_active',1))
+        this_working.dateedited = datetime.now() 
+        this_working.useridedited = usernow.user_id
+        DBS_JistEstimating.flush()
+
+        billitem = self.get_tblestgenericbillitem_by_item_id(**kwargs)
+        billworkingssum = DBS_JistEstimating.query(EstGenericBillItemWorkings). \
+                filter(EstGenericBillItemWorkings.working_item_id==kwargs.get('item_id',None)). \
+                filter(EstGenericBillItemWorkings.active==1). \
+                filter(EstGenericBillItemWorkings.businessid==usernow.businessid). \
+                value(func.sum(EstGenericBillItemWorkings.working_total))
+
+        bill_qty = billitem.item_qty
+        bill_rate = billworkingssum / bill_qty
+        billitem.item_rate = bill_rate
+        billitem.item_total = billworkingssum
+        DBS_JistEstimating.flush()

@@ -1,0 +1,152 @@
+# -*- coding: utf-8 -*-
+
+import os
+from hashlib import sha256
+from datetime import datetime
+
+from sqlalchemy.orm import relation, synonym
+from sqlalchemy import Table, ForeignKey, Column
+from sqlalchemy.types import Unicode, Integer, DateTime, Boolean
+
+from rocket.model import DeclarativeBase, metadata, DBSession
+from rocket.lib.model_utils import PhatBase, common_columns, get_phat_table, get_type_table
+
+# ********************* Cabinets ***********************************#
+
+cabinet = {
+    '__tablename__': 'tbl_cabinet',
+    'name': common_columns.get('title_not_nullable')(),
+    'description': common_columns.get('description_not_nullable')(),
+    }
+Cabinet = get_phat_table(model_name='Cabinet', columndict=cabinet)
+
+cabinet_tag_link = {
+    '__tablename__': 'tbl_cabinet_tag_link',
+    'cabinet_id': common_columns.get('integer_not_nullable')(),
+    'tag_id': common_columns.get('integer_not_nullable')(),
+    }
+CabinetTagLink = get_phat_table(model_name='CabinetTagLink', columndict=cabinet_tag_link)
+
+cabinet_user_link = {
+    '__tablename__': 'tbl_cabinet_user_link',
+    'cabinet_id': common_columns.get('integer_not_nullable')(),
+    'user_id': common_columns.get('integer_not_nullable')(),
+    }
+CabinetUserLink = get_phat_table(model_name='CabinetUserLink', columndict=cabinet_user_link)
+
+# ********************* Drawer ***********************************#
+drawer = {
+    '__tablename__': 'tbl_drawer',
+    'cabinet_id': common_columns.get('integer_not_nullable')(),
+    'name': common_columns.get('title_not_nullable')(),
+    'description': common_columns.get('description')(),
+    }
+Drawer = get_phat_table(model_name='Drawer', columndict=drawer)
+
+drawer_tag_link = {
+    '__tablename__': 'tbl_drawer_tag_link',
+    'drawer_id': common_columns.get('integer_not_nullable')(),
+    'tag_id': common_columns.get('integer_not_nullable')(),
+    }
+DrawerTagLink = get_phat_table(model_name='DrawerTagLink', columndict=drawer_tag_link)
+
+drawer_user_link = {
+    '__tablename__': 'tbl_drawer_user_link',
+    'drawer_id': common_columns.get('integer_not_nullable')(),
+    'user_id': common_columns.get('integer_not_nullable')(),
+    }
+DrawerUserLink = get_phat_table(model_name='DrawerUserLink', columndict=drawer_user_link)
+
+# ********************* Drawer EntityPerson Link ***************#
+tbl_drawer_entity_person_link = {
+    '__tablename__': 'tbl_drawer_entity_person_link',
+    'drawer_id': common_columns.get('integer_not_nullable')(),
+    'entity_person_id': common_columns.get('integer_not_nullable')(),
+    }
+DrawerEntityPersonLink = get_phat_table(model_name='DrawerEntityPersonLink', columndict=tbl_drawer_entity_person_link)
+
+# ********************* Drawer Policy Link ***************#
+tbl_drawer_policy_link = {
+    '__tablename__': 'tbl_drawer_policy_link',
+    'drawer_id': common_columns.get('integer_not_nullable')(),
+    'policy_id': common_columns.get('integer_not_nullable')(),
+    }
+DrawerPolicyLink = get_phat_table(model_name='DrawerPolicyLink', columndict=tbl_drawer_policy_link)
+
+# ********************* Drawer Claim Link ***************#
+tbl_drawer_claim_link = {
+    '__tablename__': 'tbl_drawer_claim_link',
+    'drawer_id': common_columns.get('integer_not_nullable')(),
+    'claim_id': common_columns.get('integer_not_nullable')(),
+    }
+DrawerClaimLink = get_phat_table(model_name='DrawerClaimLink', columndict=tbl_drawer_claim_link)
+
+# ********************* File ***********************************#
+FileType = get_type_table(model_name='File', table_name='file')
+
+tbl_file = {
+    '__tablename__': 'tbl_file',
+    'drawer_id': common_columns.get('integer_not_nullable')(),
+    'long_name': common_columns.get('longtext_not_nullable')(),
+    'name': common_columns.get('longtext_not_nullable')(),
+    'description': common_columns.get('description_not_nullable')(),
+    'file_type_id': common_columns.get('integer_not_nullable')(),
+    'location': common_columns.get('longtext_not_nullable')(),
+    'size': common_columns.get('integer_not_nullable')(),
+    'version': common_columns.get('integer_not_nullable')(),
+    }
+File = get_phat_table(model_name='File', columndict=tbl_file)
+
+file_version_link = {
+    '__tablename__': 'tbl_file_version_link',
+    'new_file_id': common_columns.get('integer_not_nullable')(),
+    'previous_file_id': common_columns.get('integer_not_nullable')(),
+    }
+FileVersionLink = get_phat_table(model_name='FileVersionLink', columndict=file_version_link)
+
+file_download_history = {
+    '__tablename__': 'tbl_file_download_history',
+    'file_id': common_columns.get('integer_not_nullable')(),
+    'download_user_id': common_columns.get('integer_not_nullable')(),
+    }
+FileDownloadHistory = get_phat_table(model_name='FileDownloadHistory', columndict=file_download_history)
+
+file_tag_link = {
+    '__tablename__': 'tbl_file_tag_link',
+    'file_id': common_columns.get('integer_not_nullable')(),
+    'tag_id': common_columns.get('integer_not_nullable')(),
+    'count': common_columns.get('integer_not_nullable')(),
+    }
+FileTagLink = get_phat_table(model_name='FileTagLink', columndict=file_tag_link)
+
+# ********************* Tag Cloud  ************************ #
+tag = {
+    '__tablename__': 'tbl_tag',
+    'name': common_columns.get('title_not_nullable')(),
+    }
+Tag = get_phat_table(model_name='Tag', columndict=tag)
+
+stop_word = {
+    '__tablename__': 'tbl_stop_word',
+    'name': common_columns.get('title_not_nullable')(),
+    }
+StopWord = get_phat_table(model_name='StopWord', columndict=stop_word)
+
+# ********************* Extension MIME type  ************************ #
+MimeParentType = get_type_table(model_name='MimeParent', table_name='mime_parent')
+
+mime_type = {
+    '__tablename__': 'tbl_mime_type',
+    'mime_parent_type_id': common_columns.get('integer_not_nullable')(),
+    'name': common_columns.get('title_not_nullable')(),
+    }
+MimeType = get_phat_table(model_name='MimeType', columndict=mime_type)
+
+file_extension = {
+    '__tablename__': 'tbl_file_extension',
+    'mime_type_id': common_columns.get('integer_not_nullable')(),
+    'extension': common_columns.get('code_not_nullable')(),
+    'description': common_columns.get('description_not_nullable')(),
+    'file_type_id': common_columns.get('integer_not_nullable')(),
+    }
+FileExtension = get_phat_table(model_name='FileExtension', columndict=file_extension)

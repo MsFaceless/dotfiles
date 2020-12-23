@@ -1,0 +1,54 @@
+# -*- coding: utf-8 -*-
+"""Backoffice Controller"""
+
+from html import escape
+from tg import expose, require, predicates
+
+from calabash.model import *
+from calabash.lib.html_utils import *
+from calabash.lib.base import BaseController
+from calabash.lib.type_utils import TypeDictionary
+
+import calabash.lib.vault_utils as VAULT
+
+TYPEDICT = TypeDictionary()
+
+class BackofficeController(BaseController):
+
+    @require(predicates.not_anonymous())
+    @expose('calabash.templates.index')
+    def index(self, *args, **kwargs):
+        html = self.get_html()
+        javascript = ''
+        return dict(title='Calabash Gateway', html=html, javascript=javascript)
+
+    def get_html(self, *args, **kwargs):
+        htmltbl = self.get_message_template_htmltbl()
+        html = f"""
+        <hr>
+        {htmltbl}
+        """
+        return html
+
+    def get_message_template_htmltbl(self, *args, **kwargs):
+        outputlist = []
+        dbase_query = MessageTemplate.get_all('usage')
+        for item in dbase_query:
+            outputlist.append({
+                'usage': item.usage,
+                'message': escape(item.message),
+            })
+        dbcolumnlist=[
+            'usage',
+            'message',
+        ]
+        theadlist=[
+            'Usage',
+            'Message',
+        ]
+        tdclasslist = [
+            '',
+            '',
+        ]
+        htmltbl = build_html_table(outputlist, dbcolumnlist, theadlist, "message_template_htmltbl", tdclasslist)
+        return htmltbl

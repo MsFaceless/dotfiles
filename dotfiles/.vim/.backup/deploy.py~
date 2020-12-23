@@ -1,0 +1,112 @@
+import boto3
+import os
+from invoke import Responder
+import time
+from deploy_utils import *
+import getpass
+from fabric import Connection, Config
+
+curdir = os.path.abspath(os.path.curdir)
+
+live_dir = os.path.join(curdir, 'live')
+packages_path = os.path.join(curdir, 'packages')
+
+def assemble():
+    vpcs = assemble_vpcs()
+    return vpcs
+
+def deploy():
+    ensure_dir(live_dir)
+    vpcs = deploy_vpcs()
+    for vpc, vpc_dict in vpcs.items():
+        print(f"Deploying {vpc}")
+        vpc_live_path = os.path.join(live_dir, vpc)
+        print("VPC Live Path:", vpc_live_path)
+        ensure_dir(vpc_live_path)
+
+        for instance in vpc_dict.get("instances", []):
+            this_instance_dict = instance.get("instance", None)
+            this_instance = this_instance_dict.get("instance")
+            this_instance_name = this_instance_dict.get("name")
+            this_instance_config = this_instance_dict.get("config")
+            app_type = this_instance_config.get("APP_TYPE")
+            print(f"Instance: {this_instance_name}")
+            this_instance_ip = this_instance.public_ip_address
+            print(f"Instance IP: {this_instance_ip}")
+            this_instance_public_name = this_instance.public_dns_name
+            print(f"Instance Public Name: {this_instance_public_name}")
+            print(f"Instance Config: {this_instance_config}")
+            live_path = os.path.join(vpc_live_path, this_instance_name) 
+            ensure_dir(live_path)
+
+            domainscript_path = os.path.join(live_path, 'domainscript')
+            domainscript = generate_domainscript(config=this_instance_config, output_path=domainscript_path)
+
+            connection = Connection(f"ubuntu@{this_instance_public_name}", connect_kwargs={'key_filename':f"{this_instance_name}.pem"})
+            connection.run("mkdir /home/ubuntu/payload")
+            files = []
+            files.append({'remote_path':'/home/ubuntu/payload/domainscript', 'filepath':domainscript_path})
+            env_path = os.path.join(curdir, f'vpcs/{vpc}/{this_instance_name}')
+            files.append({'remote_path':'/home/ubuntu/payload/envfile', 'filepath':env_path})
+
+            
+            payload_path = os.path.join(packages_path, app_type)
+            for thisfile in os.listdir(payload_path):
+                thisfilepath = os.path.join(payload_path, thisfile)
+                files.append({'remote_path':f'/home/ubuntu/payload/{thisfile}', 'filepath':thisfilepath})
+
+            files_putted = put_files_to_server(connection, files)
+            watchers = build_watchers()
+            connection.run("sudo bash /home/ubuntu/payload/root_script", pty=True, watchers=watchers)
+    return
+
+def build_watchers():
+    watchers = []
+    sudo_responder = Responder(pattern=r'\[sudo\] password:', response='\n')
+    watchers.append(sudo_responder)
+
+    ssh_responder = Responder(pattern=r'Are you sure you want to continue connecting \(yes/no/\[fingerprint\]\)?', response='yes\n')
+    watchers.append(ssh_responder)
+
+    ssh_pass_responder = Responder(pattern=r"developer@dotxml.duckdns.org's password:", response="WolfNippleChips\n")
+    watchers.append(ssh_pass_responder)
+
+    mysql_root_prepass_responder = Responder(pattern=r"Enter current password for root \(enter for none\):", response="\n")
+    watchers.append(mysql_root_prepass_responder)
+
+    mysql_root_pass_responder = Responder(pattern=r"Change the root password? \[Y\/n\]", response="\n")
+    watchers.append(mysql_root_pass_responder)
+
+    mysql_root_responder = Responder(pattern=r"Set root password\? \[Y/n\]", response="\n")
+    watchers.append(mysql_root_responder)
+
+    mysql_pass_responder = Responder(pattern=r"New password:", response="developpass\n")
+    watchers.append(mysql_pass_responder)
+
+    mysql_repeat_pass_responder = Responder(pattern=r"New password:", response="developpass\n")
+    watchers.append(mysql_repeat_pass_responder)
+
+    mysql_anon_users_responder = Responder(pattern=r"Remove anonymous users\? \[Y/n\]", response="\n")
+    watchers.append(mysql_anon_users_responder)
+
+    mysql_root_login_responder = Responder(pattern=r"Disallow root login remotely\? \[Y/n\]", response="\n")
+    watchers.append(mysql_root_login_responder)
+
+    mysql_testdb_responder = Responder(pattern=r"Remove test database and access to it\? \[Y/n\]", response="\n")
+    watchers.append(mysql_testdb_responder)
+
+    mysql_priv_responder = Responder(pattern=r"Reload privilege tables now\? \[Y/n\]", response="\n")
+    watchers.append(mysql_priv_responder)
+    return watchers
+
+def put_files_to_server(connection=None, files=[]):
+    if not connection: return False
+    for filedict in files:
+        result = connection.put(filedict.get('filepath'), remote=filedict.get('remote_path'))
+        print(result)
+
+
+
+if __name__ == "__main__":
+    #deploy()
+    assemble()

@@ -1,0 +1,20 @@
+# -*- coding: utf-8 -*-
+"""Management Controller"""
+
+from tg import expose
+
+from calabash import model
+from calabash.lib.base import BaseController
+from calabash.lib.html_crud_utils import CrudListHtml
+
+class ManagementController(BaseController):
+
+    @expose('json')
+    def get_list_html(self, *args, **kwargs):
+        table = kwargs.get('table', None)
+        table = getattr(model, table, None)
+        if not table: return dict(html='')
+        kwargs = {'model' : table}
+        crud_list = CrudListHtml(**kwargs)
+        html = crud_list.get_html()
+        return dict(html=html)

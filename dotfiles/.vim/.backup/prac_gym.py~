@@ -1,0 +1,5 @@
+#!/bin/python
+
+import gym
+
+print(dir(gym))

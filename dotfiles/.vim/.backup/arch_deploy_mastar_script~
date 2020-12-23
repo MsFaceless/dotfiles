@@ -1,0 +1,31 @@
+#!/usr/bin/bash
+
+clone_url="ssh://developer@dotxml.duckdns.org:45678/repos/tripstar/mastar"
+
+cd $HOME
+enviros_dir="$HOME/enviros"
+vertical_dir="$enviros_dir/tripstar"
+mkdir vertical_dir -p
+env_dir="$vertical_dir/mastar_env"
+
+/usr/bin/python3.8 -m venv $env_dir
+wait
+cd $env_dir
+mastar_dir="$env_dir/mastar"
+rm -r $mastar_dir
+hg clone $clone_url $mastar_dir
+cd $mastar_dir
+hg update --clean default
+
+utils_dir="$mastar_dir/utils"
+
+cd $utils_dir
+source arch_env_setup_script
+wait
+cd $utils_dir
+source populate_testing_input_data
+wait
+cd $mastar_dir
+echo "Running $mastar_dir/mastar.py"
+$env_dir/bin/python mastar.py
+echo "There should be output here"

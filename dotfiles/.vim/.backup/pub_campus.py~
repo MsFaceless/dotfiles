@@ -1,0 +1,20 @@
+import requests
+from datetime import datetime
+
+guid = "1"
+target = "https://gateway.calabashpay.co.za"
+pub_target = f"{target}/pubcampus"
+
+def post_to_campus_user(guid=None):
+    if not guid: return False
+    params = {'id':guid}
+    data = {
+        'date':f'{datetime.now().strftime(format="%D")}',
+        'time':f'{datetime.now().strftime(format="%T")}',
+    }
+    r = requests.post(pub_target, params=params, data=data)
+    return r
+
+if __name__ == '__main__':
+    response = post_to_campus_user(guid)
+    print(response.text)

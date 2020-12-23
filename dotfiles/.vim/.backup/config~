@@ -1,0 +1,208 @@
+host github.com
+ HostName github.com
+ IdentityFile ~/.ssh/gitprivlj
+ Compression yes
+ User git
+
+host homebase
+	HostName ssh.pythonanywhere.com
+	IdentityFile ~/.ssh/id_rsa
+ Compression yes
+	User hanselot
+
+host dev
+ HostName dotxml.duckdns.org
+ IdentityFile ~/.ssh/id_rsa
+ Compression yes
+ User developer
+ Port 45678
+
+host yoda
+ ProxyJump dev
+ HostName 192.168.0.3
+ IdentityFile ~/.ssh/id_rsa
+ Compression yes
+ User developer
+ Port 22
+
+host qa_webserver
+ ProxyJump dev
+ HostName 192.168.0.21
+ Compression yes
+ IdentityFile ~/.ssh/id_rsa
+ User qadeveloper
+
+host tripkeeper 
+ ProxyJump dev
+ HostName 192.168.0.6
+ Compression yes
+ IdentityFile ~/.ssh/id_rsa
+ User developer
+
+host cam 
+ ProxyJump dev
+ HostName 192.168.0.80
+ Compression yes
+ IdentityFile ~/.ssh/id_rsa
+ User camilla
+
+host camwifi
+ ProxyJump dev
+ HostName 192.168.0.81
+ Compression yes
+ IdentityFile ~/.ssh/id_rsa
+ User camilla
+
+host taffie
+ ProxyJump dev
+ HostName 192.168.0.92
+ Compression yes
+ IdentityFile ~/.ssh/id_rsa
+ User tmutero
+
+host taffie_local
+ HostName 192.168.0.92
+ IdentityFile ~/.ssh/id_rsa
+ Compression yes
+ User tmutero
+
+host trev
+ ProxyJump dev
+ HostName 192.168.0.76
+ Compression yes
+ IdentityFile ~/.ssh/id_rsa
+ User trevorjaro
+
+host loafer 
+ HostName 192.168.89.113
+ IdentityFile ~/.ssh/loafer
+ Compression yes
+ User hans
+
+
+host leza_qa_backup
+ ProxyJump dev
+ HostName ec2-13-244-116-80.af-south-1.compute.amazonaws.com
+ IdentityFile /home/hans/.ssh/stacks/rocket/leza/qa/backup_stack_backup.pem
+ Compression yes
+ User ubuntu 
+
+host leza_qa_gateway
+ ProxyJump dev
+ HostName qagateway.rocketinsure.co.za
+ IdentityFile /home/hans/.ssh/stacks/rocket/leza/qa/core_gateway.pem
+ Compression yes
+ User ubuntu 
+
+host leza_qa_gateway_galera
+ ProxyJump dev
+ HostName ec2-13-244-68-246.af-south-1.compute.amazonaws.com
+ IdentityFile /home/hans/.ssh/stacks/rocket/leza/qa/core_gateway_galera.pem
+ Compression yes
+ User ubuntu 
+
+host leza_qa_rocket
+ ProxyJump dev
+ HostName qa.rocketinsure.co.za
+ IdentityFile /home/hans/.ssh/stacks/rocket/leza/qa/core_rocket.pem
+ Compression yes
+ User ubuntu
+
+host leza_qa_rocket_galera
+ ProxyJump dev
+ HostName ec2-13-245-12-156.af-south-1.compute.amazonaws.com
+ IdentityFile /home/hans/.ssh/stacks/rocket/leza/qa/core_rocket_galera.pem
+ Compression yes
+ User ubuntu 
+
+
+host eiffel_qa_vault
+ ProxyJump dev
+ HostName vault.calabashpay.co.za
+ IdentityFile /home/hans/.ssh/stacks/calabash/eiffel/qa/vault.pem
+ Compression yes
+ User ubuntu
+
+host eiffel_qa_gateway
+ ProxyJump dev
+ HostName gateway.calabashpay.co.za
+ Compression yes
+ IdentityFile /home/hans/.ssh/stacks/calabash/eiffel/qa/gateway.pem
+ User ubuntu
+
+host eiffel_qa_website
+ ProxyJump dev
+ HostName www.calabashpay.co.za
+ Compression yes
+ IdentityFile /home/hans/.ssh/stacks/calabash/eiffel/qa/www.pem
+ User ubuntu
+
+host eiffel_qa_merchant
+ ProxyJump dev
+ HostName merchant.calabashpay.co.za
+ Compression yes
+ IdentityFile /home/hans/.ssh/stacks/calabash/eiffel/qa/merchant.pem
+ User ubuntu
+
+host eiffel_qa_admin
+ ProxyJump dev
+ HostName admin.calabashpay.co.za
+ Compression yes
+ IdentityFile /home/hans/.ssh/stacks/calabash/eiffel/qa/admin.pem
+ User ubuntu
+
+host eiffel_qa_trading
+ ProxyJump dev
+ HostName trading.calabashpay.co.za
+ Compression yes
+ IdentityFile /home/hans/.ssh/stacks/calabash/eiffel/qa/trading.pem
+ User ubuntu
+
+host omvim_mockapi
+ ProxyJump dev
+ HostName mocket.dotxmltech.com
+ Compression yes
+ IdentityFile /home/hans/.ssh/omvim_mockapi.pem
+ User ubuntu
+
+host dotxml_qa_backup
+ ProxyJump dev
+ HostName ec2-13-244-106-49.af-south-1.compute.amazonaws.com
+ IdentityFile /home/hans/.ssh/stacks/rocket/dotxml/qa/backup_stack_backup.pem
+ Compression yes
+ User ubuntu 
+
+host dotxml_qa_gateway
+ ProxyJump dev
+ HostName ec2-13-244-110-65.af-south-1.compute.amazonaws.com
+ IdentityFile /home/hans/.ssh/stacks/rocket/dotxml/qa/core_gateway.pem
+ Compression yes
+ User ubuntu 
+
+host dotxml_qa_gateway_galera
+ ProxyJump dev
+ HostName ec2-13-244-159-65.af-south-1.compute.amazonaws.com
+ IdentityFile /home/hans/.ssh/stacks/rocket/dotxml/qa/core_gateway_galera.pem
+ Compression yes
+ User ubuntu 
+
+host dotxml_qa_rocket
+ ProxyJump dev
+ HostName ec2-13-244-166-209.af-south-1.compute.amazonaws.com
+ IdentityFile /home/hans/.ssh/stacks/rocket/dotxml/qa/core_rocket.pem
+ Compression yes
+ User ubuntu
+
+host dotxml_qa_rocket_galera
+ ProxyJump dev
+ HostName ec2-13-244-113-15.af-south-1.compute.amazonaws.com
+ IdentityFile /home/hans/.ssh/stacks/rocket/dotxml/qa/core_rocket_galera.pem
+ Compression yes
+ User ubuntu 
+
+host omvim_certgen
+ ProxyJump dev
+ HostName ec2-13-244-87-35.af-south-1.compute.amazonaws.com
+ IdentityFile /home/hans/.ssh/stacks/rocket/omvim/omvim_certgen.pem
+ Compression yes
+ User ubuntu 

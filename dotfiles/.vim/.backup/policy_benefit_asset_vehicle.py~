@@ -1,0 +1,643 @@
+# -*- coding: utf-8 -*-
+"""Policy Benefit Asset Vehicle module"""
+
+import logging
+
+from tg import predicates, require, expose, request, redirect
+from tg.i18n import ugettext as _
+from tg.i18n import lazy_ugettext as l_
+
+from rocket.model import *
+
+from rocket.lib.tg_utils import *
+from rocket.lib.base import BaseController
+from rocket.lib.type_utils import TypeDictionary
+
+from rocket.controllers.common import CommonController
+from rocket.controllers.product import ProductController
+
+from sqlalchemy import func, desc, asc, or_
+
+LOGGER = logging.getLogger(__name__)
+
+TYPEUTIL = TypeDictionary()
+COMMON = CommonController()
+DBQUERY_LIMIT = 15
+
+POLICY_BENEFIT_INSURED_ASSET_ID = 1
+
+
+class PolicyBenefitAssetVehicleController(BaseController):
+
+    @expose()
+    def _default(self, *args, **kwargs):
+        return 'This page is not available.'
+
+###############################################################################
+# Policy Benefit Asset Vehicle - List
+###############################################################################
+
+    @require(predicates.not_anonymous())
+    @expose('rocket.templates.generic')
+    def index(self, *args, **kwargs):
+        html = self.get_policy_benefit_asset_vehicle_html()
+        javascript = self.get_javascript_policy_benefit_asset_vehicle_onload()
+        title = _("Policy Benefit Asset Vehicle")
+        return dict(title=title, html=html, javascript=javascript)
+
+    @expose()
+    def get_policy_benefit_asset_vehicle_html(self, *args, **kwargs):
+        outputlist = []
+        dbase_query = DBSession.query(PolicyBenefitInsuredAssetVehicle). \
+            filter(PolicyBenefitInsuredAssetVehicle.active == True). \
+            filter(PolicyBenefitInsuredAssetVehicle.policy_benefit_insured_asset_id == POLICY_BENEFIT_INSURED_ASSET_ID). \
+            order_by(PolicyBenefitInsuredAssetVehicle.added.desc()). \
+            limit(DBQUERY_LIMIT)
+
+        for item in dbase_query:
+            # Get Vehicle Category Name
+            vehicle_category_id = item.asset_vehicle_category_id
+            vehicle_category_query = AssetVehicleCategory.by_id(vehicle_category_id)
+            vehicle_category_name = vehicle_category_query.name
+
+            # Get Vehicle Registration Number
+            vehicle_registration_number = item.registration_number
+
+            # Get Vehicle VIN Number
+            vehicle_vin_number = item.vin_number
+
+            # Get Insured Type Name
+            insured_type_id = item.policy_benefit_insured_asset_vehicle_insured_type_id
+            vehicle_insured_type_name = TYPEUTIL.get_pretty_name("policy_benefit_insured_asset_vehicle_insured_type",
+                                                                 insured_type_id)
+
+            # Get Policy Benefit Asset Vehicle Id
+            policy_benefit_insured_asset_vehicle_id = item.id
+
+            # Get Rate Table Line Item Id
+            rate_table_line_item_id = item.rate_table_line_item_vehicle_id
+
+            outputlist.append({
+                'vehicle_category': f"<div class='edit asset_vehicle_edit' policy_benefit_insured_asset_vehicle_id='{policy_benefit_insured_asset_vehicle_id}' vehicle_category_id='{vehicle_category_id}' vehicle_insured_type_id='{insured_type_id}' rate_table_line_item_id='{rate_table_line_item_id}' vehicle_vin_number='{vehicle_vin_number}' vehicle_registration_number='{vehicle_registration_number}'>{vehicle_category_name}</div>",
+                'vehicle_registration_number': vehicle_registration_number,
+                'vehicle_vin_number': vehicle_vin_number,
+                'vehicle_insured_type_name': vehicle_insured_type_name,
+                'deactivate': f"<div class='policy_benefit_asset_vehicle_deactivate' policy_benefit_insured_asset_vehicle_id='{policy_benefit_insured_asset_vehicle_id}'>Deactivate</div>"
+            })
+        dbcolumnlist = [
+            'vehicle_category',
+            'vehicle_registration_number',
+            'vehicle_vin_number',
+            'vehicle_insured_type_name',
+            'deactivate',
+        ]
+        theadlist = [
+            'Vehicle Category',
+            'Registration Number',
+            'VIN Number',
+            'Insured Type',
+            '',
+        ]
+        tdclasslist = [
+            'action_link',
+            '',
+            '',
+            '',
+            'action_link text-right',
+        ]
+        htmltable = build_html_table(outputlist, dbcolumnlist, theadlist, "policy_benefit_asset_vehicle_table",
+                                     tdclasslist)
+        html = f"""
+                    <div class="row">
+                        <div class="col-md-12">
+                            <div class="card">
+                                <div class="card-header">
+                                    <div class="row d-flex">
+                                        <div class="col-md-6">
+                                             <h4 class="card-title">{_('Policy Benefit Asset Vehicle')}</h4>
+                                        </div>
+                                        <div class="col-md-6 text-right">
+                                            <button id="create_new_policy_benefit_asset_vehicle" class="btn btn-primary policy_benefit_insured_asset_id='{POLICY_BENEFIT_INSURED_ASSET_ID}' ml-auto">Create New Policy Benefit Asset Vehicle</button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="card-body">
+                                    <div id='div_policy_benefit_asset_vehicle_table' class="table-responsive">
+                                        {htmltable}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                """
+        return html
+
+    @expose()
+    def get_javascript_policy_benefit_asset_vehicle_onload(self, *args, **kwargs):
+        javascript = """
+                $("#create_new_policy_benefit_asset_vehicle").click(function(){
+                    var policy_benefit_insured_asset_id = $(this).attr('policy_benefit_insured_asset_id');
+                    var kwargs = {'policy_benefit_insured_asset_id' : policy_benefit_insured_asset_id};
+                    $.redirect('/policy_benefit_asset_vehicle/new', kwargs);
+                });
+                $('.policy_benefit_asset_vehicle_deactivate').click(function() {
+                    var policy_benefit_insured_asset_vehicle_id = $(this).attr('policy_benefit_insured_asset_vehicle_id');
+                    var kwargs = {'policy_benefit_insured_asset_vehicle_id': policy_benefit_insured_asset_vehicle_id};
+                    $.post('/policy_benefit_asset_vehicle/deactivate_policy_benefit_asset_vehicle?', kwargs, function(data) {
+                        $.redirect('/policy_benefit_asset_vehicle/index');
+                        return false;
+                    });
+                    return false;
+                });
+                $('.asset_vehicle_edit').click(function() {
+                    var policy_benefit_insured_asset_vehicle_id = $(this).attr('policy_benefit_insured_asset_vehicle_id');
+                    var vehicle_category_id = $(this).attr('vehicle_category_id');
+                    var vehicle_insured_type_id = $(this).attr('vehicle_insured_type_id');
+                    var rate_table_line_item_id = $(this).attr('rate_table_line_item_id');
+                    var vehicle_vin_number = $(this).attr('vehicle_vin_number');
+                    var vehicle_registration_number = $(this).attr('vehicle_registration_number');
+                    var kwargs = {'policy_benefit_insured_asset_vehicle_id': policy_benefit_insured_asset_vehicle_id,
+                        'vehicle_category_id': vehicle_category_id,
+                        'vehicle_insured_type_id': vehicle_insured_type_id,
+                        'rate_table_line_item_id': rate_table_line_item_id,
+                        'vehicle_vin_number': vehicle_vin_number,
+                        'vehicle_registration_number': vehicle_registration_number,
+                    };
+                    $.redirect('/policy_benefit_asset_vehicle/edit', kwargs);
+                });
+                """
+        return javascript
+
+    @expose()
+    def deactivate_policy_benefit_asset_vehicle(self, *args, **kwargs):
+        policy_benefit_insured_asset_vehicle_id = kwargs.get('policy_benefit_insured_asset_vehicle_id', None)
+        if not policy_benefit_insured_asset_vehicle_id:
+            print("Could not find policy_benefit_insured_asset_vehicle_id to deactivate")
+            return ''
+        policy_benefit_insured_asset_vehicle = PolicyBenefitInsuredAssetVehicle.by_id(
+            policy_benefit_insured_asset_vehicle_id)
+        if not policy_benefit_insured_asset_vehicle:
+            print("Could not find active policy_benefit_insured_asset")
+            return ''
+
+        policy_benefit_insured_asset_vehicle.active = False
+        DBSession.add(policy_benefit_insured_asset_vehicle)
+        DBSession.flush()
+        return ''
+
+###############################################################################
+# Policy Benefit Asset Vehicle - Edit
+###############################################################################
+
+    @require(predicates.not_anonymous())
+    @expose('rocket.templates.generic')
+    def edit(self, *args, **kwargs):
+        html = self.get_edit_policy_benefit_asset_vehicle_html(**kwargs)
+        javascript = self.get_edit_policy_benefit_asset_vehicle_javascript_onload()
+        title = _("Edit Policy Benefit Asset Vehicle")
+        return dict(title=title, html=html, javascript=javascript)
+
+    def get_edit_policy_benefit_asset_vehicle_html(self, *args, **kwargs):
+        policy_benefit_insured_asset_vehicle_id = kwargs.get('policy_benefit_insured_asset_vehicle_id', None)
+        if not policy_benefit_insured_asset_vehicle_id:
+            print("no policy_benefit_insured_asset_vehicle_id")
+            return ''
+        vehicle_category_id = kwargs.get('vehicle_category_id', None)
+        if not vehicle_category_id:
+            print("no vehicle_category_id")
+            return ''
+        vehicle_insured_type_id = kwargs.get('vehicle_insured_type_id', None)
+        if not vehicle_insured_type_id:
+            print("no vehicle_insured_type_id")
+            return ''
+        rate_table_line_item_id = kwargs.get('rate_table_line_item_id', None)
+        if not rate_table_line_item_id:
+            print("no rate_table_line_item_id")
+            return ''
+        vehicle_vin_number = kwargs.get('vehicle_vin_number', None)
+        if not vehicle_vin_number:
+            print("no vehicle_vin_number")
+            return ''
+        vehicle_registration_number = kwargs.get('vehicle_registration_number', None)
+        if not vehicle_registration_number:
+            print("no vehicle_registration_number")
+            return ''
+
+        policy_benefit_asset_vehicle_category_selectbox = self.policy_benefit_asset_vehicle_category_selectbox(**{'vehicle_category_id': vehicle_category_id})
+        vehicle_insured_type_selectbox = self.vehicle_insured_type_selectbox(**{'vehicle_insured_type_id': vehicle_insured_type_id})
+        rate_table_line_item_selectbox = self.rate_table_line_item_selectbox(**kwargs)
+        html = f"""
+                    <div class="row">
+                        <div class="col-md-12">
+                            <div class="card">
+                                <div class="card-header">
+                                    <div class="row d-flex">
+                                        <div class="col-md-6">
+                                             <h4 class="card-title">Edit Policy Benefit Asset Vehicle</h4>
+                                        </div>
+                                        <div class="col-md-6 text-right">
+                                            <button id="save_edit_policy_benefit_asset_vehicle" class="btn btn-primary ml-auto" policy_benefit_insured_asset_vehicle_id='{policy_benefit_insured_asset_vehicle_id}'>Save Policy Benefit Asset Vehicle</button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="card-body">
+                                    <form id="form_edit_policy_benefit_asset_vehicle">
+                                        <div class="row">
+                                            <div class="col-md-6">
+                                                <div class="form-group row" id=div_vehicle_category>
+                                                    <label class="col-md-3 col-form-label" required>{_('Vehicle Category')}</label>
+                                                    <div class="col-md-9">
+                                                        {policy_benefit_asset_vehicle_category_selectbox}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-6">
+                                                <div class="form-group row" id=div_vehicle_insured_type>
+                                                    <label class="col-md-3 col-form-label" required>{_('Insured Type')}</label>
+                                                    <div class="col-md-9">
+                                                        {vehicle_insured_type_selectbox}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="row">
+                                            <div class="col-md-6">
+                                                <div class="form-group row" id=div_rate_table_line_item>
+                                                    <label class="col-md-3 col-form-label" required>{_('Rate Table Line Item')}</label>
+                                                    <div class="col-md-9">
+                                                        {rate_table_line_item_selectbox}
+                                                    </div>
+                                                </div>
+                                                <div class="form-group row">
+                                                    <label class="col-md-3 col-form-label" required>{_('VIN Number')}</label>
+                                                    <div class="col-md-9">
+                                                        <input id="vehicle_vin_number" type="text" name="vehicle_vin_number" class="form-control" required='true' value='{vehicle_vin_number}'>
+                                                    </div>
+                                                </div>
+                                                <div class="form-group row">
+                                                    <label class="col-md-3 col-form-label" required>{_('Registration Number')}</label>
+                                                    <div class="col-md-9">
+                                                        <input id="vehicle_registration_number" type="text" name="vehicle_registration_number" class="form-control" required='true' value='{vehicle_registration_number}'>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </form>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                """
+        return html
+
+    def get_edit_policy_benefit_asset_vehicle_javascript_onload(self, *args, **kwargs):
+        javascript = """
+            setFormValidation('#form_edit_policy_benefit_asset_vehicle');
+
+            $('.selectpicker#vehicle_category_id').change(function() {
+                var vehicle_category_id = $(this).val();
+                var vehicle_insured_type_id = $('#form_edit_policy_benefit_asset_vehicle').find('#vehicle_insured_type_id').val();
+                var kwargs = {
+                    'vehicle_category_id': vehicle_category_id,
+                    'vehicle_insured_type_id': vehicle_insured_type_id,
+                }
+                $('#div_rate_table_line_item').load('/policy_benefit_asset_vehicle/get_edit_rate_table_div?', kwargs, function(data) {
+                    return false;
+                });
+                return false;
+            });
+
+            $('.selectpicker#vehicle_insured_type_id').change(function() {
+                var vehicle_category_id = $('.selectpicker#vehicle_category_id').val();
+                var vehicle_insured_type_id = $(this).val();
+                var kwargs = {
+                    'vehicle_category_id': vehicle_category_id,
+                    'vehicle_insured_type_id': vehicle_insured_type_id,
+                }
+                $('#div_rate_table_line_item').load('/policy_benefit_asset_vehicle/get_edit_rate_table_div?', kwargs, function(data) {
+                    return false;
+                });
+                return false;
+            });
+
+            $('#save_edit_policy_benefit_asset_vehicle').click(function(){
+                var policy_benefit_insured_asset_vehicle_id = $(this).attr('policy_benefit_insured_asset_vehicle_id');
+
+                var valid = FormIsValid('#form_edit_policy_benefit_asset_vehicle');
+                if(valid) {
+                    var formserial = $('#form_edit_policy_benefit_asset_vehicle').serialize();
+                    formserial += '&policy_benefit_insured_asset_vehicle_id='+policy_benefit_insured_asset_vehicle_id;
+                    $.post('/policy_benefit_asset_vehicle/add_to_db_edit_policy_benefit_asset_vehicle?', formserial, function(data){
+                        $.redirect('/policy_benefit_asset_vehicle/index');
+                        return false;
+                    });
+                };
+            });
+        """
+        return javascript
+
+    @expose()
+    def get_edit_rate_table_div(self, *args, **kwargs):
+        rate_table_line_item_selectbox = self.rate_table_line_item_selectbox(**kwargs)
+        html = f"""
+            <label class="col-md-3 col-form-label" required>{_('Rate Table Line Item')}</label>
+            <div class="col-md-9">
+                {rate_table_line_item_selectbox}
+            </div>
+        """
+        return html
+
+    @expose()
+    def add_to_db_edit_policy_benefit_asset_vehicle(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+
+        policy_benefit_insured_asset_vehicle_id = kwargs.get('policy_benefit_insured_asset_vehicle_id', None)
+        if not policy_benefit_insured_asset_vehicle_id:
+            print("no policy_benefit_insured_asset_vehicle_id")
+            return ''
+        vehicle_category_id = kwargs.get('vehicle_category_id', None)
+        if not vehicle_category_id:
+            print("no vehicle_category_id")
+            return ''
+        vehicle_insured_type_id = kwargs.get('vehicle_insured_type_id', None)
+        if not vehicle_insured_type_id:
+            print("no vehicle_insured_type_id")
+            return ''
+        rate_table_line_item_id = kwargs.get('rate_table_line_item_id', None)
+        if not rate_table_line_item_id:
+            print("no rate_table_line_item_id")
+            return ''
+        vehicle_vin_number = kwargs.get('vehicle_vin_number', None)
+        if not vehicle_vin_number:
+            print("no vehicle_vin_number")
+            return ''
+        vehicle_registration_number = kwargs.get('vehicle_registration_number', None)
+        if not vehicle_registration_number:
+            print("no vehicle_registration_number")
+            return ''
+
+        policy_benefit_insured_asset_vehicle = PolicyBenefitInsuredAssetVehicle.by_id(policy_benefit_insured_asset_vehicle_id)
+        policy_benefit_insured_asset_vehicle.asset_vehicle_category_id = vehicle_category_id
+        policy_benefit_insured_asset_vehicle.rate_table_line_item_vehicle_id = rate_table_line_item_id
+        policy_benefit_insured_asset_vehicle.vin_number = vehicle_vin_number
+        policy_benefit_insured_asset_vehicle.registration_number = vehicle_registration_number
+        policy_benefit_insured_asset_vehicle.policy_benefit_insured_asset_vehicle_insured_type_id = vehicle_insured_type_id
+        policy_benefit_insured_asset_vehicle.added_by = usernow.id
+
+        DBSession.add(policy_benefit_insured_asset_vehicle)
+        DBSession.flush()
+        return ''
+
+###############################################################################
+# Policy Benefit Asset Vehicle - New
+###############################################################################
+
+    @require(predicates.not_anonymous())
+    @expose('rocket.templates.generic')
+    def new(self, *args, **kwargs):
+        html = self.get_new_policy_benefit_asset_vehicle_html(**kwargs)
+        javascript = self.get_new_policy_benefit_asset_vehicle_javascript_onload()
+        title = _("New Policy Benefit Asset Vehicle")
+        return dict(title=title, html=html, javascript=javascript)
+
+    def get_new_policy_benefit_asset_vehicle_html(self, *args, **kwargs):
+        policy_benefit_asset_vehicle_category_selectbox = self.policy_benefit_asset_vehicle_category_selectbox()
+        html = f"""
+                <div class="row">
+                    <div class="col-md-12">
+                        <div class="card">
+                            <div class="card-header">
+                                <div class="row d-flex">
+                                    <div class="col-md-6">
+                                         <h4 class="card-title">{_('New Policy Benefit Asset Vehicle')}</h4>
+                                    </div>
+                                    <div class="col-md-6 text-right">
+                                        <button id="save_new_policy_benefit_asset_vehicle" class="btn btn-primary policy_benefit_insured_asset_id='{POLICY_BENEFIT_INSURED_ASSET_ID}' ml-auto">Save New Policy Benefit Asset Vehicle</button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="card-body">
+                                <form id="form_new_policy_benefit_asset_vehicle">
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <div class="form-group row">
+                                                <label class="col-md-3 col-form-label" required>{_('Vehicle Category')}</label>
+                                                <div class="col-md-9">
+                                                    {policy_benefit_asset_vehicle_category_selectbox}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="form-group row" id=div_vehicle_insured_type>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="row" id=div_rate_table_line_item>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            """
+        return html
+
+    def policy_benefit_asset_vehicle_category_selectbox(self, *args, **kwargs):
+        selected = kwargs.get('vehicle_category_id', None)
+        if selected:
+            kwargs['selected'] = int(selected)
+        kwargs['required'] = True
+        outputdict = {}
+        vehicle_category_query = DBSession.query(AssetVehicleCategory). \
+            filter(AssetVehicleCategory.active == True). \
+            order_by(AssetVehicleCategory.name.desc()). \
+            all()
+        for category in vehicle_category_query:
+            outputdict.update({category.id: category.name})
+        kwargs['outputdict'] = outputdict
+        kwargs['id'] = 'vehicle_category_id'
+        return create_selectbox_html(**kwargs)
+
+    def vehicle_insured_type_selectbox(self, *args, **kwargs):
+        selected = kwargs.get('vehicle_insured_type_id', None)
+        if selected:
+            kwargs['selected'] = int(selected)
+        kwargs['required'] = True
+        kwargs['outputdict'] = TYPEUTIL.get_dict_of_types("policy_benefit_insured_asset_vehicle_insured_type")
+        kwargs['id'] = 'vehicle_insured_type_id'
+        return create_selectbox_html(**kwargs)
+
+    def get_new_policy_benefit_asset_vehicle_javascript_onload(self, *args, **kwargs):
+        javascript = """
+                setFormValidation('#form_new_policy_benefit_asset_vehicle');
+
+                $('.selectpicker#vehicle_category_id').change(function() {
+
+                    $('#div_vehicle_insured_type').load('/policy_benefit_asset_vehicle/get_vehicle_insured_type_selectbox_html_javascript?', function(data) {
+                        return false;
+                    });
+                    return false;
+                });
+
+                $('#save_new_policy_benefit_asset_vehicle').click(function(){
+                    var valid = FormIsValid('#form_new_policy_benefit_asset_vehicle');
+                    if(valid) {
+                        var formserial = $('#form_new_policy_benefit_asset_vehicle').serialize();
+                        $.post('/policy_benefit_asset_vehicle/add_to_db_new_policy_benefit_asset_vehicle?', formserial, function(data){
+                            $.redirect('/policy_benefit_asset_vehicle/index');
+                            return false;
+                        });
+                    };
+                });
+            """
+        return javascript
+
+    @expose()
+    def get_vehicle_insured_type_selectbox_html_javascript(self, *args, **kwargs):
+        vehicle_insured_type_selectbox = self.vehicle_insured_type_selectbox()
+        html = f"""
+            <label class="col-md-3 col-form-label" required>{_('Insured Type')}</label>
+            <div class="col-md-9">
+                {vehicle_insured_type_selectbox}
+            </div>
+        """
+        javascript = """
+        <script src=''>
+            $('.selectpicker#vehicle_insured_type_id').change(function() {
+                var vehicle_insured_type_id = $(this).val();
+                var vehicle_category_id = $('#form_new_policy_benefit_asset_vehicle').find('#vehicle_category_id').val();
+                var kwargs = {'vehicle_category_id': vehicle_category_id,
+                        'vehicle_insured_type_id': vehicle_insured_type_id,
+                };
+                $('#div_rate_table_line_item').load('/policy_benefit_asset_vehicle/get_rate_table_vin_number_registration_number_html?', kwargs, function(data) {
+                    return false;
+                });
+                return false;
+            });
+        </script>
+        """
+        return html + javascript
+
+    @expose()
+    def get_rate_table_vin_number_registration_number_html(self, *args, **kwargs):
+        rate_table_line_item_selectbox = self.rate_table_line_item_selectbox(**kwargs)
+        html = f"""
+            <div class="col-md-6">
+                <div class="form-group row">
+                    <label class="col-md-3 col-form-label" required>{_('Rate Table Line Item')}</label>
+                    <div class="col-md-9">
+                        {rate_table_line_item_selectbox}
+                    </div>
+                </div>
+                <div class="form-group row">
+                    <label class="col-md-3 col-form-label" required>{_('VIN Number')}</label>
+                    <div class="col-md-9">
+                        <input id="vehicle_vin_number" type="text" name="vehicle_vin_number" class="form-control" required='true'>
+                    </div>
+                </div>
+                <div class="form-group row">
+                    <label class="col-md-3 col-form-label" required>{_('Registration Number')}</label>
+                    <div class="col-md-9">
+                        <input id="vehicle_registration_number" type="text" name="vehicle_registration_number" class="form-control" required='true'>
+                    </div>
+                </div>
+            </div>
+        """
+        return html
+
+    def rate_table_line_item_selectbox(self, *args, **kwargs):
+        """Note that the rate table is determined by the selected product benefit"""
+        selected = kwargs.get('rate_table_line_item_id', None)
+        if selected:
+            kwargs['selected'] = int(selected)
+        vehicle_category_id = kwargs.get('vehicle_category_id', None)
+        if not vehicle_category_id:
+            print("No vehicle_category_id to construct a selectbox")
+            return ''
+        vehicle_insured_type_id = kwargs.get('vehicle_insured_type_id', None)
+        if not vehicle_insured_type_id:
+            print("No vehicle_insured_type_id to construct a selectbox")
+            return ''
+
+        vehicle_insured_type_name = TYPEUTIL.get_name('policy_benefit_insured_asset_vehicle_insured_type',
+                                                      vehicle_insured_type_id)
+
+        policy_benefit_insured_asset = PolicyBenefitInsuredAsset.by_id(POLICY_BENEFIT_INSURED_ASSET_ID)
+        policy_benefit_id = policy_benefit_insured_asset.policy_benefit_id
+        policy_benefit = PolicyBenefit.by_id(policy_benefit_id)
+        product_benefit_id = policy_benefit.product_benefit_id
+        benefit_rate_table = BenefitRateTable.by_attr_first('benefit_id', product_benefit_id)
+        rate_table_id = benefit_rate_table.rate_table_id
+
+        rate_table_line_items = DBSession.query(RateTableLineItemVehicle). \
+            filter(RateTableLineItemVehicle.active == True). \
+            filter(RateTableLineItemVehicle.rate_table_id == rate_table_id). \
+            filter(RateTableLineItemVehicle.asset_vehicle_category_id == int(vehicle_category_id)). \
+            all()
+
+        outputdict = {}
+        for item in rate_table_line_items:
+            if vehicle_insured_type_name == 'insured':
+                dropdown_text = "{description}: Insured Amount: {insured:0.2f}, Sum Insured: {sum_insured:0.2f}".format(
+                    description=item.description[:20], insured=item.insured_amount,
+                    sum_insured=item.insured_sum_insured)
+            elif vehicle_insured_type_name == 'uninsured':
+                dropdown_text = "{description}: Uninsured Amount: {uninsured:0.2f}, Sum Insured: {sum_insured:0.2f}".format(
+                    description=item.description[:20], uninsured=item.uninsured_amount,
+                    sum_insured=item.uninsured_sum_insured)
+            else:
+                dropdown_text = "{description}: Third Party Amount: {amount:0.2f}, Sum Insured: {sum_insured:0.2f}".format(
+                    description=item.description[:20], amount=item.third_party_amount,
+                    sum_insured=item.third_party_sum_insured)
+            outputdict.update({item.id: dropdown_text})
+
+        kwargs['required'] = True
+        kwargs['outputdict'] = outputdict
+        kwargs['id'] = 'rate_table_line_item_id'
+        return create_selectbox_html(**kwargs)
+
+    @expose()
+    def add_to_db_new_policy_benefit_asset_vehicle(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+
+        vehicle_category_id = kwargs.get('vehicle_category_id', None)
+        if not vehicle_category_id:
+            print("no vehicle_category_id")
+            return ''
+        vehicle_insured_type_id = kwargs.get('vehicle_insured_type_id', None)
+        if not vehicle_insured_type_id:
+            print("no vehicle_insured_type_id")
+            return ''
+        rate_table_line_item_id = kwargs.get('rate_table_line_item_id', None)
+        if not rate_table_line_item_id:
+            print("no rate_table_line_item_id")
+            return ''
+        vehicle_vin_number = kwargs.get('vehicle_vin_number', None)
+        if not vehicle_vin_number:
+            print("no vehicle_vin_number")
+            return ''
+        vehicle_registration_number = kwargs.get('vehicle_registration_number', None)
+        if not vehicle_registration_number:
+            print("no vehicle_registration_number")
+            return ''
+
+        old_policy_benefit_insured_asset_vehicle = DBSession.query(PolicyBenefitInsuredAssetVehicle). \
+            filter(PolicyBenefitInsuredAssetVehicle.policy_benefit_insured_asset_id == POLICY_BENEFIT_INSURED_ASSET_ID). \
+            filter(PolicyBenefitInsuredAssetVehicle.active == True). \
+            all()
+        for old in old_policy_benefit_insured_asset_vehicle:
+            old.active = False
+            DBSession.flush()
+
+        policy_benefit_insured_asset_vehicle = PolicyBenefitInsuredAssetVehicle()
+        policy_benefit_insured_asset_vehicle.policy_benefit_insured_asset_id = POLICY_BENEFIT_INSURED_ASSET_ID
+        policy_benefit_insured_asset_vehicle.asset_vehicle_category_id = vehicle_category_id
+        policy_benefit_insured_asset_vehicle.rate_table_line_item_vehicle_id = rate_table_line_item_id
+        policy_benefit_insured_asset_vehicle.vin_number = vehicle_vin_number
+        policy_benefit_insured_asset_vehicle.registration_number = vehicle_registration_number
+        policy_benefit_insured_asset_vehicle.policy_benefit_insured_asset_vehicle_insured_type_id = vehicle_insured_type_id
+        policy_benefit_insured_asset_vehicle.added_by = usernow.id
+
+        DBSession.add(policy_benefit_insured_asset_vehicle)
+        DBSession.flush()
+        return ''

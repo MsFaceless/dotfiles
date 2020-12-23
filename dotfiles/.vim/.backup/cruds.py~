@@ -1,0 +1,258 @@
+from datetime import datetime
+from revault.lib import wrap_error
+from revault.model import get_db_session, Person, PersonIdentity
+from revault.schema import validators
+import transaction
+from revault.model.models import PersonBankAccountLink, PersonContactLink, PersonAddressLink
+from revault.model.models import BankAccount
+from revault.schema.link_validators import *
+
+#BANKACCOUNTS#
+def get_all_person_bankaccounts_for_person_id(person_id: int = None):
+    if not person_id: return wrap_error(msg="No person_id provided")
+    DBSession = get_db_session(True)
+
+    person_bankaccount_links = DBSession.query(PersonBankAccountLink). \
+            filter(PersonBankAccountLink.active==True). \
+            filter(PersonBankAccountLink.person_id==person_id). \
+            all()
+
+    my_bankaccounts = []
+    for link in person_bankaccount_links:
+        this_bankaccount = DBSession.query(BankAccount). \
+                filter(BankAccount.active==True). \
+                filter(BankAccount.id==link.bankaccount_id). \
+                first()
+        if not this_bankaccount: continue
+        my_bankaccounts.append(this_bankaccount)
+    return my_bankaccounts 
+
+def get_person_with_identity(person_id: int = None):
+    print()
+    print('HERE', person_id)
+    print()
+    return True
+
+def get_all_person_addresses_for_person_id(person_id: int = None):
+    if not person_id: return wrap_error(msg="No person_id provided")
+    DBSession = get_db_session(True)
+
+    person_address_links = DBSession.query(PersonAddressLink). \
+            filter(PersonAddressLink.active==True). \
+            filter(PersonAddressLink.person_id==person_id). \
+            all()
+
+    my_addresses = []
+    for link in person_address_links:
+        this_address = DBSession.query(Address). \
+                filter(Address.active==True). \
+                filter(Address.id==link.address_id). \
+                first()
+        if not this_address: continue
+        my_addresses.append(this_address)
+    return my_addresses 
+
+def get_all_person_identities_for_person_id(person_id: int = None):
+    if not person_id: return wrap_error(msg="No person_id provided")
+    DBSession = get_db_session(True)
+    person_identities = DBSession.query(PersonIdentity). \
+            filter(PersonIdentity.active==True). \
+            filter(PersonIdentity.person_id==person_id). \
+            all()
+    return person_identities
+
+def _deactivate_contact(person_contact_link: PersonContactLink):
+    if not person_contact_link: return False
+    contact_query = get_person_contact(person_contact_id)
+    deactivated = deactivate_contact(person_id)
+    print(contact_query)
+
+def _deactivate_address(person_address_link: PersonAddressLink):
+    if not person_address_link: return False
+    address_query = get_person_address(person_address_id)
+    deactivated = deactivate_address(person_id)
+
+def _deactivate_person(person_id: int):
+    if not person_id: return False
+    DBSession = get_db_session(True)
+    person = get_person(person_id)
+    if not person.active: return False
+    person.active = False
+    DBSession.add(person)
+    DBSession.commit()
+    DBSession.flush()
+    return True
+
+def deactivate_person(person_id: int):
+    DBSession = get_db_session(True)
+    person_full = get_person_object_all(person_id=person_id)
+    print(person_full)
+    print(person_full.active)
+    if not person_full.active: return False
+    returnable = {'identities':{},'contacts':{},'bankaccounts':{}, 'addresses':{}}
+
+    for identity in person_full.get('identities'):
+        if not deactivate_identity(identity.id): returnable['identities'][identity.id] = False
+        else: returnable['identities'][identity.id] = True
+
+    for bankaccount in person_full.get('bankaccounts'):
+        if not deactivate_bankaccount(bankaccount): returnable['bankaccounts'][bankaccount.id] = False
+        else: returnable['bankaccounts'][bankaccount.id]:True
+
+    for contact in person_full.get('contacts'):
+        if not _deactivate_contact(contact): returnable['contacts'][contact.id] = False
+        else: returnable['contacts'][contact.id] = True
+
+    for address in person_full.get('addresses'):
+        if not _deactivate_address(address): returnable['addresses'][address.id] = False
+        else: returnable['addresses'][address.id] = True
+
+    person_executed = _deactivate_person(person_id)
+    if not person_executed: return False
+    return True
+
+def get_bankaccount_by_id(bankaccount_id: int):
+    if not bankaccount_id: return False
+    DBSession = get_db_session(True)
+    query = DBSession.query(BankAccount). \
+            filter(BankAccount.id==bankaccount_id). \
+            first()
+    if query: return query
+    return []
+
+def get_bankaccount(bank_id: int, account_number: str):
+    if not bank_id: return False
+    if not account_number: return False
+    DBSession = get_db_session(True)
+    query = DBSession.query(BankAccount). \
+            filter(BankAccount.bank_id==bank_id). \
+            filter(BankAccount.account_number==account_number). \
+            first()
+    if query: return query
+    return []
+
+def is_bankaccount(bank_id: int, account_number: str):
+    DBSession = get_db_session(True)
+    query = DBSession.query(BankAccount). \
+            filter(BankAccount.active==True). \
+            filter(BankAccount.bank_id==bank_id). \
+            filter(BankAccount.account_number==account_number). \
+            first()
+    if query: return True
+    return False
+
+def create_bankaccount(bankaccount_dict: BankAccountCreate):
+    if not bankaccount_dict: return {}
+    DBSession = get_db_session(True)
+    bank_id = bankaccount_dict.bank_id
+    account_number = bankaccount_dict.account_number
+    if is_bankaccount(bank_id, account_number): return False
+    new_bankaccount = BankAccount(**bankaccount_dict.dict())
+    DBSession.add(new_bankaccount)
+    DBSession.commit()
+    DBSession.flush()
+    return new_bankaccount
+
+def update_bankaccount(bankaccount_dict: BankAccountUpdate):
+    if not bankaccount_dict: return {}
+    DBSession = get_db_session(True)
+    bankaccount_id = bankaccount_dict.id
+    existing_bankaccount = get_bankaccount_by_id(bankaccount_id)
+    if not existing_bankaccount: return False
+    for column, value in bankaccount_dict.dict().items():
+        if hasattr(existing_bankaccount, column): setattr(existing_bankaccount, column, value) 
+    DBSession.add(existing_bankaccount)
+    DBSession.commit()
+    DBSession.flush()
+    return existing_bankaccount
+
+def get_person_bankaccount_by_link_id_full(link_id: int):
+    if not link_id: return False
+    DBSession = get_db_session(True)
+    active_link = DBSession.query(PersonBankAccountLink). \
+            filter(PersonBankAccountLink.active==True). \
+            filter(PersonBankAccountLink.id==link_id). \
+            first()
+    bankaccount = DBSession.query(BankAccount). \
+            filter(BankAccount.active==True). \
+            filter(BankAccount.id==active_link.bankaccount_id). \
+            first()
+    returnable = {'link':active_link, 'bankaccount':bankaccount}
+    return returnable
+
+def _deactivate_bankaccount(bankaccount_id: int):
+    DBSession = get_db_session(True)
+    bankaccount_query = get_bankaccount_by_id(bankaccount_id)
+    if not bankaccount_query: return False
+    link_id = bankaccount_query.get('link')
+    bankaccount_id = bankaccount_query.get('bankaccount')
+    return 
+
+def deactivate_bankaccount(bankaccount_id: int):
+    if not bankaccount_id: return False
+    deactivated_bankaccount = _deactivate_bankaccount(bankaccount_id)
+    if deactivated_bankaccount: return True
+    return False
+
+def is_bankaccount(bank_id: int, account_number: str):
+    DBSession = get_db_session(True)
+    query = DBSession.query(BankAccount). \
+            filter(BankAccount.active==True). \
+            filter(BankAccount.bank_id==bank_id). \
+            filter(BankAccount.account_number==account_number). \
+            first()
+    if query: return True
+    return False
+
+def create_bankaccount(bankaccount_dict: BankAccountCreate):
+    if not bankaccount_dict: return {}
+    DBSession = get_db_session(True)
+    bank_id = bankaccount_dict.bank_id
+    account_number = bankaccount_dict.account_number
+    if is_bankaccount(bank_id, account_number): return False
+    new_bankaccount = BankAccount(**bankaccount_dict.dict())
+    DBSession.add(new_bankaccount)
+    DBSession.commit()
+    DBSession.flush()
+    return new_bankaccount
+
+def update_bankaccount(bankaccount_dict: BankAccountUpdate):
+    if not bankaccount_dict: return {}
+    DBSession = get_db_session(True)
+    bankaccount_id = bankaccount_dict.id
+    existing_bankaccount = get_bankaccount_by_id(bankaccount_id)
+    if not existing_bankaccount: return False
+    for column, value in bankaccount_dict.dict().items():
+        if hasattr(existing_bankaccount, column): setattr(existing_bankaccount, column, value) 
+    DBSession.add(existing_bankaccount)
+    DBSession.commit()
+    DBSession.flush()
+    return existing_bankaccount
+
+def get_person_bankaccount_by_link_id_full(link_id: int):
+    if not link_id: return False
+    DBSession = get_db_session(True)
+    active_link = DBSession.query(PersonBankAccountLink). \
+            filter(PersonBankAccountLink.active==True). \
+            filter(PersonBankAccountLink.id==link_id). \
+            first()
+    bankaccount = DBSession.query(BankAccount). \
+            filter(BankAccount.active==True). \
+            filter(BankAccount.id==active_link.bankaccount_id). \
+            first()
+    returnable = {'link':active_link, 'bankaccount':bankaccount}
+    return returnable
+
+def _deactivate_bankaccount(bankaccount_id: int):
+    DBSession = get_db_session(True)
+    bankaccount_query = get_bankaccount_by_id(bankaccount_id)
+    if not bankaccount_query: return False
+    link_id = bankaccount_query.get('link')
+    bankaccount_id = bankaccount_query.get('bankaccount')
+    return 
+
+def deactivate_bankaccount(bankaccount_id: int):
+    if not bankaccount_id: return False
+    deactivated_bankaccount = _deactivate_bankaccount(bankaccount_id)
+    if deactivated_bankaccount: return True
+    return False

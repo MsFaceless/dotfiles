@@ -1,0 +1,12 @@
+twilio trial
+
+email: developer@rocketinsurtech.com
+password: CarriedByAnAfricanSwallow?!
+
+# TWILIO - Rocket Developer
+ACCOUNT_SID='AC6f24bb09cd31f8551d565514568a817f'
+AUTH_TOKEN='5f24b8949df9696f60416fc922f86484'
+MESSAGING_SID='MG5e0bc68cd8dfb289560c29e6b4bb0064'
+TWILIO_NUMBER='+19362367906'
+WHATSAPP_NUMBER=''
+

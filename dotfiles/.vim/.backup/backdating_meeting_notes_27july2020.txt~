@@ -1,0 +1,34 @@
+meeting cogent solutions (go between leza and MIP)
+mickey - michele ingrata
+
+realign michael tagg - dates for meeting
+- policy when it starts
+- start policy first of the month or before or based on collection dates
+-
+
+everything works on a premium raised
+outstanding premium due - post to ledger
+3 premiums raises - 3 premium expected
+if policy lapses - write the premiums back / no debt in the ledger
+no pro rata billing or pro rata commencement
+back dating commencements
+
+field sales - sale was in june
+commence to 1st june & july premium raised
+
+lapse rules
+    - 3mo to pay if not received we lapse
+    - 3 outstanding not 3 consequitive
+    - money has been received before
+
+ntu rules
+    - they have never paid
+    - 3 month to start paying
+    - write back the amount owing so that their is no debit
+    - restart in the new period
+    - commencement date does not change
+    - just shows as ntu for the months that were not paid
+    - premium pays back to the oldest debt
+
+cover starts from the date of the first payment
+later of date of first payment or commencement date

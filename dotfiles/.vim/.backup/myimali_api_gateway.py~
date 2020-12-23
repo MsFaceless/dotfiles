@@ -1,0 +1,2067 @@
+#!/bin/python
+
+import logging
+import base64
+import requests
+from io import BytesIO
+from PIL import Image
+
+from calabash.model import CurrentApplication, Application
+
+from dotenv import dotenv_values
+
+ENV_VARS = dotenv_values()
+KEY = ENV_VARS.get('CALABASH_KEY', None)
+BASE_URL = ENV_VARS.get('MYIMALI_BASE_URL', None)
+CALLBACK_URL = ENV_VARS.get("CALLBACK_URL", None)
+
+LOGGER = logging.getLogger(__name__)
+
+class MyImaliApiGateway:
+
+    def __repr__(self):
+        return f'<MyImaliApiGateway: base_url={self.base_url}>'
+
+    def __init__(self, **kwargs):
+        self.limit = kwargs.get('limit', 5)
+        self.api_key = kwargs.get('api_key', KEY)
+        self.base_url = kwargs.get('base_url', BASE_URL)
+
+###############################################################################
+# KYC
+###############################################################################
+
+    def kyc_passport_number_lite(self, *args, **kwargs):
+        passport_number = kwargs.get('passport_number', None)
+        if not passport_number:
+            LOGGER.warning('MYIMALI kyc_passport_number_lite failed: no passport_number')
+            return {}
+
+        username = kwargs.get('username', None)
+        if not username:
+            LOGGER.warning('MYIMALI kyc_passport_number_lite failed: no username')
+            return {}
+
+        name = kwargs.get('name', None)
+        if not name:
+            LOGGER.warning('MYIMALI kyc_passport_number_lite failed: no name')
+            return {}
+
+        surname = kwargs.get('surname', None)
+        if not surname:
+            LOGGER.warning('MYIMALI kyc_passport_number_lite failed: no surname')
+            return {}
+
+        gender = kwargs.get('gender', None)
+        if not gender:
+            LOGGER.warning('MYIMALI kyc_passport_number_lite failed: no gender')
+            return {}
+
+        date_of_birth = kwargs.get('date_of_birth', None)
+        if not date_of_birth:
+            LOGGER.warning('MYIMALI kyc_passport_number_lite failed: no date_of_birth')
+            return {}
+
+        date_of_issue = kwargs.get('date_of_issue', None)
+        if not date_of_issue:
+            LOGGER.warning('MYIMALI kyc_passport_number_lite failed: no date_of_issue')
+            return {}
+
+        expiry_date = kwargs.get('expiry_date', None)
+        if not expiry_date:
+            LOGGER.warning('MYIMALI kyc_passport_number_lite failed: no expiry_date')
+            return {}
+
+        age = kwargs.get('age', None)
+        if not age:
+            LOGGER.warning('MYIMALI kyc_passport_number_lite failed: no age')
+            return {}
+
+        citizenship = kwargs.get('citizenship', None)
+        if not citizenship:
+            LOGGER.warning('MYIMALI kyc_passport_number_lite failed: no citizenship')
+            return {}
+
+        address_line1 = kwargs.get('address_line1', None)
+        if not address_line1:
+            LOGGER.warning('MYIMALI kyc_address_line1 failed: no address_line1')
+            return {}
+
+        address_line2 = kwargs.get('address_line2', None)
+        address_suburb = kwargs.get('address_suburb', None)
+        address_city = kwargs.get('address_city', None)
+        address_province = kwargs.get('address_province', None)
+        address_postal_code = kwargs.get('address_postal_code', None)
+
+        email = kwargs.get('email', None)
+        if not email:
+            LOGGER.warning('MYIMALI kyc_passport_number_lite failed: no email')
+            return {}
+
+        photo_b64 = kwargs.get('photo_b64', None)
+        if not photo_b64:
+            LOGGER.warning('MYIMALI kyc_passport_number_lite failed: no photo_b64')
+            return {}
+
+        photo_io_object = BytesIO()
+        photo_io_object.write(base64.b64decode(photo_b64))
+
+        document_b64 = kwargs.get('document_b64', None)
+
+        if not document_b64:
+            LOGGER.warning('MYIMALI kyc_passport_number_lite failed: no document_b64')
+            return {}
+
+        document_io_object = BytesIO()
+        document_io_object.write(base64.b64decode(document_b64))
+
+        document2_b64 = kwargs.get('document2_b64', None)
+        is_id_card = False
+        if document2_b64: is_id_card = True
+
+        if is_id_card:
+            document2_io_object = BytesIO()
+            document2_io_object.write(base64.b64decode(document2_b64))
+
+            document_img = Image.open(document_io_object)
+            document2_img = Image.open(document_io_object)
+            total_width = document_img.size[0]
+
+            total_height = document_img.size[1] + document2_img.size[1]
+            new_document_img = Image.new("RGB", (total_width, total_height))
+            new_document_img.paste(document_img, (0, 0))
+            new_document_img.paste(document2_img, (0, document_img.size[1]))
+            temp_document_io_object = BytesIO()
+            new_document_img.save(temp_document_io_object, format=document_img.format)
+            document_io_object = BytesIO()
+            document_io_object.write(temp_document_io_object.getvalue())
+
+        request_kwargs = {
+            'vKycType' : 'lite',
+            'vIdentityDocumentType' : 'passport',
+            'vPassportNumber' : passport_number,
+            'vUsername' : username,
+            'vReviewedNotifyType' : 'callback',
+            'vReviewedNotifyCallback' : CALLBACK_URL,
+
+            'vDob' : date_of_birth,
+            'vFirstNames' : name,
+            'vSurName' : surname,
+            'vGender' : gender,
+            'vAge' : age,
+
+            'vExpiryDate' : expiry_date,
+            'vCitizenship' : citizenship,
+            'vDateOfIssue' : date_of_issue,
+
+            'vAddressLine1' : address_line1,
+            'vAddressLine2' : address_line2,
+            'vAddressCity' : address_city,
+            'vAddressSuburb' : address_suburb,
+            'vAddressProvince' : address_province,
+            'vAddressPostalCode' : address_postal_code,
+        }
+
+        rfiles = [
+            ('vCustomerPhotoUpload', ('customerphoto.jpg', photo_io_object, 'image/jpg')),
+            ('vPassportUpload', ('passportphoto.jpg', document_io_object, 'image/jpg'))
+        ]
+
+        headers = { 'API' : self.api_key, }
+        current = CurrentApplication.latest_entry()
+        app = Application.by_id(current.application_id)
+        if app:
+            headers['API'] = app.myimali_api_key
+        target = f'{self.base_url}/public/submitKycApplication'
+        r = requests.post(target, data=request_kwargs, files=rfiles, headers=headers)
+        try:
+            return r.json()
+        except: return {}
+
+    def kyc_idnumber_lite(self, *args, **kwargs):
+        identity_number = kwargs.get('identity_number', None)
+        if not identity_number:
+            LOGGER.warning('MYIMALI kyc_idnumber_lite failed: no identity_number')
+            return {}
+
+        username = kwargs.get('username', None)
+        if not username:
+            LOGGER.warning('MYIMALI kyc_idnumber_lite failed: no username')
+            return {}
+
+        address_line1 = kwargs.get('address_line1', None)
+        if not address_line1:
+            LOGGER.warning('MYIMALI kyc_address_line1 failed: no address_line1')
+            return {}
+
+        address_line2 = kwargs.get('address_line2', None)
+        address_city = kwargs.get('address_city', None)
+        address_suburb = kwargs.get('address_suburb', None)
+        address_province = kwargs.get('address_province', None)
+        address_postal_code = kwargs.get('address_postal_code', None)
+
+        email = kwargs.get('email', None)
+        if not email:
+            LOGGER.warning('MYIMALI kyc_idnumber_lite failed: no email')
+            return {}
+
+        photo_b64 = kwargs.get('photo_b64', None)
+        if not photo_b64:
+            LOGGER.warning('MYIMALI kyc_idnumber_lite failed: no photo_b64')
+            return {}
+
+        photo_io_object = BytesIO()
+        photo_io_object.write(base64.b64decode(photo_b64))
+
+        document_b64 = kwargs.get('document_b64', None)
+
+        if not document_b64:
+            LOGGER.warning('MYIMALI kyc_idnumber_lite failed: no document_b64')
+            return {}
+
+        document_io_object = BytesIO()
+        document_io_object.write(base64.b64decode(document_b64))
+
+        document2_b64 = kwargs.get('document2_b64', None)
+        is_id_card = False
+        if document2_b64: is_id_card = True
+
+        if is_id_card:
+            document2_io_object = BytesIO()
+            document2_io_object.write(base64.b64decode(document2_b64))
+
+            document_img = Image.open(document_io_object)
+            document2_img = Image.open(document_io_object)
+            total_width = document_img.size[0]
+
+            total_height = document_img.size[1] + document2_img.size[1]
+            new_document_img = Image.new("RGB", (total_width, total_height))
+            new_document_img.paste(document_img, (0, 0))
+            new_document_img.paste(document2_img, (0, document_img.size[1]))
+            temp_document_io_object = BytesIO()
+            new_document_img.save(temp_document_io_object, format=document_img.format)
+            document_io_object = BytesIO()
+            document_io_object.write(temp_document_io_object.getvalue())
+
+        request_kwargs = {
+            'vKycType' : 'lite',
+            'vIdentityDocumentType' : 'id',
+            'vIdNumber' : identity_number,
+            'vUsername' : username,
+            'vReviewedNotifyType' : 'callback',
+            'vReviewedNotifyCallback' : CALLBACK_URL,
+
+            'vAddressLine1' : address_line1,
+            'vAddressLine2' : address_line2,
+            'vAddressCity' : address_city,
+            'vAddressSuburb' : address_suburb,
+            'vAddressProvince' : address_province,
+            'vAddressPostalCode' : address_postal_code,
+        }
+
+        rfiles = [
+            ('vCustomerPhotoUpload', ('customerphoto.jpg', photo_io_object, 'image/jpg')),
+            ('vIdBookOrCardUpload', ('idphoto.jpg', document_io_object, 'image/jpg'))
+        ]
+
+        headers = { 'API' : self.api_key, }
+        current = CurrentApplication.latest_entry()
+        app = Application.by_id(current.application_id)
+        if app:
+            headers['API'] = app.myimali_api_key
+        target = f'{self.base_url}/public/submitKycApplication'
+        r = requests.post(target, data=request_kwargs, files=rfiles, headers=headers)
+        try:
+            return r.json()
+        except: return {}
+
+    def kyc_idnumber_full(self, *args, **kwargs):
+        identity_number = kwargs.get('identity_number', None)
+        if not identity_number:
+            LOGGER.warning('kyc_idnumber_full failed: no identity_number')
+            return {}
+
+        username = kwargs.get('username', None)
+        if not username:
+            LOGGER.warning('kyc_idnumber_full failed: no username')
+            return {}
+
+        address_line1 = kwargs.get('address_line1', None)
+        if not address_line1:
+            LOGGER.warning('kyc_idnumber_full failed: no address_line1')
+            return {}
+
+        address_line2 = kwargs.get('address_line2', None)
+
+        address_city = kwargs.get('address_city', None)
+        if not address_city:
+            LOGGER.warning('kyc_idnumber_full failed: no address_city')
+            return {}
+
+        address_suburb = kwargs.get('address_suburb', None)
+        if not address_suburb:
+            LOGGER.warning('kyc_idnumber_full failed: no address_suburb')
+            return {}
+
+        address_province = kwargs.get('address_province', None)
+        if not address_province:
+            LOGGER.warning('kyc_idnumber_full failed: no address_province')
+            return {}
+
+        address_postal_code = kwargs.get('address_postal_code', None)
+        if not address_postal_code:
+            LOGGER.warning('kyc_idnumber_full failed: no address_postal_code')
+            return {}
+
+        email = kwargs.get('email', None)
+        if not email:
+            LOGGER.warning('kyc_idnumber_full failed: no email')
+            return {}
+
+        photo_b64 = kwargs.get('photo_b64', None)
+        if not photo_b64:
+            LOGGER.warning('kyc_idnumber_full failed: no photo_b64')
+            return {}
+
+        address_b64 = kwargs.get('address_b64', None)
+        if not address_b64:
+            LOGGER.warning('kyc_idnumber_full failed: no address_b64')
+            return {}
+
+        document_b64 = kwargs.get('document_b64', None)
+        if not document_b64:
+            LOGGER.warning('kyc_idnumber_full failed: no document_b64')
+            return {}
+
+        photo_io_object = BytesIO()
+        photo_io_object.write(base64.b64decode(photo_b64))
+
+        address_io_object = BytesIO()
+        address_io_object.write(base64.b64decode(address_b64))
+
+        if isinstance(document_b64, list):
+            document_b64 = document_b64[0]
+
+        document_io_object = BytesIO()
+        document_io_object.write(base64.b64decode(document_b64))
+
+        document2_b64 = kwargs.get('document2_b64', None)
+        is_id_card = False
+        if document2_b64:
+            is_id_card = True
+
+        if is_id_card:
+            document2_io_object = BytesIO()
+            document2_io_object.write(base64.b64decode(document2_b64))
+
+            document_img = Image.open(document_io_object)
+            document2_img = Image.open(document_io_object)
+            total_width = document_img.size[0]
+
+            total_height = document_img.size[1] + document2_img.size[1]
+            new_document_img = Image.new("RGB", (total_width, total_height))
+            new_document_img.paste(document_img, (0, 0))
+            new_document_img.paste(document2_img, (0, document_img.size[1]))
+            temp_document_io_object = BytesIO()
+            new_document_img.save(temp_document_io_object, format=document_img.format)
+            document_io_object = BytesIO()
+            document_io_object.write(temp_document_io_object.getvalue())
+
+        request_kwargs = {
+            'vKycType' : 'full',
+            'vIdentityDocumentType' : 'id',
+            'vUsername' : username,
+            'vIdNumber' : identity_number,
+            'vReviewedNotifyType' : 'callback',
+            'vReviewedNotifyCallback' : CALLBACK_URL,
+            'vAddressLine1' : address_line1,
+            'vAddressLine2' : address_line2,
+            'vAddressCity' : address_city,
+            'vAddressSuburb' : address_suburb,
+            'vAddressProvince' : address_province,
+            'vAddressPostalCode' : address_postal_code,
+        }
+
+        rfiles = [
+            ('vCustomerPhotoUpload', ('customerphoto.jpg', photo_io_object, 'image/jpg')),
+            ('vIdBookOrCardUpload', ('idphoto.jpg', document_io_object, 'image/jpg')),
+            ('vProofOfResidenceUpload', ('address.jpg', address_io_object, 'image/jpg')),
+        ]
+        headers = { 'API' : self.api_key, }
+        current = CurrentApplication.latest_entry()
+        app = Application.by_id(current.application_id)
+        if app:
+            headers['API'] = app.myimali_api_key
+        target = f'{self.base_url}/public/submitKycApplication'
+        r = requests.post(target, data=request_kwargs, files=rfiles, headers=headers)
+        try:
+            return r.json()
+        except:
+            return {}
+
+    def get_banking_config(self, **kwargs):
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = "public/getBankingConfig"
+        return self.post_to_endpoint(target, headers)
+
+    def add_banking_details(self, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            LOGGER.warning('Missing username')
+            return {}
+
+        display_name = kwargs.get('display_name', None)
+        if not display_name:
+            LOGGER.warning('Missing display_name')
+            return {}
+
+        bank_type_id = kwargs.get('bank_type_id', None)
+        if not bank_type_id:
+            LOGGER.warning('Missing bank_type_id')
+            return {}
+
+        account_type_id = kwargs.get('account_type_id', None)
+        if not account_type_id:
+            LOGGER.warning('Missing account_type_id')
+            return {}
+
+        account_number = kwargs.get('account_number', None)
+        if not account_number:
+            LOGGER.warning('Missing account_number')
+            return {}
+
+        initials = kwargs.get('initials', None)
+        if not initials:
+            LOGGER.warning('Missing initials')
+            return {}
+
+        branch_code = kwargs.get('branch_code', None)
+        if not branch_code:
+            LOGGER.warning('Missing branch_code')
+            return {}
+
+        request_kwargs = {
+            'vUsername' : username,
+            'vAccountName' : display_name,
+            'vBankType' : bank_type_id,
+            'vAccountType' : account_type_id,
+            'vBranchCode' : branch_code,
+            'vAccountNumber' : account_number,
+            'vInitials' : initials,
+        }
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = "public/addBankingDetails"
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+    def delete_banking_details(self, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            LOGGER.warning('Missing username')
+            return {}
+
+        account_id = kwargs.get('account_id', None)
+        if not account_id:
+            LOGGER.warning('Missing account_id')
+            return {}
+
+        request_kwargs = {
+            'vUsername' : username,
+            'vAccountId' : account_id,
+        }
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = "public/removeBankingDetails"
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+    def payout_to_account(self, **kwargs):
+        voucher_type = kwargs.get('voucher_type', 'iMali')
+
+        amount = kwargs.get('amount', None)
+        if not amount:
+            LOGGER.warning('Missing amount')
+            return {}
+
+        username = kwargs.get('username', None)
+        if not username:
+            LOGGER.warning('Missing username')
+            return {}
+
+        account_id = kwargs.get('account_id', None)
+        if not account_id:
+            LOGGER.warning('Missing account_id')
+            return {}
+
+        request_kwargs = {
+            'vAmount' : amount,
+            'vVoucherType' : voucher_type,
+            'vUsername' : username,
+            'vAccountId' : account_id,
+        }
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = "public/PayoutToAccount"
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+    def get_banking_details(self, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            LOGGER.warning('Missing username')
+            return {}
+
+        account_id = kwargs.get('account_id', None)
+        request_kwargs = {
+            'vUsername' : username,
+            'vAccountId' : account_id,
+        }
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = "public/getBankingDetails"
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+    def update_about_me(self, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            LOGGER.warning('Missing username')
+            return {}
+
+        mobile = kwargs.get('mobile', None)
+        if not mobile:
+            LOGGER.warning('Missing mobile')
+            return {}
+
+        email = kwargs.get('email', None)
+        if not email:
+            LOGGER.warning('Missing email')
+            return {}
+
+        first_name = kwargs.get('first_name', None)
+        if not first_name:
+            LOGGER.warning('Missing first_name')
+            return {}
+
+        surname = kwargs.get('surname', None)
+        if not surname:
+            LOGGER.warning('Missing surname')
+            return {}
+
+        request_kwargs = {
+            'vUsername' : username,
+            'vFirstName' : first_name,
+            'vSurname' : surname,
+            'vEmail' : email,
+            'vMobile' : mobile,
+            'vNotify' : 'no',
+        }
+        print()
+        print(request_kwargs)
+        print()
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = 'public/updateAboutMe'
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+    def register_customer(self, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            LOGGER.warning('Missing username')
+            return {}
+
+        password = kwargs.get('password', None)
+        if not password:
+            LOGGER.warning('Missing password')
+            return {}
+
+        email = kwargs.get('email', None)
+        if not email:
+            LOGGER.warning('Missing email')
+            return {}
+
+        mobile_number = kwargs.get('mobile_number', None)
+        if not mobile_number:
+            mobile_number = kwargs.get('mobile', None)
+        if not mobile_number:
+            LOGGER.warning('Missing mobile')
+            return {}
+
+        first_name = kwargs.get('first_name', None)
+        if not first_name:
+            first_name = kwargs.get('firstName', None)
+        if not first_name:
+            LOGGER.warning('Missing firstName')
+            return {}
+
+        surname = kwargs.get('surname', None)
+        if not surname:
+            surname = kwargs.get('surName', None)
+        if not surname:
+            LOGGER.warning('Missing surname')
+            return {}
+
+        request_kwargs = {
+            'vUsername' : username,
+            'vPassword' : password,
+            'vEmail' : email,
+            'vMobile' : mobile_number,
+            'vFirstName' : first_name,
+            'vSurname' : surname,
+            'vSendMail' : 'no',
+        }
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = 'public/registerCustomer'
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+    def get_balance(self, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            return {}
+
+        request_kwargs = {
+            'vUsername' : username,
+        }
+        headers = {
+            'API' : self.api_key,
+            'Content-Type': 'application/x-www-form-urlencoded',
+        }
+        target = 'public/getCoupons'
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+    def get_transaction_history(self, **kwargs):
+        coupon_type = kwargs.get('coupon_type', 'iMali')
+
+        username = kwargs.get('username', None)
+        if not username:
+            LOGGER.warning('MYIMALI get_transaction_history failed: no username')
+            return {}
+
+        limit = kwargs.get('limit', self.limit)
+        request_kwargs = {
+            'vUsername' : username,
+            'vCouponType': coupon_type,
+            'vLimit': limit,
+        }
+        headers = {
+            'API' : self.api_key,
+            'Content-Type': 'application/x-www-form-urlencoded',
+        }
+        target = 'public/statement'
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+    def make_transfer(self, **kwargs):
+        reference = kwargs.get('reference', None)
+
+        from_username = kwargs.get('from_username', None)
+        if not from_username:
+            return {}
+
+        to_username = kwargs.get('to_username', None)
+        if not to_username:
+            return {}
+
+        amount = kwargs.get('amount', None)
+        if not amount:
+            return {}
+
+        request_kwargs = {
+            'vFromUsername' : from_username,
+            'vToUsername': to_username,
+            'vAmount': amount,
+            'vPaymentReference': reference,
+            }
+
+        headers = {
+            'API' : self.api_key,
+            'Content-Type': 'application/x-www-form-urlencoded',
+        }
+        target = 'public/transfer'
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+    def register_merchant(self, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            LOGGER.warning('Missing username')
+            return {}
+
+        password = kwargs.get('password', None)
+        if not password:
+            LOGGER.warning('Missing password')
+            return {}
+
+        email = kwargs.get('email', None)
+        if not email:
+            LOGGER.warning('Missing email')
+            return {}
+
+        mobile_number = kwargs.get('mobile_number', None)
+        if not mobile_number:
+            mobile_number = kwargs.get('mobile', None)
+        if not mobile_number:
+            LOGGER.warning('Missing mobile_number')
+            return {}
+
+        first_name = kwargs.get('first_name', None)
+        if not first_name:
+            first_name = kwargs.get('firstName', None)
+        if not first_name:
+            first_name = kwargs.get('name', None)
+        if not first_name:
+            LOGGER.warning('Missing first_name')
+            return {}
+
+        surname = kwargs.get('surname', None)
+        if not surname:
+            LOGGER.warning('Missing surname')
+            return {}
+
+        request_kwargs = {
+            'vUsername' : username,
+            'vPassword' : password,
+            'vEmail' : email,
+            'vMobile' : mobile_number,
+            'vFirstName' : first_name,
+            'vSurname' : surname,
+            'vSendMail' : 'no',
+        }
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = 'public/registerMerchant'
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+    def make_merchant_sale(self, **kwargs):
+        merchant_username = kwargs.get('merchant_username', None)
+        if not merchant_username:
+            LOGGER.warning('No merchant_username')
+            return {}
+
+        username = kwargs.get('username', None)
+        if not username:
+            LOGGER.warning('No username')
+            return {}
+
+        token = kwargs.get('token', 'iMali')
+        if not token:
+            LOGGER.warning('No token')
+            return {}
+
+        reference = kwargs.get('reference', None)
+        if not reference:
+            LOGGER.warning('No reference')
+            reference = ''
+
+        amount = kwargs.get('amount', None)
+        if not amount:
+            LOGGER.warning('No amount')
+            return {}
+
+
+        request_kwargs = {
+            'vMerchant': merchant_username,
+            'vUsername' : username,
+            'vToken' : token,
+            'vAmount' : amount,
+            'vPaymentReference' : reference,
+        }
+
+        cashback_percentage = kwargs.get('cashback_percentage', None)
+        try:
+            cashback_percentage = int(cashback_percentage)
+        except:
+            cashback_percentage = None
+
+        if cashback_percentage:
+            request_kwargs['vCashbackPercentage'] = cashback_percentage
+
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = 'public/sale'
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+    def register_salesrole(self, **kwargs):
+        merchant_username = kwargs.get('merchant_username', None)
+        if not merchant_username:
+            merchant_username = kwargs.get('merchant', None)
+        if not merchant_username:
+            return {}
+
+        username = kwargs.get('username', None)
+        if not username:
+            return {}
+
+        password = kwargs.get('password', None)
+        if not password:
+            return {}
+
+        email = kwargs.get('email', None)
+        if not email:
+            return {}
+
+        mobile_number = kwargs.get('mobile_number', None)
+        if not mobile_number:
+            mobile_number = kwargs.get('mobile', None)
+        if not mobile_number:
+            return {}
+
+        first_name = kwargs.get('first_name', None)
+        if not first_name:
+            return {}
+
+        surname = kwargs.get('surname', None)
+        if not surname:
+            return {}
+
+        request_kwargs = {
+            'vMerchant': merchant_username,
+            'vUsername' : username,
+            'vPassword' : password,
+            'vEmail' : email,
+            'vMobile' : mobile_number,
+            'vFirstName' : first_name,
+            'vSurname' : surname,
+            'vSendMail' : 'no',
+        }
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = 'public/registerSalesRole'
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+    def delete_salesrole(self, **kwargs):
+        merchant_username = kwargs.get('merchant', None)
+        if not merchant_username:
+            return {}
+
+        username = kwargs.get('username', None)
+        if not username:
+            return {}
+
+        request_kwargs = {
+            'vMerchant': merchant_username,
+            'vUsername' : username,
+        }
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = 'public/deleteSalesRole'
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+    def add_beneficiary(self, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            return {}
+
+        beneficiary_username = kwargs.get('beneficiary_username', None)
+        if not beneficiary_username:
+            return {}
+
+        beneficiary_reference_number = kwargs.get('beneficiary_reference_number', None)
+        if not beneficiary_reference_number:
+            beneficiary_reference_number = kwargs.get('reference', None)
+        if not beneficiary_reference_number:
+            return {}
+
+        beneficiary_name = kwargs.get('beneficiary_name', None)
+        if not beneficiary_name:
+            return {}
+
+        request_kwargs = {
+            'vUsername' : username,
+            'vBeneficiaryUsername' : beneficiary_username,
+            'vReference' : beneficiary_reference_number,
+            'vBeneficiaryName' : beneficiary_name,
+        }
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = 'public/addBeneficiary'
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+    def delete_beneficiary(self, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            return {}
+
+        beneficiary_name = kwargs.get('beneficiary_name', None)
+        if not beneficiary_name:
+            return {}
+
+        request_kwargs = {
+            'vUsername' : username,
+            'vBeneficiaryName' : beneficiary_name,
+        }
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = 'public/deleteBeneficiary'
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+    def bulk_transfer(self, **kwargs):
+        from_username = kwargs.get('from_username', None)
+        if not from_username:
+            return {}
+
+        recipients = kwargs.get('recipients', None)
+        if not recipients:
+            return {}
+
+        vrecipients = [{'vUsername': recipient.get("username", None),
+                        'vAmount': recipient.get('amount', None), } for recipient in recipients]
+
+        request_kwargs = {
+            'vUsername' : from_username,
+            'vRecipientList' : vrecipients,
+        }
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/json',
+        }
+        target = 'public/bulkTransfer'
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+    def get_bulk_transfer_batch_result(self, **kwargs):
+        batch_id = kwargs.get('batch_id', None)
+        if not batch_id:
+            return {}
+
+        request_kwargs = {
+            'batchId' : batch_id,
+        }
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = 'public/getBulkTransferBatchResult'
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+    def user_refund(self, **kwargs):
+        merchant_username = kwargs.get('merchant_username', None)
+        if not merchant_username:
+            merchant_username = kwargs.get('fromUsername', None)
+        if not merchant_username:
+            return {}
+
+        refund_username = kwargs.get('refund_username', None)
+        if not refund_username:
+            refund_username = kwargs.get('toUsername', None)
+        if not refund_username:
+            return {}
+
+        transaction_id = kwargs.get('transaction_id', None)
+        if not transaction_id:
+            transaction_id = kwargs.get('trxId', None)
+        if not transaction_id:
+            return {}
+
+        amount = kwargs.get('amount', None)
+        if not amount:
+            return {}
+
+        coupon_type = kwargs.get('coupon_type', None)
+        if not coupon_type:
+            coupon_type = kwargs.get('couponType', None)
+        if not coupon_type:
+            return {}
+
+        reference = kwargs.get('reference', '')
+
+        request_kwargs = {
+            'vFromUsername': merchant_username,
+            'vToUsername' : refund_username,
+            'vTrxId' : transaction_id,
+            'vCouponType' : coupon_type,
+            'vAmount' : amount,
+            'vRefundReference' : reference,
+        }
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = 'public/refund'
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+    def get_transaction_refund_options(self, **kwargs):
+        transaction_id = kwargs.get('transaction_id', None)
+        if not transaction_id:
+            transaction_id = kwargs.get('trxId', None)
+        if not transaction_id:
+            return {}
+
+        request_kwargs = {
+            'vTrxId' : transaction_id,
+        }
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = 'public/getRefund'
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+    def get_user_profile(self, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            return {}
+
+        request_kwargs = {
+            'vUsername': username,
+        }
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = "public/getUserProfile"
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+    def get_merchant_salesroles(self, **kwargs):
+        merchant_username = kwargs.get('merchant_username', None)
+        if not merchant_username:
+            merchant_username = kwargs.get('MerchantUsername', None)
+        if not merchant_username:
+            return {}
+
+        request_kwargs = {
+            'vMerchantUsername': merchant_username,
+        }
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = "public/getMerchantSaleRoles"
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+    def get_user_beneficiaries(self, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            username = kwargs.get('username', None)
+        if not username:
+            return {}
+
+        request_kwargs = {
+            'vUsername': username,
+        }
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = "public/getUserBeneficiaries"
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+###############################################################################
+# VAS - Value Added Services
+###############################################################################
+
+    def get_product_list_airtime(self, **kwargs):
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = "public/vas/products/airtime"
+        return self.post_to_endpoint(target, headers)
+
+    def get_product_list_data(self, **kwargs):
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = "public/vas/products/data"
+        return self.post_to_endpoint(target, headers)
+
+    def purchase_mobile(self, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            return {}
+
+        product_code = kwargs.get('product_code', None)
+        if not product_code:
+            return {}
+
+        mobile_number = kwargs.get('mobile_number', None)
+        if not mobile_number:
+            return {}
+
+        amount = kwargs.get('amount', None)
+        if not amount:
+            return {}
+
+        request_kwargs = {
+            'vUsername': username,
+            'vProductCode': product_code,
+            'vMobileNumber': mobile_number,
+            'vAmount': amount,
+        }
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = "public/vas/purchase/mobile"
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+    def transfer_user_api_key(self, *args, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            LOGGER.warning('transfer_user_api_key failed: no username')
+            return {}
+
+        old_api_key = kwargs.get('old_api_key', None)
+        if not old_api_key:
+            LOGGER.warning('transfer_user_api_key failed: no old_api_key')
+            return {}
+
+        new_api_key = kwargs.get('new_api_key', None)
+        if not new_api_key:
+            LOGGER.warning('transfer_user_api_key failed: no new_api_key')
+            return {}
+
+        request_kwargs = {
+            'vUsername': username,
+            'vOldApiKey': old_api_key,
+            'vNewApiKey': new_api_key,
+        }
+        headers = {
+            'API' : old_api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = "public/transferUserApiKey"
+        return self.post_to_endpoint(target, headers, request_kwargs, update_api_key=False)
+
+###############################################################################
+# GROUPS
+###############################################################################
+
+    def create_group(self, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            LOGGER.warning('create_group failed: no username')
+            return {}
+
+        groupname = kwargs.get('groupname', None)
+        if not groupname:
+            LOGGER.warning('create_group failed: no groupname')
+            return {}
+        groupname = groupname.strip()
+
+        request_kwargs = {
+            'vAuthUsername': username,
+            'vGroupName': groupname,
+        }
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = "public/groups/create"
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+    def remove_group(self, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            LOGGER.warning('remove_group failed: no username')
+            return {}
+
+        groupname = kwargs.get('groupname', None)
+        if not groupname:
+            LOGGER.warning('remove_group failed: no groupname')
+            return {}
+        groupname = groupname.strip()
+
+        owner_username = kwargs.get('owner_username', None)
+        if not owner_username:
+            LOGGER.warning('remove_group failed: no owner_username')
+            return {}
+
+        request_kwargs = {
+            'vAuthUsername': username,
+            'vGroupName': groupname,
+            'vGroupOwnerUsername' : owner_username,
+        }
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = "public/groups/remove"
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+    def leave_group(self, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            LOGGER.warning('leave_group failed: no username')
+            return {}
+
+        groupname = kwargs.get('groupname', None)
+        if not groupname:
+            LOGGER.warning('leave_group failed: no groupname')
+            return {}
+        groupname = groupname.strip()
+
+        owner_username = kwargs.get('owner_username', None)
+        if not owner_username:
+            LOGGER.warning('leave_group failed: no owner_username')
+            return {}
+
+        request_kwargs = {
+            'vUsername': username,
+            'vGroupName': groupname,
+            'vGroupOwnerUsername' : owner_username,
+        }
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = "public/groups/user/leave"
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+    def add_user(self, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            LOGGER.warning('add_user failed: no username')
+            return {}
+
+        groupname = kwargs.get('groupname', None)
+        if not groupname:
+            LOGGER.warning('add_user failed: no groupname')
+            return {}
+        groupname = groupname.strip()
+
+        to_username = kwargs.get('to_username', None)
+        if not to_username:
+            LOGGER.warning('add_user failed: no to_username')
+            return {}
+
+        owner_username = kwargs.get('owner_username', None)
+        if not owner_username:
+            LOGGER.warning('leave_group failed: no owner_username')
+            return {}
+
+        admin = kwargs.get('admin', False)
+
+        request_kwargs = {
+            'vGroupOwnerUsername' : owner_username,
+            'vAuthUsername': username,
+            'vUsername': to_username,
+            'vGroupName': groupname,
+            'vAdmin': admin,
+        }
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = "public/groups/user/add"
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+    def remove_user(self, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            LOGGER.warning('remove_user failed: no username')
+            return {}
+
+        groupname = kwargs.get('groupname', None)
+        if not groupname:
+            LOGGER.warning('remove_user failed: no groupname')
+            return {}
+        groupname = groupname.strip()
+
+        remove_username = kwargs.get('remove_username', None)
+        if not remove_username:
+            LOGGER.warning('remove_user failed: no remove_username')
+            return {}
+
+        owner_username = kwargs.get('owner_username', None)
+        if not owner_username:
+            LOGGER.warning('remove_user failed: no owner_username')
+            return {}
+
+        request_kwargs = {
+            'vAuthUsername': username,
+            'vUsername': remove_username,
+            'vGroupName': groupname,
+            'vGroupOwnerUsername' : owner_username,
+        }
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = "public/groups/user/remove"
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+    def update_user(self, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            LOGGER.warning('update_user failed: no username')
+            return {}
+
+        groupname = kwargs.get('groupname', None)
+        if not groupname:
+            LOGGER.warning('update_user failed: no groupname')
+            return {}
+        groupname = groupname.strip()
+
+        to_username = kwargs.get('to_username', None)
+        if not to_username:
+            LOGGER.warning('update_user failed: no to_username')
+            return {}
+
+        admin = kwargs.get('admin', None)
+        if not admin:
+            LOGGER.warning('update_user failed: no admin')
+            return {}
+
+        owner_username = kwargs.get('owner_username', None)
+        if not owner_username:
+            LOGGER.warning('update_user failed: no owner_username')
+            return {}
+
+        request_kwargs = {
+            'vGroupOwnerUsername' : owner_username,
+            'vAuthUsername': username,
+            'vUsername': to_username,
+            'vGroupName': groupname,
+            'vAdmin': admin,
+        }
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = "public/groups/user/update"
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+    def user_deposit(self, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            LOGGER.warning('user_deposit failed: no username')
+            return {}
+
+        groupname = kwargs.get('groupname', None)
+        if not groupname:
+            LOGGER.warning('user_deposit failed: no groupname')
+            return {}
+        groupname = groupname.strip()
+
+        amount = kwargs.get('amount', None)
+        if not amount:
+            LOGGER.warning('user_deposit failed: no amount')
+            return {}
+
+        owner_username = kwargs.get('owner_username', None)
+        if not owner_username:
+            LOGGER.warning('user_deposit failed: no owner_username')
+            return {}
+
+        request_kwargs = {
+            'vAmount' : amount,
+            'vUsername': username,
+            'vGroupName': groupname,
+            'vGroupOwnerUsername' : owner_username,
+        }
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = "public/groups/user/deposit"
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+    def user_transfer(self, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            LOGGER.warning('user_transfer failed: no username')
+            return {}
+
+        groupname = kwargs.get('groupname', None)
+        if not groupname:
+            LOGGER.warning('user_transfer failed: no groupname')
+            return {}
+        groupname = groupname.strip()
+
+        amount = kwargs.get('amount', None)
+        if not amount:
+            LOGGER.warning('user_transfer failed: no amount')
+            return {}
+
+        to_username = kwargs.get('to_username', None)
+        if not to_username:
+            LOGGER.warning('user_transfer failed: no to_username')
+            return {}
+
+        owner_username = kwargs.get('owner_username', None)
+        if not owner_username:
+            LOGGER.warning('user_transfer failed: no owner_username')
+            return {}
+
+        request_kwargs = {
+            'vAmount' : amount,
+            'vGroupName': groupname,
+            'vAuthUsername': username,
+            'vToUsername' : to_username,
+            'vGroupOwnerUsername' : owner_username,
+        }
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = "public/groups/user/transfer"
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+    def user_withdraw(self, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            LOGGER.warning('user_withdraw failed: no username')
+            return {}
+
+        groupname = kwargs.get('groupname', None)
+        if not groupname:
+            LOGGER.warning('user_withdraw failed: no groupname')
+            return {}
+        groupname = groupname.strip()
+
+        amount = kwargs.get('amount', None)
+        if not amount:
+            LOGGER.warning('user_withdraw failed: no amount')
+            return {}
+
+        owner_username = kwargs.get('owner_username', None)
+        if not owner_username:
+            LOGGER.warning('user_withdraw failed: no owner_username')
+            return {}
+
+        request_kwargs = {
+            'vGroupOwnerUsername' : owner_username,
+            'vAuthUsername': username,
+            'vGroupName': groupname,
+            'vAmount' : amount,
+        }
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = "public/groups/user/withdraw"
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+    def user_sale(self, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            LOGGER.warning('user_sale failed: no username')
+            return {}
+
+        groupname = kwargs.get('groupname', None)
+        if not groupname:
+            LOGGER.warning('user_sale failed: no groupname')
+            return {}
+        groupname = groupname.strip()
+
+        amount = kwargs.get('amount', None)
+        if not amount:
+            LOGGER.warning('user_sale failed: no amount')
+            return {}
+
+        merchant_username = kwargs.get('merchant_username', None)
+        if not merchant_username:
+            LOGGER.warning('user_sale failed: no merchant_username')
+            return {}
+
+        owner_username = kwargs.get('owner_username', None)
+        if not owner_username:
+            LOGGER.warning('user_sale failed: no owner_username')
+            return {}
+
+        request_kwargs = {
+            'vGroupOwnerUsername' : owner_username,
+            'vMerchant' : merchant_username,
+            'vAuthUsername': username,
+            'vGroupName': groupname,
+            'vAmount' : amount,
+        }
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = "public/groups/user/sale"
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+    def get_group_statement(self, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            LOGGER.warning('get_group_statement failed: no username')
+            return {}
+
+        groupname = kwargs.get('groupname', None)
+        if not groupname:
+            LOGGER.warning('get_group_statement failed: no groupname')
+            return {}
+        groupname = groupname.strip()
+
+        owner_username = kwargs.get('owner_username', None)
+        if not owner_username:
+            LOGGER.warning('get_group_statement failed: no owner_username')
+            return {}
+
+        request_kwargs = {
+            'vLimit' : self.limit,
+            'vUsername': username,
+            'vGroupName': groupname,
+            'vGroupOwnerUsername' : owner_username,
+        }
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = "public/groups/statement"
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+    def get_group_detail(self, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            LOGGER.warning('get_group_detail failed: no username')
+            return {}
+
+        groupname = kwargs.get('groupname', None)
+        if not groupname:
+            LOGGER.warning('get_group_detail failed: no groupname')
+            return {}
+        groupname = groupname.strip()
+
+        owner_username = kwargs.get('owner_username', None)
+        if not owner_username:
+            LOGGER.warning('get_group_statement failed: no owner_username')
+            return {}
+
+        request_kwargs = {
+            'vUsername': username,
+            'vGroupName': groupname,
+            'vGroupOwnerUsername' : owner_username,
+        }
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = "public/groups/detail"
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+    def get_user_groups(self, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            LOGGER.warning('get_user_groups failed: no username')
+            return {}
+
+        request_kwargs = {
+            'vUsername': username,
+        }
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = "public/groups/user/groups"
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+###############################################################################
+# SAVINGS / LOYALTY
+###############################################################################
+
+    def link_savings_pocket(self, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            LOGGER.warning('link_savings_pocket failed: no username')
+            return {}
+
+        request_kwargs = {
+            'vUsername': username,
+        }
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = "public/linkSavingsPocket"
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+    def link_loyalty_pocket(self, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            LOGGER.warning('link_loyalty_pocket failed: no username')
+            return {}
+
+        request_kwargs = {
+            'vUsername': username,
+        }
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = "public/linkLoyaltyPocket"
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+    def transfer_main_to_savings(self, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            LOGGER.warning('no username')
+            return {}
+
+        amount = kwargs.get('amount', None)
+        if not username:
+            LOGGER.warning('no amount')
+            return {}
+
+        reference = kwargs.get('reference', None)
+        if not username:
+            LOGGER.warning('no reference')
+            return {}
+
+        request_kwargs = {
+            'vUsername': username,
+            'vFromCouponType': 'iMali',
+            'vToCouponType': 'iMali-Savings',
+            'vAmount': amount,
+            'vPaymentReference': reference,
+        }
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = "public/interCouponTransfer"
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+    def transfer_savings_to_main(self, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            LOGGER.warning('no username')
+            return {}
+
+        amount = kwargs.get('amount', None)
+        if not username:
+            LOGGER.warning('no amount')
+            return {}
+
+        reference = kwargs.get('reference', None)
+        if not username:
+            LOGGER.warning('no reference')
+            return {}
+
+        request_kwargs = {
+            'vUsername': username,
+            'vFromCouponType': 'iMali-Savings',
+            'vToCouponType': 'iMali',
+            'vAmount': amount,
+            'vPaymentReference': reference,
+        }
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = "public/interCouponTransfer"
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+    def transfer_loyalty_to_main(self, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            LOGGER.warning('no username')
+            return {}
+
+        amount = kwargs.get('amount', None)
+        if not username:
+            LOGGER.warning('no amount')
+            return {}
+
+        reference = kwargs.get('reference', None)
+        if not username:
+            LOGGER.warning('no reference')
+            return {}
+
+        request_kwargs = {
+            'vUsername': username,
+            'vFromCouponType': 'iMali-Loyalty',
+            'vToCouponType': 'iMali',
+            'vAmount': amount,
+            'vPaymentReference': reference,
+        }
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = "public/interCouponTransfer"
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+    def transfer_loyalty_to_savings(self, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            LOGGER.warning('no username')
+            return {}
+
+        amount = kwargs.get('amount', None)
+        if not username:
+            LOGGER.warning('no amount')
+            return {}
+
+        reference = kwargs.get('reference', None)
+        if not username:
+            LOGGER.warning('no reference')
+            return {}
+
+        request_kwargs = {
+            'vUsername': username,
+            'vFromCouponType': 'iMali-Loyalty',
+            'vToCouponType': 'iMali-Savings',
+            'vAmount': amount,
+            'vPaymentReference': reference,
+        }
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = "public/interCouponTransfer"
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+    def link_loyalty_program(self, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            LOGGER.warning('no username')
+            return {}
+
+        loyalty_program = kwargs.get('loyalty_program', None)
+        if not username:
+            LOGGER.warning('no loyalty_program')
+            return {}
+
+        request_kwargs = {
+            'vMerchant': username,
+            'vLoyaltyProgram': loyalty_program,
+        }
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = "public/linkLoyaltyProgram"
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+    def unlink_loyalty_program(self, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            LOGGER.warning('no username')
+            return {}
+
+        loyalty_program = kwargs.get('loyalty_program', None)
+        if not username:
+            LOGGER.warning('no loyalty_program')
+            return {}
+
+        request_kwargs = {
+            'vMerchant': username,
+            'vLoyaltyProgram': loyalty_program,
+        }
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = "public/unlinkLoyaltyProgram"
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+###############################################################################
+# CARD
+###############################################################################
+
+    def add_card(self, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            LOGGER.warning('no username')
+            return {}
+
+        card_name = kwargs.get('card_name', None)
+        if not card_name:
+            LOGGER.warning('no card_name')
+            return {}
+
+        card_serial = kwargs.get('card_serial', None)
+        if not card_serial:
+            LOGGER.warning('no card_serial')
+            return {}
+
+        request_kwargs = {
+            'vUsername': username,
+            'vCardName': card_name,
+            'vCardSerial': card_serial,
+        }
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = "public/addCard"
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+    def get_card_details(self, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            LOGGER.warning('no username')
+            return {}
+
+        request_kwargs = {
+            'vUsername': username,
+        }
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = "public/getCardDetails"
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+    def get_card_transactions(self, **kwargs):
+        card_serial = kwargs.get('card_serial', None)
+        if not card_serial:
+            LOGGER.warning('no card_serial')
+            return {}
+
+        request_kwargs = {
+            'vCardSerial': card_serial,
+        }
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = "public/getCardTransactions"
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+    def replace_card(self, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            LOGGER.warning('no username')
+            return {}
+
+        old_card_serial = kwargs.get('old_card_serial', None)
+        if not old_card_serial:
+            LOGGER.warning('no old_card_serial')
+            return {}
+
+        new_card_serial = kwargs.get('new_card_serial', None)
+        if not new_card_serial:
+            LOGGER.warning('no new_card_serial')
+            return {}
+
+        request_kwargs = {
+            'vUsername': username,
+            'vNewCardId': new_card_serial,
+            'vCardIdToReplace': old_card_serial,
+        }
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = "public/replaceCard"
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+    def update_card_status(self, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            LOGGER.warning('no username')
+            return {}
+
+        card_serial = kwargs.get('card_serial', None)
+        if not card_serial:
+            LOGGER.warning('no card_serial')
+            return {}
+
+        card_status = kwargs.get('card_status', None)
+        if not card_status:
+            LOGGER.warning('no card_status')
+            return {}
+
+        request_kwargs = {
+            'vUsername': username,
+            'vCardSerial': card_serial,
+            'vCardStatus': card_status,
+        }
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = "public/updateCardStatus"
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+    def payout_to_card(self, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            LOGGER.warning('no username')
+            return {}
+
+        card_serial = kwargs.get('card_serial', None)
+        if not card_serial:
+            LOGGER.warning('no card_serial')
+            return {}
+
+        amount = kwargs.get('amount', None)
+        if not amount:
+            LOGGER.warning('no amount')
+            return {}
+
+        voucher_type = kwargs.get('voucher_type', None)
+        if not voucher_type:
+            LOGGER.warning('no voucher_type')
+            return {}
+
+        request_kwargs = {
+            'vAmount': amount,
+            'vUsername': username,
+            'vCardId': card_serial,
+            'vVoucherType': voucher_type,
+        }
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = "public/payoutToCard"
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+###############################################################################
+# WICODE
+###############################################################################
+
+    def generate_wicode(self, **kwargs):
+        coupon_type = kwargs.get('coupon_type', 'iMali')
+
+        transaction_type = kwargs.get('transaction_type', None)
+        if not transaction_type:
+            LOGGER.warning('no transaction_type')
+            return {}
+
+        username = kwargs.get('username', None)
+        if not username:
+            LOGGER.warning('no username')
+            return {}
+
+        request_kwargs = {
+            'vUsername': username,
+            'vCoupon': coupon_type,
+            'vTransactionType': transaction_type,
+        }
+
+        amount = kwargs.get('amount', None)
+        if amount:
+            request_kwargs['vAmount'] = str(amount)
+
+            """
+            try:
+                amount = float(amount)
+            except Exception as e:
+                LOGGER.warning('could not float amount')
+                return {}
+
+            #amount = amount / 1000
+            """
+        print(request_kwargs)
+
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = "public/wiCode/generateCode"
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+    def expire_wicode(self, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            LOGGER.warning('no username')
+            return {}
+
+        wicode = kwargs.get('wicode', None)
+        if not wicode:
+            LOGGER.warning('no wicode')
+            return {}
+
+        method = kwargs.get('method', None)
+        if not method:
+            LOGGER.warning('no method')
+            return {}
+
+        reason = kwargs.get('reason', None)
+        if not reason:
+            LOGGER.warning('no reason')
+            return {}
+
+        request_kwargs = {
+            'username': username,
+            'wiCode': wicode,
+            'method': method,
+            'reason': reason,
+        }
+
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = "public/wiCode/expireCode"
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+    def get_user_wicodes(self, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            LOGGER.warning('no username')
+            return {}
+
+        state = kwargs.get('state', 'pending')
+        wicode_type = kwargs.get('type', 'all')
+
+        request_kwargs = {
+            'vUsername': username,
+            'vState': state,
+            'vType': wicode_type,
+        }
+        headers = {
+            'API' : self.api_key,
+            'Content-Type' : 'application/x-www-form-urlencoded',
+        }
+        target = "public/wiCode/getUserCodes"
+        return self.post_to_endpoint(target, headers, request_kwargs)
+
+###############################################################################
+# UTILS
+###############################################################################
+
+    def post_to_endpoint(self, target=None, headers=None, data=None, update_api_key=True, **kwargs):
+        if not target or not headers:
+            return {}
+
+        if update_api_key:
+            current = CurrentApplication.latest_entry()
+            app = Application.by_id(current.application_id)
+            if app:
+                #LOGGER.info(f'API KEY IN USE: {app.name}')
+                headers['API'] = app.myimali_api_key
+
+        url = f'{self.base_url}/{target}'
+        try:
+            r = requests.post(url, headers=headers, data=data)
+        except requests.exceptions.ConnectionError:
+            LOGGER.warning(f'{target} failed due to ConnectionError')
+            return {}
+
+        try:
+            result = r.json()
+        except Exception as e:
+            print()
+            print(r.status_code)
+            print('text', r.text)
+            print(e)
+            print()
+            LOGGER.warning(f'{target} failed due to: {e}')
+            result = {}
+        return result
+
+if __name__ == "__main__":
+
+    test = MyImaliApiGateway()
+    print(test)

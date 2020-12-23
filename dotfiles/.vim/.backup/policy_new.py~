@@ -1,0 +1,1082 @@
+# -*- coding: utf-8 -*-
+"""Policy controller module"""
+
+import logging
+
+from tg import predicates, require, expose, request
+
+from tg.i18n import ugettext as _
+from tg.i18n import lazy_ugettext as l_
+
+from rocket.model import *
+
+from rocket.lib.tg_utils import *
+import rocket.lib.vault_utils as vault
+from rocket.lib.base import BaseController
+from rocket.lib.type_utils import TypeDictionary
+from rocket.lib.sql_crud_utils import Cruds
+
+from rocket.controllers.product import ProductController
+from rocket.controllers.common import CommonController
+
+from sqlalchemy import func, desc, asc, or_
+
+log = logging.getLogger(__name__)
+
+TYPEUTIL = TypeDictionary()
+COMMON = CommonController()
+PRODUCT = ProductController()
+CRUDUTIL = Cruds()
+
+DBQUERY_LIMIT = 15
+POLICY_NUMBER_MAX_LENGTH = 10
+
+
+class PolicyController(BaseController):
+
+###############################################################################
+# Policy - List
+###############################################################################
+
+    @require(predicates.not_anonymous())
+    @expose('rocket.templates.generic')
+    def index(self, *args, **kwargs):
+        html = self.get_policies_html(*args, **kwargs)
+        javascript = self.get_javascript_policy_onload()
+        title = _("Policy Management")
+        return dict(title=title, html=html, javascript=javascript)
+
+    @expose()
+    def get_policies_html(self, *args, **kwargs):
+        outputlist = []
+
+        person = TYPEUTIL.get_id_of_name('entity_type', 'person')
+        organisation = TYPEUTIL.get_id_of_name('entity_type', 'organisation')
+
+        dbase_query = Policy.get_limit(DBQUERY_LIMIT, 'policy_number')
+        for item in dbase_query:
+            # Policy Payer
+            policy_payer_full_name = None
+            policy_payer_entity = EntityPerson.by_attr_first('entity_id', item.policy_payer_entity_id)
+            if policy_payer_entity:
+                personobj_policy_payer = vault.get_personobj_by_id(policy_payer_entity.person_id)
+                if personobj_policy_payer:
+                    policy_payer = personobj_policy_payer.get('person', {})
+                    policy_payer_full_name = f"{policy_payer.get('firstname', '')} {policy_payer.get('surname', '')}"
+
+            # Policy Owner
+            policy_owner_full_name = None
+
+            entity_owner = Entity.by_id(item.policy_owner_entity_id)
+            if entity_owner.entity_type_id == person:
+                policy_owner_entity = EntityPerson.by_attr_first('entity_id', item.policy_owner_entity_id)
+                if policy_owner_entity:
+                    personobj_policy_owner = vault.get_personobj_by_id(policy_owner_entity.person_id)
+                    if personobj_policy_owner:
+                        policy_owner = personobj_policy_owner.get('person', {})
+                        policy_owner_full_name = f"{policy_owner.get('firstname', '')} {policy_owner.get('surname', '')}"
+
+            if entity_owner.entity_type_id == organisation:
+                entity_organisation = EntityOrganisation.by_attr_first('entity_id', item.policy_owner_entity_id)
+                if entity_organisation:
+                    policy_owner_full_name = f"{entity_organisation.code}: {entity_organisation.name}"
+
+            policy_status_name = None
+            state = PolicyStatus.by_attr_first('policy_id', item.id)
+            if state:
+                policy_status_name = TYPEUTIL.get_pretty_name('policy_status_type', state.policy_status_type_id)
+
+            product = Product.by_attr_first('id', item.product_id)
+            if not product:
+                continue
+            outputlist.append({
+                'policy_number': f"<div class='edit policy_edit action_link' policy_id='{item.id}'>{item.policy_number}</div>",
+                'policy_payer': policy_payer_full_name,
+                'policy_owner': policy_owner_full_name,
+                'product': product.name,
+                'state': policy_status_name,
+            })
+        dbcolumnlist = [
+            'policy_number',
+            'policy_payer',
+            'policy_owner',
+            'product',
+            'state',
+        ]
+        theadlist = [
+            'Policy Number',
+            'Policy Holder',
+            'Policy Owner',
+            'Product',
+            'State'
+        ]
+        tdclasslist = [
+            'action_link',
+            'text-left',
+            'text-left',
+            'text-left',
+            'text-left',
+        ]
+        htmltbl = build_html_table(outputlist, dbcolumnlist, theadlist, "policy_table", tdclasslist)
+        html = f"""
+            <div class="row">
+                <div class="col-md-12">
+                    <div class="card">
+                        <div class="card-header">
+                            <div class="row d-flex">
+                                <div class="col-md-6">
+                                     <h4 class="card-title">{_('Policy Management')}</h4>
+                                </div>
+                                <div class="col-md-6 text-right">
+                                    <button id="create_new_policy" class="btn btn-primary ml-auto">Create New Policy</button>
+                                </div>
+                            </div>
+                            <div class="row d-flex align-items-center">
+                                <div class="col-md-4 d-flex">
+                                    <input id='search' type="text" class="form-control mr-2 search" name="searchphrase" placeholder="Search by Code or Description">
+                                </div>
+                                <div class="col-md-4 pl-0">
+                                    <button id='btn_search' class="btn btn-primary action_search">Search</button>
+                                    <button id='btn_reset' class="btn btn-primary">Reset</button>
+                                </div>
+                            </div>
+                            <hr>
+                        </div>
+                        <div class="card-body">
+                            <div id='div_policy_table' class="table-responsive">
+                                {htmltbl}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            """
+        return html
+
+    @expose()
+    def get_javascript_policy_onload(self, *args, **kwargs):
+        javascript = """
+            $("#create_new_policy").click(function(){
+                $.redirect('/policy/new');
+            });
+            $(".policy_edit").click(function(){
+                var policy_id = $(this).attr('policy_id');
+                var kwargs = {'policy_id' : policy_id};
+                $.redirect('/policy/edit', kwargs);
+            });
+            """
+        return javascript
+
+###############################################################################
+# Policy - New tabs
+###############################################################################
+
+    @require(predicates.not_anonymous())
+    @expose('rocket.templates.generic')
+    def new(self, *args, **kwargs):
+        html = self.get_new_policy_html(**kwargs)
+        javascript = self.get_javascript_edit_policy_onload()
+        title = _("New Policy")
+        return dict(title=title, html=html, javascript=javascript)
+
+    def get_new_policy_html(self, *args, **kwargs):
+        print(kwargs)
+        policy_id = kwargs.get('policy_id', None)
+
+        # HEADER
+        card_header = self.get_edit_policy_card_header(policy_id)
+
+        # TAB 1
+        tab_policy_owner_content = self.get_policy_owner_type_html(**kwargs)
+
+        # TAB 2
+        tab_policy_product_content = ""
+
+        # TAB 3
+        tab_policy_benefits_content = ""
+
+        html = f"""
+        {card_header}
+        <div class="row">
+            <div class="col-md-12 ml-auto mr-auto">
+                <div class="col-md-12 ml-auto mr-auto">
+                    <ul class="nav nav-pills nav-pills-primary justify-content-center" role="tablist">
+                        <li class="nav-item">
+                            <a class="nav-link" data-toggle="tab" href="#tab_policy_owner" role="tablist">
+                                Policy Owner
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link disabled" data-toggle="tab" href="#tab_policy_product" role="tablist">
+                                Product
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link disabled" data-toggle="tab" href="#tab_policy_benefits" role="tablist">
+                                Benefits
+                            </a>
+                        </li>
+                    </ul>
+                </div>
+                <div class="tab-content tab-space tab-subcategories">
+                    <div class="tab-pane active" id="tab_policy_owner">
+                        {tab_policy_owner_content}
+                    </div>
+                    <div class="tab-pane" id="tab_policy_product">
+                        {tab_policy_product_content}
+                    </div>
+                    <div class="tab-pane" id="tab_policy_benefits">
+                        {tab_policy_benefits_content}
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        return html
+
+    def get_javascript_edit_policy_onload(self, *args, **kwargs):  # TODO these buttons don't exist yet
+        javascript = """
+        setFormValidation('#form_edit_policy');
+        $('#save_edit_policy').click(function(){
+             var valid = FormIsValid("#form_edit_policy");
+             if(valid){
+                var formserial = $('#form_edit_policy').serialize();
+                $.post('/policy/save_edit_policy?', formserial, function(data){
+                    return false;
+                });
+             }
+        });
+        $('#continue_edit_policy').click(function(){
+             var valid = FormIsValid("#form_edit_policy");
+             if(valid){
+                var formserial = $('#form_edit_policy').serialize();
+                $.post('/policy/save_edit_policy?', formserial, function(data){
+                    $('.nav-link[href="#tab_policy_product"]').trigger('click')
+                    return false;
+                });
+             }
+        });
+        $('#continue_policy').click(function(){
+            $('.nav-link[href="#tab_policy_product"]').trigger('click')
+        });
+        // REMOVE
+        // $('#continue_product').trigger('click');
+        """
+        return javascript
+
+###############################################################################
+# Policy - Edit - Card Header
+###############################################################################
+
+    def get_edit_policy_card_header(self, policy_id=None, *args, **kwargs):
+        if not policy_id:
+            title = "New Policy"
+        else:
+            policy = Policy.by_id(policy_id)
+            policy_number = policy.policy_number
+            title = f"Edit Policy: {policy_number}"
+        html = f"""
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header">
+                    <div class="row d-flex">
+                        <div class="col-md-8">
+                            <h4 class="card-title">{title}</h4>
+                        </div>
+                        <div class="col-md-4 text-right">
+                            <button class="btn btn-primary ml-auto" id="policy_back">Back to Policies</button>
+                        </div>
+                    </div>
+                    <div class="row d-flex">
+                        <div class="col-md-12">
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        javascript = """
+        <script>
+            $('#policy_back').click(function(){
+                $.redirect('/policy/index');
+            });
+        </script>
+        """
+        return html + javascript
+
+###############################################################################
+# Policy - policy owner
+###############################################################################
+
+    def get_policy_owner_type_html(self, *args, **kwargs):
+        print("&&&&&&&&&&&&&&&&&& ", kwargs)
+        policy_id = kwargs.get('policy_id', '')
+        default_owner_type = 'person'
+        if policy_id:
+            policy = Policy.by_id(policy_id)
+            if policy:
+                policy_owner_entity_id = policy.policy_owner_entity_id
+                owner_entity = Entity.by_id(policy_owner_entity_id)
+                owner_entity_type = owner_entity.entity_type_id
+                if owner_entity_type:
+                    default_owner_type = owner_entity_type
+                # owner_entity_person = EntityPerson.by_attr_first('entity_id', owner_entity.id)
+                # owner_entity_person_type = vault.get_personidentities_by_person_id(owner_entity_person.person_id)
+                # print(vault.get_personidentities_by_person_id(owner_entity_person.person_id))  # TODO note that identities is a list. might have to loop over them (or just grab the first)
+                # if owner_entity_person_type:
+                #     default_owner_type = owner_entity_person_type[0].get('identity_type_id')
+        else:
+            policy_id = 'null'
+        dropdown_entity_type = COMMON.get_selectbox_entity_type(default_owner_type)
+        html = f"""
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="col-md-12">
+                                    <div class="form-group row">
+                                        <label class="col-md-3 col-form-label">{_('Policy Owner Type')}</label>
+                                        <div class="col-md-9">
+                                            {dropdown_entity_type}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div id='div_new_policy_search'></div>
+        <div id="div_new_policy_entity"></div>
+        """
+        # TODO note that save_new_policy isn't connected to anything yet
+        javascript = f"""
+        <script>
+            $("#entity_type_id").change(function (){{
+                var policy_id = {policy_id};
+                var entity_type_id = $('#entity_type_id option:selected').val();
+                var kwargs = {{'policy_id': policy_id, 'entity_type_id': entity_type_id}};
+                $('#div_new_policy_search').load('/policy/get_policy_entity_form', kwargs, function(data){{
+                    return false;
+                }});
+            }});
+            $("#entity_type_id").trigger('change');
+
+            $("#save_new_policy").click(function (){{
+                $.redirect('/policy/edit');
+            }});
+        </script>
+        """
+        return html + javascript
+
+    @expose()
+    def get_policy_entity_form(self, *args, **kwargs):
+        entity_type_id = kwargs.get('entity_type_id', None)
+        if not entity_type_id: return ''
+        if entity_type_id == '0': return ''
+        entity_type_id = int(entity_type_id)
+
+        person = TYPEUTIL.get_id_of_name('entity_type', 'person')
+        organisation = TYPEUTIL.get_id_of_name('entity_type', 'organisation')
+
+        if entity_type_id == person:
+            return self.get_policy_entity_person_form(**kwargs)
+
+        elif entity_type_id == organisation:
+            return self.get_policy_entity_organisation_form(**kwargs)
+        return ''
+
+###############################################################################
+# Policy - Owner - Person
+###############################################################################
+
+    def get_policy_entity_person_form(self, *args, **kwargs):  # TODO need to populate from vault if person exists
+        print(kwargs)
+        policy_id = kwargs.get('policy_id', '')
+        if policy_id:
+            policy = Policy.by_id(policy_id)
+            policy_owner_entity_id = policy.policy_owner_entity_id
+            owner_entity = Entity.by_id(policy_owner_entity_id)
+            owner_entity_person = EntityPerson.by_attr_first('entity_id', owner_entity.id)
+            owner_entity_person_identities = vault.get_personidentities_by_person_id(owner_entity_person.person_id)
+
+        id_type = 'Identity Number'
+        identity_number = TYPEUTIL.get_id_of_name('person_identity_type', 'identity_number')
+        dropdown_identity_type = COMMON.get_selectbox_identity_type(**{'selected' : identity_number})
+        label = _(id_type)
+        html = f"""
+        <div class="card">
+            <div class="card-header d-flex">
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="col-md-12">
+                            <div class="form-group row">
+                                <label class="col-md-3 col-form-label">{label}</label>
+                                <div class="col-md-9">
+
+                                    <!--
+                                    REMOVE
+                                    -->
+                                    <input id='identity_number' value='asdf' type="text" class="form-control mr-2" placeholder="Search by {id_type}">
+
+                                    <!--
+                                    <input id='identity_number' value='' type="text" class="form-control mr-2" placeholder="Search by {id_type}">
+                                    -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="col-md-12">
+                            <div class="form-group row">
+                                <label class="col-md-3 col-form-label">{_('Identity Type')}</label>
+                                <div class="col-md-9">
+                                    {dropdown_identity_type}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        javascript = """
+        <script>
+            $(document).ready(function(){
+                $('#identity_number').focus();
+                $('#identity_number').keyup(addDelayCallback(function(){
+                    var value = $(this).val();
+                    if(value.length >= 3){
+                        var kwargs = 'identity_number='+value;
+                        kwargs += '&identity_type_id=' + $('#identity_type_id option:selected').val();
+                        $('#div_new_policy_entity').load('/policy/get_entity_person_form?', kwargs, function(data){
+                            $('input[name="name"]').focus();
+                            return false;
+                        });
+                    };
+                }, 500));
+                $('#identity_type_id').change(function(){
+                    $('#identity_number').trigger('keyup');
+                });
+
+
+                // REMOVE
+                $('#identity_number').trigger('keyup');
+            });
+        </script>
+        """
+        return html + javascript
+
+    @expose()
+    def get_entity_person_form(self, *args, **kwargs):
+        identity_number = kwargs.get('identity_number', None)
+        identity_type_id = kwargs.get('identity_type_id', None)
+
+        identity_number_id = TYPEUTIL.get_id_of_name('person_identity_type', 'identity_number')
+        if not identity_type_id:
+            identity_type_id = identity_number_id
+        identity_type_id = int(identity_type_id)
+
+        personobj = None
+        if identity_type_id == identity_number_id:
+            personobj = vault.get_personobj_by_idnumber(identity_number, identity_type_id)
+
+        html = None
+        person_id = personobj.get('id', None)
+        kwargs['form_id'] = 'form_policy_person'
+        if person_id:
+            entity_person = EntityPerson.by_attr_first('person_id', person_id)
+            if entity_person:
+                kwargs['card_title'] = 'Edit Policy Owner'
+                kwargs['entity_person_id'] = entity_person.id
+                kwargs['save_button_id'] = 'btn_continue_to_product'
+                kwargs['person_vault'] = vault.get_personobj_by_id(person_id)
+                html = COMMON.get_edit_person_html(**kwargs)
+
+        else:
+            kwargs['back_button'] = f"""
+            <div class="col-md-6 text-right">
+                <button id='btn_continue_to_product' class="btn btn-primary ml-auto">Save</button>
+            </div>
+            """
+            kwargs['card_title'] = 'New Policy Owner'
+            kwargs['identity_number'] = identity_number
+            html = COMMON.get_new_person_html(**kwargs)
+
+        if not html:
+            log.warning('Unable to get new policy owner form')
+            return ''
+
+        javascript = """
+        <script>
+            $(document).ready(function(){
+                createDatepicker('#date_of_birth');
+                $('#btn_continue_to_product').click(function(){
+                    var valid = FormIsValid("#form_policy_person");
+                    if(valid){
+                        var formserial = $('#form_policy_person').serialize();
+                        $.post('/policy/save_policy_entity_person?', formserial, function(data){
+                            if(data){
+                                var kwargs = 'policy_owner_entity_id='+data;
+                                $('#tab_policy_product').load('/policy/get_policy_product_form?', kwargs, function(data){
+                                    $('.nav-link[href="#tab_policy_product"]').removeClass('disabled').trigger('click');
+                                        return false;
+                                });
+                            };
+                            return false;
+                        });
+                    }
+                });
+
+                // REMOVE
+                //$('#btn_continue_to_product').trigger('click');
+            });
+        </script>
+        """
+        return html + javascript
+
+    @expose()
+    def save_policy_entity_person(self, *args, **kwargs):
+        entity_person_id = kwargs.get('entity_person_id', None)
+
+        entity_id = None
+        if entity_person_id:
+            bln_save_edit_result = COMMON.save_edit_personobj(**kwargs)
+            if bln_save_edit_result:
+                entity_person = EntityPerson.by_id(entity_person_id)
+                entity_id = entity_person.entity_id
+
+        else:
+            entity_id = COMMON.save_new_personobj(**kwargs)
+
+        if not entity_id:
+            log.warning('Returning blank, unable to get entity_id')
+            return ''
+
+        return str(entity_id)
+
+###############################################################################
+# Policy - New - Product
+###############################################################################
+
+    @expose()
+    def get_policy_product_form(self, *args, **kwargs):
+        policy_owner_entity_id = kwargs.get('policy_owner_entity_id', None)
+        if not policy_owner_entity_id:
+            return ''
+        selectbox_product = self.get_selectbox_product()
+        html = f"""
+        <div class="card">
+            <div class="card-header d-flex">
+                <div class="col-md-6">
+                    <h4 class="card-title">Choose Product</h4>
+                </div>
+                <div class="col-md-6 text-right">
+                    <button id='btn_continue_to_benefit' policy_owner_entity_id='{policy_owner_entity_id}' class="btn btn-primary ml-auto">Save</button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="form-group row">
+                            <label class="col-md-3 col-form-label" required>{_('Product')}</label>
+                            <div class="col-md-9">
+                                {selectbox_product}
+                            </div>
+                        </div>
+                    </div>
+                    <div id='div_product_summary' class="col-md-6">
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        javascript = """
+        <script>
+            $(document).ready(function(){
+                $("#product_id").change(function (){
+                    var kwargs = 'product_id='+$('#product_id option:selected').val();
+                    $('#div_product_summary').load('/product/product_summary?', kwargs, function(data){
+                        return false;
+                    });
+                });
+                $('#btn_continue_to_benefit').click(function(){
+                    console.log('here');
+
+                    var kwargs = 'policy_owner_entity_id='+$(this).attr('policy_owner_entity_id');
+                    kwargs += '&product_id='+$('#product_id option:selected').val();
+                    $.post('/policy/save_new_policy?', kwargs, function(data){
+                        kwargs += '&policy_id='+data;
+                        $('#tab_policy_benefits').load('/policy/get_new_policy_benefits_table?', kwargs, function(data){
+                            $('.nav-link[href="#tab_policy_benefits"]').removeClass('disabled').trigger('click');
+                            return false;
+                        });
+                    });
+
+                    /*
+                    var kwargs = 'policy_owner_entity_id='+$(this).attr('policy_owner_entity_id');
+                    kwargs += '&product_id='+$('#product_id option:selected').val();
+                    $.post('/policy/save_new_policy?', kwargs, function(data){
+                        var kwargs = {'policy_id' : data};
+                        $.redirect('/policy/edit', kwargs);
+                        return false;
+                    });
+                    */
+                });
+
+                // REMOVE
+                $('#product_id').trigger('change');
+                //$('#btn_continue_to_benefit').trigger('click');
+            });
+        </script>
+        """
+        return html + javascript
+
+    def get_selectbox_product(self, *args, **kwargs):
+        """Needs to be finished"""
+        dbase_query = Product.get_all('code')
+        # REMOVE
+        kwargs['selected'] = 1
+        kwargs['limit'] = 'all'
+        kwargs['active'] = True
+        kwargs['id'] = 'product_id'
+        kwargs['outputlist'] = [{'name': m.code, 'id': m.id} for m in dbase_query]
+        return create_selectbox_html(**kwargs)
+
+###############################################################################
+# Policy - benefits table
+###############################################################################
+
+    @expose()
+    def get_new_policy_benefits_table(self, *args, **kwargs):
+        product_id = kwargs.get('product_id', None)
+        if not product_id:
+            return ''
+
+        table = self.get_policy_benefits_html_table(**kwargs)
+
+        html = f"""
+            <div class="card">
+                <div class="card-header d-flex">
+                    <div class="col-md-6">
+                        <h4 class="card-title">Choose Benefits</h4>
+                    </div>
+                    <div class="col-md-6 text-right">
+                        <button id='btn_continue_to_policy' class="btn btn-primary ml-auto">Save</button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-12">
+                            {table}
+                        </div>
+                    </div>
+                </div>
+            </div>
+            """
+        javascript = """
+            <script>
+                $(document).ready(function(){
+    
+                    $('#btn_continue_to_policy').click(function(){
+    
+                        $.post('/policy/save_new_policy?', kwargs, function(data){
+                            data = policy_id
+    
+                            //$('.benefit_life').each(function(){
+                            //    console.log('life', this);
+                            //});
+    
+                            //$('.benefit_non_life').each(function(){
+                            //    console.log('not', this);
+                            //});
+                            return false;
+    
+                        });
+    
+                        //$('.benefit_life').each(function(){
+                        //    console.log('life', this);
+                        //});
+    
+                        //$('.benefit_non_life').each(function(){
+                        //    console.log('not', this);
+                        //});
+    
+                    });
+    
+                    $(".btn_summary").click(function(){
+                        var kwargs = 'product_benefit_id='+$(this).attr('product_benefit_id');
+                        $('#dialogdiv').load('/policy/get_modal_benefit_summary?', kwargs, function(data){
+                            return false;
+                        });
+                    });
+                });
+            </script>
+            """
+        return html + javascript
+
+    def _get_benefit_cover_code(self, benefit):
+        if benefit.benefit_cover_link_id:
+            benefit_cover_link_id = benefit.benefit_cover_link_id
+            benefit_cover_link = BenefitCoverLink.by_id(benefit_cover_link_id)
+            cover_id = benefit_cover_link.cover_and_exclusion_id
+            cover = CoverAndExclusion.by_id(cover_id)
+            cover_code = cover.code
+        else:
+            cover_code = "Not Set"
+        return cover_code
+
+    def get_policy_benefits_html_table(self, *args, **kwargs):
+        print("&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&& ", kwargs)
+        product_id = kwargs.get('product_id', None)
+        if not product_id:
+            return ''
+
+        policy_id = kwargs.get('policy_id', None)
+        if not policy_id:
+            return ''
+
+        dbase_query = DBSession.query(Benefit). \
+                filter(Benefit.product_id==product_id). \
+                filter(Benefit.active==True). \
+                all()
+        outputlist = []
+
+        for item in dbase_query:
+            if item.is_life:
+                value = 'life'
+                class_name = 'benefit_life'
+            else:
+                value = 'non life'
+                class_name = 'benefit_non_life'
+
+            # input_html = f"""
+            # <input benefit_id='{item.id}' class='{class_name}' value='{value}'></input>
+            # """
+
+            cover_code = self._get_benefit_cover_code(item)
+
+            if item.is_life:
+                benefit_insured_life = BenefitInsuredLife.by_attr_first('benefit_id', item.id)
+                benefit_insured_life_type_id = benefit_insured_life.benefit_insured_life_relationship_type_id
+                life_type = TYPEUTIL.get_pretty_name('benefit_insured_life_relationship_type',
+                                                     benefit_insured_life_type_id)
+                insured_type = f"Life - {life_type}"
+
+                max_insured = benefit_insured_life.maximum_lives
+                number_of_benefits_available = max_insured
+            else:
+                benefit_insured_asset_type_id = BenefitInsuredNonLife.by_attr_first('benefit_id', item.id) \
+                    .benefit_asset_type_id
+                asset_type = TYPEUTIL.get_pretty_name('benefit_asset_type', benefit_insured_asset_type_id)
+                insured_type = f"Asset - {asset_type}"
+
+                number_of_benefits_available = "Infinite"
+
+            remove = ''
+            check_to_show = True
+            if check_to_show:
+                remove = "<button class='btn btn-primary ml-auto btn_remove'>Remove</button>"
+
+            button_html = f"""
+            <button product_benefit_id='{item.id}' class="btn btn-primary ml-auto btn_summary">Summary</button>
+            <button name='{item.name}' benefits_available='{number_of_benefits_available}' cover='{cover_code}' product_benefit_id='{item.id}' insured_type='{insured_type}' policy_id='{policy_id}' class="btn btn-primary ml-auto btn_add">Add</button>
+            {remove}
+            """
+
+            outputlist.append({
+                'name' : item.name,
+                'cover' : cover_code,
+                'insured_type' : insured_type,
+                'benefits_available' : number_of_benefits_available,
+                'insured' : '',
+                'buttons' : button_html,
+            })
+        dbcolumnlist = [
+            'name',
+            'cover',
+            'insured_type',
+            'benefits_available',
+            'insured',
+            'buttons',
+        ]
+        theadlist = [
+            'Name',
+            'Cover',
+            'Insured Type',
+            'Available',
+            'Insured',
+            '',
+        ]
+        tdclasslist = [
+            '',
+            '',
+            '',
+            'benefits_available',
+            '',
+            'text-right action_link',
+        ]
+        javascript = """
+            <script>
+                $('.btn_add').click(function(){
+                    var kwargs = {
+                        'product_benefit_id': $(this).attr('product_benefit_id'),
+                        'insured_type': $(this).attr('insured_type'),
+                        'benefits_available': $(this).attr('benefits_available'),
+                        'cover': $(this).attr('cover'),
+                        'name': $(this).attr('name'),
+                        'policy_id': $(this).attr('policy_id'),
+                    }
+                    var this_row = this.closest("tr");
+                    $(this_row).attr('data-product_benefit_id', $(this).attr('product_benefit_id'));
+                    var this_element = $(this_row).find('td.benefits_available');
+                    if (this_element.text() != 'Infinite' && this_element.text() !="0") {
+                        var new_val = parseInt(this_element.text()) - 1;
+                        this_element.text(new_val);
+                        if (new_val == 0) {
+                            $(this_row).find('td.action_link').children('button.btn_add').hide();
+                        }
+                    }
+                    $.get('/policy/add_benefit_row', kwargs, function(data){
+                        $(this_row).after(data);
+                        return false;
+                    });
+                    return false;
+                });
+                $(document).on('click', '.btn_remove', function(){
+                    var data_parent = $(this).data("parent");
+                    var this_row = this.closest("tr");
+                    var this_parent = $(this_row).closest('table').find('tr[data-product_benefit_id=' + data_parent + ']');
+                    var this_parent_add_button = $(this_parent).find('button.btn_add');
+                    if ($(this_parent_add_button).is(":hidden")) {
+                        $(this_parent_add_button).show();
+                    }
+                    var this_element = $(this_parent).find('td.benefits_available');
+                    if (this_element.text() != 'Infinite') {
+                        var new_val = parseInt(this_element.text()) + 1;
+                        this_element.text(new_val);
+                    }
+                    var policy_benefit_id = $(this_row).attr('policy_benefit_id');
+                    var kwargs = {'policy_benefit_id': policy_benefit_id};
+                    console.log(this_row);
+                    console.log(kwargs);
+                    $('#dialogdiv').load('/policy/remove_benefit_row?', kwargs, function(data){
+                        return false;
+                    });
+                    
+                    $(this_row).remove();
+                    return false;
+                });
+                $(document).on('click', '.btn-insured-new-edit', function() {
+                    var this_row = this.closest("tr");
+                    var data_parent = $(this).data("parent");
+                    var product_benefit_id = $(this_row).attr('product_benefit_id');
+                    var policy_id = $(this_row).attr('policy_id');
+                    var policy_benefit_id = $(this_row).attr('policy_benefit_id');
+                    var kwargs = {
+                        'product_benefit_id': product_benefit_id,
+                        'policy_id': policy_id,
+                        'policy_benefit_id': policy_benefit_id,
+                    }
+                    $('#dialogdiv').load('/policy/redirect_to_policy_benefit?', kwargs, function(data){
+                        return false;
+                    });
+                });
+            </script>"""
+        return build_html_table(outputlist, dbcolumnlist, theadlist, "benefitstable", tdclasslist) + javascript
+
+    @expose()
+    def get_modal_benefit_summary(self, *args, **kwargs):  # TODO need to focus on benefits once modal closed
+        """Displays the summary of the selected benefit as a modal"""
+        product_benefit_id = kwargs.get('product_benefit_id', None)
+        if not product_benefit_id:
+            return ''
+        benefit = DBSession.query(Benefit).get(product_benefit_id)
+        benefit_name = benefit.name
+        summary = PRODUCT.get_benefit_summary(**kwargs)
+        html = f"""
+        <div class="modal fade" id="dialog_benefit_summary" tabindex="-1" role="dialog" aria-labelledby="mybenefit_summaryLabel" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <div class="col-md-12">
+                            <h4 class="card-title">Benefit Name: {benefit_name}</h4>
+                        </div>
+                    </div>
+                    <div class="modal-body">
+                        <form id='form_benefit_summary'>
+                            {summary}
+                        </form>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-outline-primary benefit_summary_back">Close</button>
+                    </div>
+                </div>
+            </div>
+        </div>"""
+        javascript = """
+        <script>
+            var form_id = '#form_benefit_summary'
+            setFormValidation(form_id);
+            $('.benefit_summary_back').click(function(){
+                $('#dialog_benefit_summary').modal('hide');
+            });
+            $('#dialog_benefit_summary').modal();
+        </script>"""
+        return html + javascript
+
+    @expose()
+    def add_benefit_row(self, *args, **kwargs):
+        """Adds another instance of the same benefit"""
+        policy_id = kwargs.get('policy_id', None)
+        name = kwargs.get('name', '')
+        cover = kwargs.get('cover', '')
+        insured_type = kwargs.get('insured_type', '')
+        product_benefit_id = kwargs.get('product_benefit_id', '')
+        policy_benefit_id = self.save_new_policy_benefit_to_db(product_benefit_id, policy_id)
+        if policy_benefit_id:
+            html = f"""
+                    <tr style="background-color: rgba(0,0,0,0.05);" product_benefit_id="{product_benefit_id}" policy_benefit_id="{policy_benefit_id}", policy_id="{policy_id}">
+                        <td>{name}</td>
+                        <td>{cover}</td>
+                        <td>{insured_type}</td>
+                        <td></td>
+                        <td>
+                            <!-- <input product_benefit_id="{product_benefit_id}" class="benefit_life" value="life"> -->
+                            <button class='btn btn-insured-new-edit'>New Insured</button>
+                        </td>
+                        <td class="text-right action_link">
+                            <button class='btn btn-primary ml-auto btn_remove' data-parent="{product_benefit_id}">Remove</button>
+                        </td>
+                    </tr>"""
+        else:
+            html = ''
+        return html
+
+    def save_new_policy_benefit_to_db(self, product_benefit_id=None, policy_id=None):
+        if not policy_id:
+            print("No policy_id")
+            return False
+        product_benefit = Benefit.by_id(product_benefit_id)
+        if not product_benefit:
+            print("Cannot find Benefit")
+            return False
+        product_benefit_cover_link_id = product_benefit.benefit_cover_link_id
+        new_policy_benefit = PolicyBenefit()
+        new_policy_benefit.policy_id = policy_id
+        new_policy_benefit.product_benefit_id = product_benefit_id
+        new_policy_benefit.product_benefit_cover_link_id = product_benefit_cover_link_id
+        if product_benefit.is_life:
+            new_policy_benefit.number_of_insured = 1
+        DBSession.add(new_policy_benefit)
+        DBSession.flush()
+        return new_policy_benefit.id
+
+    @expose()
+    def remove_benefit_row(self, *args, **kwargs):
+        print(kwargs)
+        policy_benefit_id = kwargs.get('policy_benefit_id', None)
+        if not policy_benefit_id:
+            return ''
+        else:
+            self.delete_policy_benefit_from_db(policy_benefit_id)
+
+    def delete_policy_benefit_from_db(self, policy_benefit_id=None):
+        if not policy_benefit_id:
+            print("No policy_benefit_id")
+            return False
+        policy_benefit = PolicyBenefit.by_id(policy_benefit_id)
+        if not policy_benefit:
+            print("Could not find policy_benefit")
+            return False
+        DBSession.delete(policy_benefit)
+        DBSession.flush()
+
+    @expose()
+    def redirect_to_policy_benefit(self, *args, **kwargs):
+        print(kwargs)
+        policy_id = kwargs.get('policy_id', None)
+        product_benefit_id = kwargs.get('product_benefit_id', None)
+        policy_benefit_id = kwargs.get('policy_benefit_id', None)
+        if not (policy_id and product_benefit_id and policy_benefit_id):
+            return ''
+        javascript = f"""
+            <script>
+                var kwargs = {{
+                    'policy_id': {policy_id},
+                    'product_benefit_id': {product_benefit_id},
+                    'policy_benefit_id': {policy_benefit_id},
+                }};
+                $.redirect('/policy_benefit/edit_new', kwargs);
+            </script>"""
+        return javascript
+
+
+###############################################################################
+# Policy - New - Save
+###############################################################################
+
+    @expose()
+    def save_new_policy(self, *args, **kwargs):
+        usernow = request.identity.get('user', {})
+
+        policy_number = self.get_unique_policy_number()
+        new = Policy()
+        new.policy_number = policy_number
+        new.product_id = kwargs.get('product_id', None)
+        new.policy_owner_entity_id = kwargs.get('policy_owner_entity_id', None)
+        new.added_by = usernow.id
+        DBSession.add(new)
+        DBSession.flush()
+
+        pre_quote = TYPEUTIL.get_id_of_name('policy_status_type', 'pre_quote')
+        status = PolicyStatus()
+        status.policy_id = new.id
+        status.policy_status_type_id = pre_quote
+        status.date_set = datetime.now()
+        status.current_status = True
+        status.added_by = usernow.id
+        DBSession.add(status)
+        DBSession.flush()
+        return str(new.id)
+
+    def get_unique_policy_number(self, *args, **kwargs):
+        number = datetime.now().strftime("%y%m%d%H%M%S")
+        policy_number = number[-POLICY_NUMBER_MAX_LENGTH:]
+        exists = Policy.by_attr_first('policy_number', policy_number)
+        if exists:
+            return self.get_unique_policy_number(product_id)  # TODO ask C about this, seems wrong
+        return policy_number
+
+###############################################################################
+# Policy - edit - Save
+###############################################################################
+
+    @expose()
+    def save_edit_policy(self, *args, **kwargs):
+        policy_id = kwargs.get('policy_id', None)
+        if not policy_id:
+            return ''
+
+        this_policy = Policy.by_id(policy_id)
+        if not this_policy:
+            print("Could not find Policy")
+            return None
+
+        usernow = request.identity.get('user', {})
+        this_policy.added_by = usernow.id
+
+        product_id = kwargs.get('product_id')
+        policy_owner_entity_id = kwargs.get('policy_owner_entity_id')
+        if product_id:
+            this_policy.product_id = product_id
+        if policy_owner_entity_id:
+            this_policy.policy_owner_entity_id = policy_owner_entity_id
+        DBSession.add(this_policy)
+        DBSession.flush()
+        return str(policy_id)

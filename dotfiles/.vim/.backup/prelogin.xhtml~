@@ -1,0 +1,21 @@
+<html>
+<head>
+    <title py:block="master_title">${literal(title)}</title>
+    <link rel="stylesheet" href="${tg.url('/public/css/bootstrap.min.css')}" type='text/stylesheet'/>
+    <link rel="stylesheet" href="${tg.url('/public/css/font-awesome.css')}" type='text/stylesheet'/>
+    <link rel="stylesheet" href="${tg.url('/public/css/login.css')}" type='text/stylesheet'/>
+    <link href="${h.branding_url()}" rel="stylesheet" type='text/stylesheet'/>
+
+    <script src="${tg.url('/public/javascript/jquery-3.3.1.js')}" type='text/javascript'></script>
+</head>
+<body>
+    ${literal(html)}
+    <footer class='footer fixed-bottom text-right p-3'></footer>
+    <script nonce='1234'>
+        $(document).ready(function(){
+            ${literal(javascript)}
+            $('.footer').load('/common/get_footer', function(){return false;});
+        });
+    </script>
+</body>
+</html>

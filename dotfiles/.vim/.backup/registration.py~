@@ -1,0 +1,1306 @@
+#!/bin/python
+
+import uuid
+import random
+import logging
+from pkg_resources import resource_filename
+
+from tg import expose
+
+from calabash.model import *
+
+from calabash.lib.html_utils import *
+from calabash.lib.base import BaseController
+from calabash.lib.sql_crud_utils import Cruds
+from calabash.lib.image_uploader import ImageUploader
+from calabash.lib.tg_decorators import safe_headers, time_it
+from calabash.lib.myimali_api_gateway import MyImaliApiGateway
+from calabash.lib.email_creator import CalabashCampusEmailCreator
+
+from calabash.controllers.common import CommonController
+from calabash.controllers.message import MessageController
+
+import calabash.lib.vault_utils as VAULT
+
+CRUDS = Cruds()
+COMMON = CommonController()
+MYIMALI = MyImaliApiGateway()
+MESSAGING = MessageController()
+
+LOGGER = logging.getLogger(__name__)
+
+UPDATE_LIMIT = 5
+NEW_LIMIT = 100
+
+PUBLIC_DIRNAME = os.path.abspath(resource_filename('calabash', 'public'))
+UPLOADS_DIRNAME = os.path.join(PUBLIC_DIRNAME, 'uploads')
+
+class RegistrationController(BaseController):
+
+    @safe_headers
+    @expose('json')
+    @time_it
+    def preregister_student(self, *args, **kwargs):
+        student_number = kwargs.get('student_number', None)
+        employee_number = kwargs.get('employee_number', None)
+        if not student_number and not employee_number:
+            return error_response('No student or employee number.')
+        return self.preregister_standalone(**kwargs)
+
+    @safe_headers
+    @expose('json')
+    @time_it
+    def register_user(self, *args, **kwargs):
+        student_number = kwargs.get('student_number', None)
+        if not student_number:
+            return error_response('Missing arguments.')
+        kwargs['standalone_user'] = False
+        return self.register_standalone(**kwargs)
+
+    @safe_headers
+    @expose('json')
+    @time_it
+    def register_standalone_user(self, *args, **kwargs):
+        result = self.preregister_standalone(**kwargs)
+        success = result.get('success', False)
+        if not success:
+            return result
+        kwargs['standalone_user'] = True
+        return self.register_standalone(**kwargs)
+
+    def preregister_standalone(self, *args, **kwargs):
+        name = kwargs.get('name', None)
+        title = kwargs.get('title', None)
+        email = kwargs.get('email', None)
+        surname = kwargs.get('surname', None)
+        if not all([name, title, email, surname]):
+            return error_response('Missing arguments.')
+
+        identity_number = kwargs.get('identity_number', None)
+        passport_number = kwargs.get('passport_number', None)
+        if not identity_number and not passport_number:
+            return error_response('No identity or passport number.')
+
+        if identity_number:
+            identity_number = identity_number.strip()
+            valid_id = COMMON.validate_identity_number(identity_number)
+            if not valid_id:
+                return error_response('Identity number not valid.')
+
+        preferred_name = kwargs.get('preferred_name', None)
+        if not preferred_name:
+            kwargs['preferred_name'] = f'{name} {surname}'
+
+        result = VAULT.confirm_entity_person(kwargs)
+        success = result.get('success', False)
+        if not success:
+            return error_response('Could not create or update the vault.')
+
+        kwargs['entity_id'] = entity_id = result.get('entity_id', None)
+        wallet_id = COMMON.confirm_wallet(**kwargs)
+        if not wallet_id:
+            return error_response(wallet_id)
+        return success_response(entity_id)
+
+    def register_standalone(self, *args, **kwargs):
+        outputdict = {'reference' : None, 'guid' : None}
+
+        username = kwargs.get('username', None)
+        password = kwargs.get('password', None)
+        mobile_number = kwargs.get('mobile_number', None)
+        if not all([username, password, mobile_number]):
+            outputdict['reference'] = 'Missing arguments.'
+            return error_response(outputdict)
+
+        #success = COMMON.validate_address_data(**kwargs)
+        #if not success:
+        #    outputdict['reference'] = 'Missing address data.'
+        #    return error_response(outputdict)
+
+        identity_number = kwargs.get('identity_number', None)
+        passport_number = kwargs.get('passport_number', None)
+        if not identity_number and not passport_number:
+            outputdict['reference'] = 'No identity or passport number.'
+            return error_response(outputdict)
+
+        if identity_number:
+            valid_id = COMMON.validate_identity_number(identity_number)
+            if not valid_id:
+                outputdict['reference'] = 'Identity number not valid.'
+                return error_response(outputdict)
+
+        vault_kwargs = COMMON.get_vault_dict(**kwargs)
+        result = VAULT.confirm_entity_person(vault_kwargs)
+        success = result.get('success', False)
+        if not success:
+            outputdict['reference'] = 'Could not create or update the vault.'
+            return error_response(outputdict)
+
+        kwargs['entity_id'] = entity_id = result.get('entity_id', None)
+        kwargs['wallet_id'] = wallet_id = COMMON.confirm_wallet(**kwargs)
+        if not wallet_id:
+            outputdict['reference'] = 'Could not save the wallet.'
+            return error_response(outputdict)
+
+        kwargs['merchant'] = False
+        reference = self.get_reference_from_imali(**kwargs)
+        if not reference:
+            outputdict['reference'] = 'Failed to get reference from the vault.'
+            return error_response(outputdict)
+        kwargs['reference'] = reference
+
+        vault_kwargs = COMMON.get_vault_dict(**kwargs)
+        result = VAULT.confirm_entity_person(vault_kwargs)
+        success = result.get('success', False)
+        if not success:
+            outputdict['reference'] = 'Could not create or update the vault.'
+            return error_response(outputdict)
+
+        success = self.activate_campus_student(**kwargs)
+        if not success:
+            outputdict['reference'] = 'Failed to activate student.'
+            return error_response(outputdict)
+
+        success = COMMON.save_user_documents(**kwargs)
+        if not success:
+            outputdict['reference'] = 'Could not save user documents.'
+            return error_response(outputdict)
+
+        wallet = Wallet.by_id(wallet_id)
+        wallet.myimali_reference = reference
+        DBSession.flush()
+
+        print()
+        print('KYC NOW')
+        print()
+        result = None
+        if identity_number:
+            result = MYIMALI.kyc_idnumber_lite(**kwargs)
+            print(result)
+        if passport_number:
+            name = kwargs.get('name', None)
+            surname = kwargs.get('surname', None)
+            if not name or not surname:
+                result = VAULT.get_entity_object_by_id({'target_id' : entity_id})
+                entity = result.get('entity', {})
+                kwargs['name'] = name = entity.get('name', '')
+                kwargs['surname'] = surname = entity.get('surname', '')
+            result = MYIMALI.kyc_passport_number_lite(**kwargs)
+            print(result)
+        print()
+        print('KYC DONE')
+        print()
+
+        kwargs['coupon_type'] = 'iMali'
+        result = self.create_transaction_history(**kwargs)
+
+        bln_link_savings = kwargs.get('bln_link_savings', True)
+        if bln_link_savings:
+            result = MYIMALI.link_savings_pocket(**kwargs)
+            kwargs['coupon_type'] = 'iMali-Savings'
+            result = self.create_transaction_history(**kwargs)
+
+        bln_link_loyalty = kwargs.get('bln_link_loyalty', True)
+        if bln_link_loyalty:
+            result = MYIMALI.link_loyalty_pocket(**kwargs)
+            kwargs['coupon_type'] = 'iMali-Loyalty'
+            result = self.create_transaction_history(**kwargs)
+
+        guid = self.get_guid_by_wallet_id(**kwargs)
+        if not guid:
+            outputdict['reference'] = 'Could not get user GUID.'
+            return error_response(outputdict)
+
+        outputdict['reference'] = reference
+        outputdict['guid'] = guid
+        return success_response(outputdict)
+
+    def get_guid_by_wallet_id(self, *args, **kwargs):
+        wallet_id = kwargs.get('wallet_id', None)
+        if not wallet_id:
+            return False
+
+        exists = WalletApplicationLink.by_attr_first('wallet_id', wallet_id)
+        if exists:
+            return exists.guid
+
+        app = None
+        standalone_user = kwargs.get('standalone_user', False)
+        if standalone_user:
+            app = Application.by_attr_first('name', 'Calabash Mobile')
+        else:
+            app = Application.by_attr_first('name', 'Calabash Campus Mobile')
+
+        if not app:
+            return False
+
+        guid = kwargs.get('guid', None)
+        if not guid:
+            guid = self.get_unique_guid()
+
+        link = WalletApplicationLink()
+        link.wallet_id = wallet_id
+        link.application_id = app.id
+        link.guid = guid
+        DBSession.add(link)
+        DBSession.flush()
+        return link.guid
+
+    def activate_campus_student(self, *args, **kwargs):
+        entity_id = kwargs.get('entity_id', None)
+        if not entity_id:
+            return False
+
+        username = kwargs.get('username', None)
+        password = kwargs.get('password', None)
+        reference = kwargs.get('reference', None)
+        identity_number = kwargs.get('identity_number', None)
+        passport_number = kwargs.get('passport_number', None)
+
+        vault_result = VAULT.get_entity_object_by_id({'target_id' : entity_id})
+
+        update_dict = {}
+        identity_list = vault_result.get('identity_list', [])
+        for item in identity_list:
+
+            identitytype = item.get('identitytype', {})
+            identityname = str(identitytype.get('name', '')).replace(' ', '_').lower()
+
+            if identityname == 'password':
+                update_dict['password_id'] = item.get('id', None)
+                update_dict['password'] = password
+
+            if identityname == 'username':
+                update_dict['username_id'] = item.get('id', None)
+                update_dict['username'] = username
+
+            if identityname == 'reference':
+                update_dict['reference_id'] = item.get('id', None)
+                update_dict['reference'] = reference
+
+            if identityname == 'identity_number':
+                update_dict['identity_number_id'] = item.get('id', None)
+                update_dict['identity_number'] = identity_number
+
+            if identityname == 'passport_number':
+                update_dict['passport_number_id'] = item.get('id', None)
+                update_dict['passport_number'] = passport_number
+
+        kwargs['email'] = None
+        contact_list = vault_result.get('contact_list', [])
+        for item in contact_list:
+
+            contacttype = item.get('contacttype', {})
+            contactname = str(contacttype.get('name', '')).replace(' ', '_').lower()
+
+            if contactname == 'email':
+                kwargs['email'] = item.get('value', None)
+
+        result = VAULT.activate_campus_student(update_dict)
+        success = result.get('success', False)
+        return success
+
+    def get_reference_from_imali(self, *args, **kwargs):
+        merchant = kwargs.get('merchant', False)
+        username = kwargs.get('username', None)
+
+        reference = None
+        result = self.get_user_profile(**{'username' : username})
+        success = result.get('success', False)
+        if not success:
+            error = result.get('data', '')
+            transfer_result = COMMON.auto_transfer_user_api_key(error, username)
+            if transfer_result:
+                return self.get_reference_from_imali(**kwargs)
+
+        if success:
+            data = result.get('data', {})
+            reference = data.get('REF', None)
+            if not reference:
+                reference = result.get('reference_number', None)
+
+        else:
+            if merchant:
+                result = MYIMALI.register_merchant(**kwargs)
+
+            else:
+                identity_number = kwargs.get('identity_number', None)
+                if identity_number:
+                    vault_result = VAULT.get_entity_by_identity_number({'identity_number' : identity_number})
+
+                passport_number = kwargs.get('passport_number', None)
+                if passport_number:
+                    vault_result = VAULT.get_entity_by_passport_number({'passport_number' : passport_number})
+
+                kwargs.update(vault_result)
+                imali_dict = COMMON.get_imali_dict(**kwargs)
+                result = MYIMALI.register_customer(**imali_dict)
+
+            success = result.get('success', False)
+            if success:
+                reference = result.get('REF', None)
+            if not reference:
+                reference = result.get('reference_number', None)
+
+        return reference
+
+    @safe_headers
+    @expose('json')
+    def check_preregistered_student_number(self, *args, **kwargs):
+        student_number = kwargs.get('student_number', None)
+        if not student_number:
+            return error_response('Student number not found.')
+
+        result = VAULT.check_student_number_exists(kwargs)
+        success = result.get('success', False)
+        if not success:
+            return error_response(str(success))
+        return success_response(str(success))
+
+    @safe_headers
+    @expose('json')
+    def check_preregistered_identity_student_number_match(self, *args, **kwargs):
+        student_number = kwargs.get('student_number', None)
+        if not student_number:
+            return error_response('Student number not found.')
+
+        identity_number = kwargs.get('identity_number', None)
+        passport_number = kwargs.get('passport_number', None)
+        if not identity_number and not passport_number:
+            return error_response('Nothing to identify.')
+
+        result = None
+        if identity_number:
+            result = VAULT.check_identity_student_number_match(kwargs)
+
+        if passport_number:
+            result = VAULT.check_passport_student_number_match(kwargs)
+
+        if not result:
+            return error_response('Failed to get match result.')
+
+        success = result.get('success', False)
+        if not success:
+            return error_response(str(success))
+        return success_response(str(success))
+
+    @safe_headers
+    @expose('json')
+    @time_it
+    def get_user_profile(self, *args, **kwargs):
+        LOGGER.info('get_user_profile')
+        LOGGER.info(str(kwargs))
+
+        username = kwargs.get('username', None)
+        entity_id = kwargs.get('entity_id', None)
+        passthrough = kwargs.get('passthrough', False)
+
+        bln_suspended = COMMON.check_wallet_suspended(username, entity_id)
+        if bln_suspended:
+            return error_response('Wallet is suspended')
+
+        wallet = None
+        if username and not entity_id:
+            wallet = Wallet.by_attr_first('username', username)
+            if wallet:
+                entity_id = wallet.entity_id
+        else:
+            wallet = Wallet.by_attr_first('entity_id', entity_id)
+
+        if not entity_id:
+            return error_response('No entity_id found.')
+
+        result = VAULT.get_entity_object_by_id({'target_id' : entity_id})
+        entity = result.get('entity', None)
+        if not entity:
+            return error_response('No entity for entity_id')
+        if passthrough:
+            return success_response(result)
+
+        if not username:
+            username = wallet.username
+
+        result = MYIMALI.get_user_profile(**{'username' : username})
+        success = result.get('success', False)
+        if not success:
+            error = result.get('error', '')
+            transfer_result = COMMON.auto_transfer_user_api_key(error, username)
+            if transfer_result:
+                kwargs = {'username': username,
+                          'entity_id': entity_id, }
+                return self.get_user_profile(**kwargs)
+            return error_response(error)
+
+        data = result.get('data', {})
+        data['display_name'] = entity.get('preferred_name', '')
+        return success_response(data)
+
+    def update_transaction_history(self, *args, **kwargs):
+        limit = kwargs.get('limit', None)
+        if not limit:
+            kwargs['limit'] = UPDATE_LIMIT
+
+        coupon_type = kwargs.get('coupon_type', None)
+        if not coupon_type:
+            kwargs['coupon_type'] = 'iMali'
+
+        username = kwargs.get('username', None)
+        if username:
+            result = self.create_transaction_history(**kwargs)
+
+        merchant_username = kwargs.get('merchant_username', None)
+        if merchant_username:
+            kwargs['username'] = merchant_username
+            result = self.create_transaction_history(**kwargs)
+
+        to_username = kwargs.get('to_username', None)
+        if to_username:
+            kwargs['username'] = to_username
+            result = self.create_transaction_history(**kwargs)
+
+        from_username = kwargs.get('from_username', None)
+        if from_username:
+            kwargs['username'] = from_username
+            result = self.create_transaction_history(**kwargs)
+
+        refund_username = kwargs.get('refund_username', None)
+        if refund_username:
+            kwargs['username'] = refund_username
+            result = self.create_transaction_history(**kwargs)
+
+        return True
+
+    @expose('json')
+    def create_transaction_history(self, *args, **kwargs):
+        limit = kwargs.get('limit', None)
+        if not limit:
+            kwargs['limit'] = limit = NEW_LIMIT
+
+        username = kwargs.get('username', None)
+        coupon_type = kwargs.get('coupon_type', None)
+
+        statement = self.get_myimali_transaction_history_list(**kwargs)
+        LOGGER.info(f'create_transaction_history for {username} {coupon_type} {len(statement)} records.')
+
+        for item in statement:
+
+            date = item.get('date', None)
+            time = item.get('time', None)
+            seconds = item.get('seconds', None)
+
+            type = item.get('type', None)
+            amount = item.get('amount', None)
+            balance = item.get('balance', None)
+            other = item.get('other', None)
+            TrxId = item.get('TrxId', None)
+            paymentReference = item.get('paymentReference', None)
+
+            exists = DBSession.query(TransactionHistory). \
+                    filter_by(coupon_type = coupon_type). \
+                    filter_by(username = username). \
+                    filter_by(date = date). \
+                    filter_by(time = time). \
+                    filter_by(seconds = seconds). \
+                    filter_by(type = type). \
+                    filter_by(amount = amount). \
+                    filter_by(balance = balance). \
+                    filter_by(other = other). \
+                    filter_by(TrxId = TrxId). \
+                    filter_by(paymentReference = paymentReference). \
+                    first()
+            if not exists:
+
+                datetime = str_to_date(f'{date} {time}:{seconds}', '%Y%m%d %H:%M:%S')
+
+                new = TransactionHistory()
+                new.coupon_type = coupon_type
+                new.username = username
+                new.date = date
+                new.time = time
+                new.seconds = seconds
+                new.datetime = datetime
+                new.type = type
+                new.amount = amount
+                new.balance = balance
+                new.other = other
+                new.TrxId = TrxId
+                new.paymentReference = paymentReference
+                DBSession.add(new)
+                DBSession.flush()
+        return True
+
+    def get_myimali_transaction_history_list(self, *args, **kwargs):
+        outputlist = []
+        username = kwargs.get('username', None)
+        coupon_type = kwargs.get('coupon_type', None)
+
+        result = MYIMALI.get_transaction_history(**kwargs)
+        if not result:
+            LOGGER.warning('no result')
+            return outputlist
+
+        if isinstance(result, list):
+            LOGGER.warning(f'result is a list: {result} {username} {coupon_type}')
+
+            result = MYIMALI.link_savings_pocket(**kwargs)
+            result = MYIMALI.link_loyalty_pocket(**kwargs)
+            result = MYIMALI.get_transaction_history(**kwargs)
+            if not result:
+                return outputlist
+
+        success = result.get('success', False)
+        if not success:
+            error = result.get('error', '')
+
+            LOGGER.info(f'get_myimali_transaction_history_list error: {error}')
+            transfer_result = COMMON.auto_transfer_user_api_key(error, username)
+            if transfer_result:
+                return self.get_myimali_transaction_history_list(**kwargs)
+
+            LOGGER.warning(f'error: {error}')
+            return outputlist
+
+        return result.get('statement', [])
+
+    def create_otp(self, *args, **kwargs):
+
+        new_otp = random.randint(1000, 9999)
+        #new_otp = 1234
+
+        entity_id = kwargs.get('entity_id', None)
+        username = kwargs.get('username', None)
+        mobile_number = kwargs.get('mobile_number', None)
+        if not mobile_number and not username:
+            wallet = Wallet.by_attr_first('entity_id', entity_id)
+            if not wallet:
+                return error_response('Wallet not found.')
+            username = wallet.username
+
+        otp = MobileOneTimePin()
+        otp.username = username
+        otp.mobile = kwargs.get('mobile_number', None)
+        otp.otp = new_otp
+        otp.expiry = datetime.now()
+        DBSession.add(otp)
+        DBSession.flush()
+
+        kwargs['message'] = f'Your one time pin is: {otp.otp}'
+        result = MESSAGING.sms(**kwargs)
+        success = result.get('success', False)
+        if not success:
+            return error_response('Failed to send OTP.')
+        return success_response(otp.otp)
+
+    @safe_headers
+    @expose('json')
+    def confirm_mobile_otp(self, *args, **kwargs):
+        otp = kwargs.get('otp', None)
+        if not otp:
+            return error_response('No otp to validate.')
+
+        username = kwargs.get('username', None)
+        mobile_number = kwargs.get('mobile_number', None)
+        if mobile_number and not username:
+            exists = DBSession.query(MobileOneTimePin). \
+                    filter(MobileOneTimePin.mobile==mobile_number). \
+                    filter(MobileOneTimePin.active==True). \
+                    order_by(MobileOneTimePin.id.desc()). \
+                    first()
+                    #filter(MobileOneTimePin.otp==otp). \
+
+        elif not mobile_number and username:
+            exists = DBSession.query(MobileOneTimePin). \
+                    filter(MobileOneTimePin.username==username). \
+                    filter(MobileOneTimePin.active==True). \
+                    order_by(MobileOneTimePin.id.desc()). \
+                    first()
+                    #filter(MobileOneTimePin.otp==otp). \
+
+        if not exists:
+            return error_response('Could not validate OTP')
+
+        if not str(otp) == str(exists.otp):
+            return error_response('Could not validate OTP')
+
+        if mobile_number and not username:
+            dbase_query = DBSession.query(MobileOneTimePin). \
+                    filter(MobileOneTimePin.mobile==mobile_number). \
+                    filter(MobileOneTimePin.active==True). \
+                    all()
+
+        elif not mobile_number and username:
+            dbase_query = DBSession.query(MobileOneTimePin). \
+                    filter(MobileOneTimePin.username==username). \
+                    filter(MobileOneTimePin.active==True). \
+                    all()
+        for otp in dbase_query:
+            otp.active = False
+            DBSession.flush()
+        return success_response('True')
+
+    @safe_headers
+    @expose('json')
+    def create_mobile_otp(self, *args, **kwargs):
+        return self.create_otp(**kwargs)
+
+    @safe_headers
+    @expose('json')
+    def forgot_password_confirm_otp(self, *args, **kwargs):
+        return self.confirm_mobile_otp(**kwargs)
+
+    def validate_register_merchant_kwargs(self, *args, **kwargs):
+
+        name = kwargs.get('name', None)
+        if not name:
+            name = kwargs.get('firstName', None)
+        if not name:
+            name = kwargs.get('first_name', None)
+
+        mobile = kwargs.get('mobile', None)
+        email = kwargs.get('password', None)
+        surname = kwargs.get('surname', None)
+        username = kwargs.get('username', None)
+        password = kwargs.get('password', None)
+
+        return all([name, mobile, email, surname, username, password])
+
+    @safe_headers
+    @expose('json')
+    @time_it
+    def register_merchant(self, *args, **kwargs):
+        valid_kwargs = self.validate_register_merchant_kwargs(**kwargs)
+        if not valid_kwargs:
+            return error_response('Missing args.')
+
+        identity_number = kwargs.get('identity_number', None)
+        passport_number = kwargs.get('passport_number', None)
+        if not identity_number and not passport_number:
+            return error_response('Nothing to identify user.')
+
+        preferred_name = kwargs.get('preferred_name', None)
+        if not preferred_name:
+            name = kwargs.get('name', None)
+            if not name:
+                name = kwargs.get('firstName', None)
+            if not name:
+                name = kwargs.get('first_name', None)
+
+            surname = kwargs.get('surname', None)
+            kwargs['preferred_name'] = f'{name} {surname}'
+
+        result = VAULT.confirm_entity_person(kwargs)
+        success = result.get('success', False)
+        if not success:
+            return error_response('Could not create or update the vault.')
+
+        kwargs['entity_id'] = entity_id = result.get('entity_id', None)
+        wallet_id = COMMON.confirm_wallet(**kwargs)
+        if not wallet_id:
+            return error_response('Could not save the wallet.')
+
+        kwargs['merchant'] = True
+        reference = self.get_reference_from_imali(**kwargs)
+        if not reference:
+            return error_response('Failed to get reference from the vault')
+        kwargs['reference'] = reference
+        wallet_id = COMMON.confirm_wallet(**kwargs)
+
+        kwargs['coupon_type'] = 'iMali'
+        result = self.create_transaction_history(**kwargs)
+
+        # By default do no link Savings pocket
+        bln_link_savings = kwargs.get('bln_link_savings', False)
+        if bln_link_savings:
+            result = MYIMALI.link_savings_pocket(**kwargs)
+            kwargs['coupon_type'] = 'iMali-Savings'
+            result = self.create_transaction_history(**kwargs)
+
+        # By default do no link Loyalty pocket
+        bln_link_loyalty = kwargs.get('bln_link_loyalty', False)
+        if bln_link_loyalty:
+            result = MYIMALI.link_loyalty_pocket(**kwargs)
+            kwargs['coupon_type'] = 'iMali-Loyalty'
+            result = self.create_transaction_history(**kwargs)
+
+        return success_response({'REF' : reference})
+
+    @safe_headers
+    @expose('json')
+    def get_citizenship_list(self, *args, **kwargs):
+        filepath = os.path.join(UPLOADS_DIRNAME, 'COUNTRIES.txt')
+        if not os.path.isfile(filepath):
+            return error_response([])
+
+        with open(filepath, 'r') as f:
+            data = f.readlines()
+
+        outputlist = []
+        for country in data:
+            country = country.strip().replace('_', ' ').replace(',', '').title()
+            outputlist.append({'name' : country})
+
+        return success_response(outputlist)
+
+    @safe_headers
+    @expose('json')
+    @time_it
+    def login(self, *args, **kwargs):
+        LOGGER.info('login')
+        LOGGER.info(str(kwargs))
+
+        EMTPY_RESPONSE = {
+            'mobile' : '',
+            'register_date' : '',
+            'account_status' : '',
+            'type' : '',
+            'kyc_agent' : '',
+            'REF' : '',
+            'kyc' : '',
+            'surname' : '',
+            'name' : '',
+            'email' : '',
+            'username' : '',
+            'display_name' : '',
+            'message' : 'Login failed',
+        }
+        username = kwargs.get('username', None)
+        if not username:
+            return error_response(EMTPY_RESPONSE)
+
+        EMTPY_RESPONSE['username'] = username
+
+        wallet = Wallet.by_attr_first('username', username)
+        if not wallet:
+            return error_response(EMTPY_RESPONSE)
+
+        result = VAULT.get_entity_object_by_id({'target_id' : wallet.entity_id})
+        entity = result.get('entity', None)
+        if not entity:
+            return error_response(EMTPY_RESPONSE)
+
+        identity_list = result.get('identity_list', [])
+        contact_list = result.get('contact_list', [])
+
+        password = None
+        for item in identity_list:
+            identitytype = item.get('identitytype', {})
+            identityname = identitytype.get('name', None)
+            identityname = identityname.lower()
+            identityname = str(identityname)
+
+            if str(identityname) == 'password':
+                password = item.get('value', None)
+
+        email_list = []
+        for item in contact_list:
+            contacttype = item.get('contacttype', {})
+            contactname = contacttype.get('name', None)
+            contactname = contactname.lower()
+            contactname = str(contactname)
+
+            if str(contactname) == 'email':
+                email = item.get('value', None)
+                email_list.append(email)
+
+        if not password:
+            return error_response(EMTPY_RESPONSE)
+
+        check_password = kwargs.get('password', '')
+        if not str(password) == str(check_password):
+            return error_response(EMTPY_RESPONSE)
+
+        profile_dict = {'username' : username,
+                        'passthrough' : False, }
+
+        result = self.get_user_profile(**profile_dict)
+        success = result.get('success', False)
+        if not success:
+            data = result.get('data', '')
+            EMTPY_RESPONSE['message'] = data
+            return error_response(EMTPY_RESPONSE)
+
+        result['data']['message'] = 'Login success'
+        self.send_login_email(email_list)
+        return result
+
+    def send_login_email(self, email_list=[], *args, **kwargs):
+        if not email_list:
+            return False
+        str_datetime = datetime.now().strftime('%a %d %b %Y %H:%M:%S')
+
+        plain_template = MessageTemplate.by_attr_first('usage', 'Login Email Plain')
+        plain_text = plain_template.message.format(**locals())
+
+        rich_template = MessageTemplate.by_attr_first('usage', 'Login Email Rich')
+        rich_text = rich_template.message.format(**locals())
+
+        for email in email_list:
+            e = CalabashCampusEmailCreator()
+            e.add_subject('Login | CALABASH CAMPUS')
+            e.add_to_address(email)
+            e.add_plain_text(plain_text)
+            e.add_rich_text(rich_text)
+            e.send(False)
+        return True
+
+    @safe_headers
+    @expose('json')
+    def suspend_user(self, *args, **kwargs):
+        username = kwargs.get('username', None)
+        entity_id = kwargs.get('entity_id', None)
+        if not username and not entity_id:
+            return error_response('Nothing to search.')
+
+        if username:
+            wallet = Wallet.by_attr_first('username', username)
+        if entity_id:
+            wallet = Wallet.by_attr_first('entity_id', entity_id)
+        if not wallet:
+            return error_response('No wallet found.')
+
+        wallet.bln_suspended = True
+        DBSession.flush()
+        return success_response('True')
+
+    @safe_headers
+    @expose('json')
+    def upload_user_picture(self, *args, **kwargs):
+        kwargs['resize_images'] = True
+        image_uploader = ImageUploader(**kwargs)
+        success = image_uploader.upload()
+        if not success:
+            return error_response('Something went wrong.')
+        return success_response('True')
+
+    @safe_headers
+    @expose('json')
+    def get_user_picture(self, *args, **kwargs):
+        image_uploader = ImageUploader(**kwargs)
+        success = image_uploader.get_base64_image()
+        if not success:
+            return error_response('Something went wrong.')
+        return success_response(success)
+
+    @safe_headers
+    @expose('json')
+    def add_beneficiary(self, *args, **kwargs):
+        result = MYIMALI.add_beneficiary(**kwargs)
+        success = result.get('success', False)
+        if not success:
+            error = result.get('error', '')
+            return error_response(error)
+        return success_response('True')
+
+    @safe_headers
+    @expose('json')
+    def delete_beneficiary(self, *args, **kwargs):
+        result = MYIMALI.delete_beneficiary(**kwargs)
+        success = result.get('success', False)
+        if not success:
+            error = result.get('error', '')
+            return error_response(error)
+        return success_response('True')
+
+    @safe_headers
+    @expose('json')
+    def get_user_beneficiaries(self, *args, **kwargs):
+        username = kwargs.get('username', None)
+        result = MYIMALI.get_user_beneficiaries(**kwargs)
+        data = result.get('data', [])
+        if not data:
+            error = result.get('error', '')
+            transfer_result = COMMON.auto_transfer_user_api_key(error, username)
+            if transfer_result:
+                return self.get_user_beneficiaries(**kwargs)
+            return error_response(error)
+        return success_response(data)
+
+    @safe_headers
+    @expose('json')
+    def reset_password(self, *args, **kwargs):
+        username = kwargs.get('username', None)
+        if not username:
+            return error_response('reset_password failed: no username')
+
+        wallet = Wallet.by_attr_first('username', username)
+        if not wallet:
+            return error_response('reset_password failed: no wallet for username')
+
+        if wallet.bln_suspended:
+            return error_response('Wallet is suspended')
+
+        result = VAULT.get_entity_object_by_id({'target_id' : wallet.entity_id})
+        if not result:
+            return error_response('reset_password failed: No vault entry for wallet')
+
+        update_dict = {}
+        existing_password = None
+        identity_list = result.get('identity_list', [])
+        for item in identity_list:
+            identitytype = item.get('identitytype', {})
+            identityname = identitytype.get('name', None)
+            identityname = identityname.lower()
+            identityname = str(identityname)
+
+            if str(identityname) == 'password':
+                existing_password = str(item.get('value', None))
+                update_dict['identity_id'] = item.get('id', None)
+
+        old_password = kwargs.get('password', None)
+        if not old_password:
+            return error_response('reset_password failed: no password')
+
+        if str(old_password) != existing_password:
+            return error_response('reset_password failed: Supplied password does not match existing password')
+
+        new_password = kwargs.get('new_password', None)
+        if not new_password:
+            return error_response('reset_new_password failed: no new_password')
+
+        update_dict['value'] = new_password
+        result = VAULT.update_identity_by_identity_id(update_dict)
+        success = result.get('success', False)
+        if not success:
+            return error_response('reset_new_password failed: vault update failed')
+
+        return success_response('True')
+
+    @safe_headers
+    @expose('json')
+    def forgot_password_send_otp(self, *args, **kwargs):
+        kwargs['passthrough'] = True
+        result = self.get_user_profile(**kwargs)
+        success = result.get('success', False)
+        data = result.get('data', '')
+        if not success or not data:
+            return error_response('Could not get mobile for username.')
+
+        mobile = None
+        contact_list = data.get('contact_list', [])
+        for item in contact_list:
+            contacttype = item.get('contacttype', {})
+            contactname = str(contacttype.get('name', '')).lower()
+
+            if contactname == 'mobile':
+                mobile = item.get('value', None)
+        if not mobile:
+            return error_response('Could not get mobile for username.')
+
+        kwargs['mobile_number'] = mobile
+        return self.create_otp(**kwargs)
+
+    @safe_headers
+    @expose('json')
+    def create_mobile_otp(self, *args, **kwargs):
+        return self.create_otp(**kwargs)
+
+    @safe_headers
+    @expose('json')
+    def forgot_password_confirm_otp(self, *args, **kwargs):
+        return self.confirm_mobile_otp(**kwargs)
+
+    @safe_headers
+    @expose('json')
+    def forgot_password(self, *args, **kwargs):
+        password = kwargs.get('password', None)
+        if not password:
+            return error_response('No password supplied.')
+
+        username = kwargs.get('username', None)
+        if not username:
+            return error_response('No username supplied.')
+
+        kwargs['passthrough'] = True
+        result = self.get_user_profile(**kwargs)
+        vault_result = result.get('data', {})
+        if not vault_result:
+            return error_response('Could not fetch user profile.')
+        if isinstance(vault_result, str):
+            return error_response('Could not fetch user profile.')
+
+        update_dict = {}
+        identity_list = vault_result.get('identity_list', [])
+        for item in identity_list:
+
+            identitytype = item.get('identitytype', {})
+            identityname = str(identitytype.get('name', '')).replace(' ', '_').lower()
+
+            if identityname == 'password':
+                update_dict['password_id'] = item.get('id', None)
+                update_dict['password'] = password
+
+            if identityname == 'username':
+                update_dict['username_id'] = item.get('id', None)
+                update_dict['username'] = item.get('value', None)
+
+            if identityname == 'reference':
+                update_dict['reference_id'] = item.get('id', None)
+                update_dict['reference'] = item.get('value', None)
+
+            if identityname == 'identity_number':
+                update_dict['identity_number_id'] = item.get('id', None)
+                update_dict['identity_number'] = item.get('value', None)
+
+            if identityname == 'passport_number':
+                update_dict['passport_number_id'] = item.get('id', None)
+                update_dict['passport_number'] = item.get('value', None)
+
+        result = VAULT.activate_campus_student(update_dict)
+        success = result.get('success', False)
+        if not success:
+            return error_response('Something went wrong')
+        return success_response('True')
+
+    @safe_headers
+    @expose('json')
+    def get_merchant_salesroles(self, *args, **kwargs):
+        result = MYIMALI.get_merchant_salesroles(**kwargs)
+        success = result.get('success', False)
+        if not success:
+            error = result.get('error', '')
+            return error_response(error)
+        data = result.get('data', [])
+        return success_response(data)
+
+    @safe_headers
+    @expose('json')
+    def register_salesrole(self, *args, **kwargs):
+        result = MYIMALI.register_salesrole(**kwargs)
+        if not result:
+            return error_response('register_salesrole failed: Connection Error')
+        reference_number = result.get('REF', None)
+        if not reference_number:
+            error = result.get('error', '')
+            return error_response(error)
+        return success_response({'reference' : reference_number})
+
+    @safe_headers
+    @expose('json')
+    def delete_salesrole(self, *args, **kwargs):
+        result = MYIMALI.delete_salesrole(**kwargs)
+        success = result.get('success', False)
+        if not success:
+            error = result.get('error', '')
+            return error_response(error)
+        return success_response('True')
+
+    @safe_headers
+    @expose('json')
+    def confirm_update_profile_otp(self, *args, **kwargs):
+        username = kwargs.get('username', None)
+        entity_id = kwargs.get('entity_id', None)
+
+        result = self.confirm_mobile_otp(**kwargs)
+        success = result.get('success', False)
+        if not success:
+            return error_response('Failed to validate otp.')
+
+        if username and not entity_id:
+            wallet = Wallet.by_attr_first('username', username)
+            if not wallet:
+                return error_response('No wallet for username')
+            if wallet.bln_suspended:
+                return error_response('Wallet is suspended')
+            kwargs['entity_id'] = entity_id = wallet.entity_id
+
+        if entity_id and not username:
+            wallet = Wallet.by_attr_first('entity_id', entity_id)
+            if not wallet:
+                return error_response('No wallet for entity_id')
+            if wallet.bln_suspended:
+                return error_response('Wallet is suspended')
+            kwargs['username'] = username = wallet.username
+
+        temp = TempUserData.by_attr_first('username', username)
+        if not temp:
+            return error_response('Unable to retrieve temp data.')
+
+        kwargs['email'] = temp.email
+        kwargs['mobile'] = temp.mobile
+        kwargs['preferred_name'] = temp.preferred_name
+
+        result = VAULT.update_eiffel_student(kwargs)
+        entity = result.get('entity', {})
+        if not entity:
+            return error_response('Vault update failed')
+
+        kwargs['first_name'] = entity.get('name', '')
+        kwargs['surname'] = entity.get('surname', '')
+
+        DBSession.delete(temp)
+        DBSession.flush()
+        result = MYIMALI.update_about_me(**kwargs)
+        return success_response('True')
+
+    def save_temp_user_data(self, *args, **kwargs):
+        username = kwargs.get('username', None)
+        entity_id = kwargs.get('entity_id', None)
+
+        if entity_id and not username:
+            wallet = Wallet.by_attr_first('entity_id', entity_id)
+            if not wallet:
+                return False
+            username = wallet.username
+
+        temp = TempUserData()
+        temp.username = username
+        temp.email = kwargs.get('email', None)
+        temp.mobile = kwargs.get('mobile', None)
+        temp.preferred_name = kwargs.get('preferred_name', None)
+        DBSession.add(temp)
+        DBSession.flush()
+        return True
+
+    @safe_headers
+    @expose('json')
+    def update_eiffel_student(self, *args, **kwargs):
+        result = self.save_temp_user_data(**kwargs)
+        if not result:
+            return error_response('No wallet found.')
+
+        kwargs['mobile_number'] = kwargs.get('mobile', None)
+        return self.create_otp(**kwargs)
+
+    @safe_headers
+    @expose('json')
+    def update_about_me(self, *args, **kwargs):
+        return self.update_eiffel_student(**kwargs)
+
+    @safe_headers
+    @expose('json')
+    def kyc_merchant(self, *args, **kwargs):
+        identity_number = kwargs.get('identity_number', None)
+        passport_number = kwargs.get('passport_number', None)
+        if not identity_number and not passport_number:
+            return error_response('Nothing to identify user.')
+
+        result = {}
+        if identity_number:
+            result = MYIMALI.kyc_idnumber_full(**kwargs)
+
+        if passport_number:
+            result = MYIMALI.kyc_passport_number_lite(**kwargs)
+
+        message = result.get('message', '')
+        success = result.get('success', False)
+        if not success:
+            if not message:
+                message = result.get('error', '')
+            return error_response(message)
+        return success_response(message)
+
+    @safe_headers
+    @expose('json')
+    def get_name_from_reference(self, *args, **kwargs):
+        reference = kwargs.get('reference', None)
+        if not reference:
+            return error_response('No reference supplied.')
+
+        wallet = Wallet.by_attr_first('myimali_reference', reference)
+        if not wallet:
+            return error_response('No wallet for reference.')
+
+        result = VAULT.get_entity_object_by_id({'target_id' : wallet.entity_id})
+        if not result:
+            return error_response('No vault entry for wallet.')
+
+        entity = result.get('entity', {})
+        preferred_name = entity.get('preferred_name', '')
+        return success_response(preferred_name)
+
+    @safe_headers
+    @expose('json')
+    def receive_callback(self, *args, **kwargs):
+        LOGGER.info('receive_callback')
+        LOGGER.info(str(kwargs))
+
+        result = kwargs.get('result', None)
+        id_type = kwargs.get('id_type', None)
+        message = kwargs.get('message', None)
+        username = kwargs.get('username', None)
+        kyc_type = kwargs.get('kyc_type', None)
+        identity_number = kwargs.get('id', None)
+        reference = kwargs.get('reference', None)
+
+        new = KYCResult()
+        new.result = result
+        new.reference = reference
+        new.kyc_type = kyc_type
+        new.id_type = id_type
+        new.identity_number = identity_number
+        new.message = message
+        new.username = username
+        DBSession.add(new)
+        DBSession.flush()
+
+        return success_response(str(new.id))
+
+    @safe_headers
+    @expose('json')
+    def update_merchant_featured_ad_link(self, *args, **kwargs):
+        merchant_username = kwargs.get('merchant_username', None)
+        if not merchant_username:
+            return error_response('No merchant_username supplied.')
+
+        wallet = Wallet.by_attr_first('username', merchant_username)
+        if not wallet:
+            return error_response('No wallet for merchant_username.')
+
+        link = WalletFeaturedAdLink.by_attr_first('wallet_id', wallet.id)
+        if not link:
+            link = WalletFeaturedAdLink()
+            link.wallet_id = wallet.id
+            DBSession.add(link)
+            DBSession.flush()
+        else:
+            link.wallet_id = wallet.id
+            DBSession.flush()
+
+        return success_response('True')
+
+    def get_unique_guid(self, *args, **kwargs):
+        guid = str(uuid.uuid4().hex)
+
+        exists = Application.by_attr_first('guid', guid)
+        if exists:
+            return self.get_unique_guid()
+
+        exists = WalletApplicationLink.by_attr_first('guid', guid)
+        if exists:
+            return self.get_unique_guid()
+
+        return guid
+
+    @safe_headers
+    @expose('json')
+    def transfer_api_key(self, *args, **kwargs):
+        username = kwargs.get('username', None)
+        guid = kwargs.pop('guid', None)
+        if not guid or not username:
+            return error_response('Missing arguments.')
+
+        wallet = Wallet.by_attr_first('username', username)
+        if not wallet:
+            return error_response('No wallet for username.')
+
+        exists = WalletApplicationLink.by_attr_first('guid', guid)
+        if exists:
+            exists = Application.by_id(exists.id)
+        else:
+            exists = Application.by_attr_first('guid', guid)
+        if not exists:
+            return error_response('No application found for guid.')
+
+        other = DBSession.query(Application). \
+                filter(Application.myimali_api_key != exists.myimali_api_key). \
+                first()
+
+        kwargs['old_api_key'] = exists.myimali_api_key
+        kwargs['new_api_key'] = other.myimali_api_key
+        kwargs['username'] = username
+        result = MYIMALI.transfer_user_api_key(**kwargs)
+        success = result.get('success', False)
+        if not success:
+            return error_response('False')
+
+        return success_response('True')

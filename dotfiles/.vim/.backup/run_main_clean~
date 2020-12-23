@@ -1,0 +1,22 @@
+#!/bin/bash
+#source run_tests
+#wait
+source dbpop
+TABLES=$(mysql -u developer -pdeveloppass 'vaultdb' -e 'show tables' | awk '{ print $1}' | grep -v '^Tables' ) 
+for t in $TABLES 
+do 
+    echo "Deleting $t..." 
+    mysql -u developer -pdeveloppass 'vaultdb' -e "drop table $t" 
+done
+TABLES=$(mysql -u developer -pdeveloppass 'vaultdb' -e 'show tables' | awk '{ print $1}' | grep -v '^Tables' ) 
+for t in $TABLES 
+do 
+    echo "Deleting $t..." 
+    mysql -u developer -pdeveloppass 'vaultdb' -e "drop table $t" 
+done
+echo "Ran All tests"
+wait
+source ../bin/activate
+wait
+python setup_app.py
+uvicorn main:app --debug

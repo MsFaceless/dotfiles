@@ -1,0 +1,835 @@
+# -*- coding: utf-8 -*-
+"""CollectionsController module"""
+
+from tg import predicates, require, expose, request
+
+from tg.i18n import ugettext as _
+from tg.i18n import lazy_ugettext as l_
+
+from rocket.model import *
+
+from rocket.lib.tg_utils import *
+from rocket.lib.base import BaseController
+from rocket.lib.type_utils import TypeDictionary
+
+TYPEUTIL = TypeDictionary()
+
+class CollectionsController(BaseController):
+
+    @expose()
+    def _default(self, *args, **kwargs):
+        return 'This page is not available.'
+
+    @require(predicates.not_anonymous())
+    @expose('rocket.templates.generic')
+    def index(self, *args, **kwargs):
+        title = _("Collections")
+
+        tab_list = [
+            {'title': 'Payment Providers', 'target_url': '/collections/get_payment_providers'},
+            {'title': 'Debit Order Run Setup', 'target_url': '/collections/get_debit_order_run_setup'},
+            {'title': 'Debit Order Runs', 'target_url': '/collections/get_debit_order_runs'},
+            {'title': 'Debit Order Run Content', 'target_url': '/collections/get_debit_order_run_content'},
+        ]
+
+        nav_items = ""
+        for i, tab in enumerate(tab_list):
+            title = tab.get('title', None)
+            target_url = tab.get('target_url', None)
+            active = 'active' if i == 0 else ''
+            nav_items += f"""
+            <li class="nav-item">
+                <div class="nav-link {active}" data-toggle="tab" data-target-url="{target_url}" role="tablist">
+                    {title}
+                </div>
+            </li>
+            """
+
+        html = f"""
+        <div class="card pb-3">
+            <div class="card-header">
+                <h4 class="card-title">Collections</h4>
+            </div>
+        </div>
+        <div class="card py-3">
+            <div class="card-body">
+                <ul id="tabsHeader" class="nav nav-pills nav-pills-primary" role="tablist">
+                    {nav_items}
+                </ul>
+                <div id="contentDiv" class="tab-content tab-space">
+                </div>
+            </div>
+        </div>
+        """
+        javascript = """
+        var contentDiv = $('#contentDiv');
+        $('.nav-link').click(function(){
+            var targetUrl = $(this).data('targetUrl');
+            var kwargs = $('#tabsHeader').data();
+            contentDiv.load(targetUrl, kwargs, function(e){
+                return false;
+            })
+        });
+        //
+        //$('.nav-link').first().click();
+        $('.nav-link:eq(2)').click();
+        """
+        return dict(title=title, html=html, javascript=javascript)
+
+    @expose()
+    def get_payment_providers(self, *args, **kwargs):
+        html = self.get_payment_provider_html(*args, **kwargs)
+        javascript = self.get_javascript_payment_provider_onload()
+        return html + javascript
+
+    @expose()
+    def get_payment_provider_html(self, *args, **kwargs):
+        dbase_query = PaymentProvider.get_all('id')
+        if not dbase_query:
+            org = EntityOrganisation.by_id(1)
+            if org:
+                prov = PaymentProvider()
+                prov.entity_organisation_id = org.id
+                prov.reference = 'Example Payment Provider'
+                prov.minimum_amount = 10
+                prov.maximum_amount = 10000
+                DBSession.add(prov)
+                DBSession.flush()
+
+                lead = PaymentProviderLeadTime()
+                lead.payment_provider_id = prov.id
+                lead.days = 5
+                lead.latest_before_bank_holiday = True
+                DBSession.add(lead)
+                DBSession.flush()
+            dbase_query = PaymentProvider.get_all('id')
+
+        outputlist = []
+        for item in dbase_query:
+            org = EntityOrganisation.by_id(item.entity_organisation_id)
+            if not org:
+                continue
+
+            lead = PaymentProviderLeadTime.by_attr_first('payment_provider_id', item.id)
+            if not lead:
+                lead = PaymentProviderLeadTime()
+                lead.payment_provider_id = item.id
+                lead.days = 5
+                lead.latest_before_bank_holiday = True
+                DBSession.add(lead)
+                DBSession.flush()
+
+            name = f'({org.code}) {org.name}'
+            outputlist.append({
+                'entity_organisation_id' : f"<div class='edit action_link payment_provider_edit' payment_provider_id='{item.id}'>{name}</div>",
+                'reference' : item.reference,
+                'days' : lead.days,
+                'minimum_amount' : get_currency_by_locale(item.minimum_amount, cents=False),
+                'maximum_amount' : get_currency_by_locale(item.maximum_amount, cents=False),
+                'open': f"<div class='open_payment_provider action_link' payment_provider_id='{item.id}'>open</div>",
+                             })
+        dbcolumnlist=[
+                'entity_organisation_id',
+                'reference',
+                'days',
+                'minimum_amount',
+                'maximum_amount',
+                'open',
+                    ]
+        theadlist=[
+                'Organisation',
+                'Reference',
+                'Lead Days in Advance',
+                'Minimum Amount',
+                'Maximum Amount',
+                '',
+                ]
+        tdclasslist = [
+                '',
+                '',
+                'text-center',
+                'text-right',
+                'text-right',
+                'text-right',
+                ]
+        htmltbl = build_html_table(outputlist, dbcolumnlist, theadlist, "payment_provider_table", tdclasslist)
+        html = f"""
+        <div class="col-md-12 row d-flex">
+            <div class="col-md-6">
+                <h4 class="card-title">Payment Provider</h4>
+            </div>
+            <div class="col-md-6 text-right">
+                <button id="create_new_payment_provider" class="btn btn-primary ml-auto">Create New Payment Provider</button>
+            </div>
+        </div>
+        <div class="row d-flex align-items-center">
+            <div class="col-md-4">
+                <input type="text" class="form-control search" name="searchphrase" placeholder="Search">
+            </div>
+            <div class="col-md-8">
+                <button class="btn btn-primary action_search">Search</button>
+                <button class="btn btn-primary">Reset</button>
+            </div>
+        </div>
+        <hr>
+        <div class="table-responsive">
+            {htmltbl}
+        </div>
+        """
+        return html
+
+    @expose()
+    def get_javascript_payment_provider_onload(self, *args, **kwargs):
+        javascript = """
+        <script src=''>
+        $("#create_new_payment_provider").click(function(){
+            $('#dialogdiv').load('/collections/get_modal_payment_provider?', function(data){
+                return false;
+            });
+        });
+        $(".payment_provider_edit").click(function(){
+            var kwargs = 'payment_provider_id='+$(this).attr('payment_provider_id');
+            $('#dialogdiv').load('/collections/get_modal_payment_provider?', kwargs, function(data){
+                return false;
+            });
+        });
+        $(".open_payment_provider").click(function(){
+            var kwargs = 'payment_provider_id='+$(this).attr('payment_provider_id');
+            $('#contentDiv').load('/collections/get_debit_order_run_setup?', kwargs, function(data){
+                $('.nav-link').removeClass('active');
+                $('.nav-link:eq(1)').addClass('active');
+                return false;
+            });
+        });
+        </script>
+        """
+        return javascript
+
+    def get_selectbox_entity_organisation(self, *args, **kwargs):
+        dbase_query = EntityOrganisation.get_all('name')
+        kwargs['active'] = True
+        kwargs['id'] = 'entity_organisation_id'
+        kwargs['outputlist'] = [{'name': m.name, 'id': m.id} for m in dbase_query]
+        return create_selectbox_html(**kwargs)
+
+    def get_selectbox_payment_provider(self, *args, **kwargs):
+        selected = kwargs.get('selected', None)
+        if selected:
+            selected = int(selected)
+        else:
+            selected = 0
+
+        outputlist = []
+        dbase_query = PaymentProvider.get_all('id')
+        for i in dbase_query:
+            org = EntityOrganisation.by_id(i.entity_organisation_id)
+            if org:
+                outputlist.append(org)
+
+            if int(i.id) == selected:
+                kwargs['selected'] = i.entity_organisation_id
+
+        kwargs['active'] = True
+        kwargs['id'] = 'payment_provider_id'
+        kwargs['outputlist'] = [{'name': m.name, 'id': m.id} for m in outputlist]
+        return create_selectbox_html(**kwargs)
+
+    @expose()
+    def get_modal_payment_provider(self, *args, **kwargs):
+        payment_provider_id = kwargs.get('payment_provider_id', None)
+        payment_provider = None
+        hidden_input = ''
+        if payment_provider_id:
+            payment_provider = PaymentProvider.by_id(payment_provider_id)
+            hidden_input = get_hidden_input(**{'id': 'payment_provider_id', 'value': payment_provider_id})
+
+        entity_organisation_id = payment_provider.entity_organisation_id if payment_provider else ''
+        kwargs['selected'] = entity_organisation_id
+
+        reference = payment_provider.reference if payment_provider else ''
+
+        minimum_amount = payment_provider.minimum_amount if payment_provider else 0
+        minimum_amount = round(minimum_amount, 2)
+
+        maximum_amount = payment_provider.maximum_amount if payment_provider else 0
+        maximum_amount = round(maximum_amount, 2)
+
+        selectbox_entity_organisation = self.get_selectbox_entity_organisation(**kwargs)
+        html = f"""
+        <div class="modal fade" id="dialog_payment_provider" tabindex="-1" role="dialog" aria-labelledby="mypayment_providerLabel" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <div class="col-md-12">
+                            <h4 class="card-title">New Payment Provider</h4>
+                        </div>
+                    </div>
+                    <div class="modal-body">
+                        <form id='form_payment_provider'>
+                            {hidden_input}
+                            <div class="col-md-12">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label" required for="entity_organisation_id">Organisation</label>
+                                    <div class="col-md-9">
+                                        {selectbox_entity_organisation}
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-12">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label" required for="reference">Reference</label>
+                                    <div class="col-md-9">
+                                        <input id="reference" value="{reference}" type="text" name="reference" class="form-control" required='true'>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-12">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label" required for="minimum_amount">Minimum Amount</label>
+                                    <div class="col-md-9">
+                                        <input id="minimum_amount" value="{minimum_amount}" type="text" name="minimum_amount" class="form-control" required='true'>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-12">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label" required for="maximum_amount">Maximum Amount</label>
+                                    <div class="col-md-9">
+                                        <input id="maximum_amount" value="{maximum_amount}" type="text" name="maximum_amount" class="form-control" required='true'>
+                                    </div>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                    <div class="modal-footer">
+                        <button id='save_payment_provider' class="btn btn-primary">Save</button>
+                        <button class="btn btn-outline-primary payment_provider_back">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        javascript = """
+        <script src=''>
+        var form_id = '#form_payment_provider'
+        setFormValidation(form_id);
+        $('#save_payment_provider').click(function(){
+             var valid = FormIsValid(form_id);
+             if(valid){
+                var formserial = $(form_id).serialize();
+                $.post('/collections/save_payment_provider?', formserial, function(data){
+                    $.redirect('/collections/index');
+                    return false;
+                });
+             }
+        });
+        $('.payment_provider_back').click(function(){
+            $('#dialog_payment_provider').modal('hide');
+        });
+        $('#dialog_payment_provider').modal();
+        </script>
+     	"""
+        return html + javascript
+
+    @expose()
+    def save_payment_provider(self, *args, **kwargs):
+        usernow = request.identity.get('user', None)
+        payment_provider_id = kwargs.get('payment_provider_id', None)
+        if not payment_provider_id:
+            this = PaymentProvider()
+            this.entity_organisation_id = kwargs.get('entity_organisation_id', None)
+            this.reference = kwargs.get('reference', None)
+            this.minimum_amount = kwargs.get('minimum_amount', None)
+            this.maximum_amount = kwargs.get('maximum_amount', None)
+            this.added_by = usernow.id
+            DBSession.add(this)
+            DBSession.flush()
+        else:
+            this = PaymentProvider.by_id(payment_provider_id)
+            if not this: return 'false'
+            this.entity_organisation_id = kwargs.get('entity_organisation_id', None)
+            this.reference = kwargs.get('reference', None)
+            this.minimum_amount = kwargs.get('minimum_amount', None)
+            this.maximum_amount = kwargs.get('maximum_amount', None)
+            DBSession.flush()
+        return str(this.id)
+
+    @expose()
+    def get_debit_order_run_setup(self, *args, **kwargs):
+        html = self.get_payment_provider_debit_order_run_setup_html(*args, **kwargs)
+        javascript = self.get_javascript_payment_provider_debit_order_run_setup_onload()
+        return html + javascript
+
+    @expose()
+    def get_payment_provider_debit_order_run_setup_html(self, *args, **kwargs):
+        payment_provider_id = kwargs.get('payment_provider_id', None)
+        if payment_provider_id:
+            dbase_query = DBSession.query(PaymentProviderDebitOrderRunSetup). \
+                    filter(PaymentProviderDebitOrderRunSetup.bln_active == True). \
+                    filter(PaymentProviderDebitOrderRunSetup.payment_provider_id == payment_provider_id). \
+                    order_by(PaymentProviderDebitOrderRunSetup.payment_provider_id.asc()). \
+                    order_by(PaymentProviderDebitOrderRunSetup.run_start_day_of_month.asc()). \
+                    all()
+        else:
+            dbase_query = DBSession.query(PaymentProviderDebitOrderRunSetup). \
+                    filter(PaymentProviderDebitOrderRunSetup.bln_active == True). \
+                    order_by(PaymentProviderDebitOrderRunSetup.payment_provider_id.asc()). \
+                    order_by(PaymentProviderDebitOrderRunSetup.run_start_day_of_month.asc()). \
+                    all()
+
+        if not dbase_query:
+            windowlist = [
+                (1, 5),
+                (7, 7),
+                (15, 5),
+                (21, 3),
+                (25, 6),
+            ]
+            for run_start, length in windowlist:
+                new = PaymentProviderDebitOrderRunSetup()
+                new.payment_provider_id = 1
+                new.run_start_day_of_month = run_start
+                new.length_of_run_in_days = length
+                DBSession.add(new)
+                DBSession.flush()
+            dbase_query = PaymentProviderDebitOrderRunSetup.get_all('id')
+
+        outputlist = []
+        for item in dbase_query:
+            prov = PaymentProvider.by_id(item.payment_provider_id)
+            if not prov:
+                continue
+
+            org = EntityOrganisation.by_id(prov.entity_organisation_id)
+            if not org:
+                continue
+
+            name = f'({org.code}) {org.name}'
+            outputlist.append({
+                'payment_provider_id' : f"<div class='edit action_link payment_provider_debit_order_run_setup_edit' payment_provider_debit_order_run_setup_id='{item.id}'>{name}</div>",
+                'run_start_day_of_month' : item.run_start_day_of_month,
+                'length_of_run_in_days' : item.length_of_run_in_days,
+                             })
+        dbcolumnlist=[
+                'payment_provider_id',
+                'run_start_day_of_month',
+                'length_of_run_in_days',
+                    ]
+        theadlist=[
+                'Payment Provider',
+                'Run Start Day',
+                'Run Length (in Days)',
+                ]
+        tdclasslist = [
+                '',
+                'text-center',
+                'text-center',
+                ]
+        htmltbl = build_html_table(outputlist, dbcolumnlist, theadlist, "payment_provider_debit_order_run_setup_table", tdclasslist)
+        html = f"""
+        <div class="col-md-12 row d-flex">
+            <div class="col-md-6">
+                <h4 class="card-title">Debit Order Run Setup</h4>
+            </div>
+            <div class="col-md-6 text-right">
+                <button id="create_new_payment_provider_debit_order_run_setup" class="btn btn-primary ml-auto">Create New Debit Order Run Setup</button>
+            </div>
+        </div>
+        <div class="row d-flex align-items-center">
+            <div class="col-md-4">
+                <input type="text" class="form-control search" name="searchphrase" placeholder="Search">
+            </div>
+            <div class="col-md-8">
+                <button class="btn btn-primary action_search">Search</button>
+                <button class="btn btn-primary">Reset</button>
+            </div>
+        </div>
+        <hr>
+        <div class="table-responsive">
+            {htmltbl}
+        </div>
+        """
+        return html
+
+    @expose()
+    def get_javascript_payment_provider_debit_order_run_setup_onload(self, *args, **kwargs):
+        javascript = """
+        <script src=''>
+        $("#create_new_payment_provider_debit_order_run_setup").click(function(){
+            $('#dialogdiv').load('/collections/get_modal_payment_provider_debit_order_run_setup?', function(data){
+                return false;
+            });
+        });
+        $(".payment_provider_debit_order_run_setup_edit").click(function(){
+            var kwargs = 'payment_provider_debit_order_run_setup_id='+$(this).attr('payment_provider_debit_order_run_setup_id');
+            $('#dialogdiv').load('/collections/get_modal_payment_provider_debit_order_run_setup?', kwargs, function(data){
+                return false;
+            });
+        });
+        </script>
+        """
+        return javascript
+
+    @expose()
+    def get_modal_payment_provider_debit_order_run_setup(self, *args, **kwargs):
+        payment_provider_debit_order_run_setup_id = kwargs.get('payment_provider_debit_order_run_setup_id', None)
+        payment_provider_debit_order_run_setup = None
+        hidden_input = ''
+        if payment_provider_debit_order_run_setup_id:
+            payment_provider_debit_order_run_setup = PaymentProviderDebitOrderRunSetup.by_id(payment_provider_debit_order_run_setup_id)
+            hidden_input = get_hidden_input(**{'id': 'payment_provider_debit_order_run_setup_id', 'value': payment_provider_debit_order_run_setup_id})
+
+        payment_provider_id = payment_provider_debit_order_run_setup.payment_provider_id if payment_provider_debit_order_run_setup else ''
+        kwargs['selected'] = payment_provider_id
+
+        run_start_day_of_month = payment_provider_debit_order_run_setup.run_start_day_of_month if payment_provider_debit_order_run_setup else ''
+        length_of_run_in_days = payment_provider_debit_order_run_setup.length_of_run_in_days if payment_provider_debit_order_run_setup else 0
+
+        selectbox_payment_provider = self.get_selectbox_payment_provider(**kwargs)
+        html = f"""
+        <div class="modal fade" id="dialog_payment_provider_debit_order_run_setup" tabindex="-1" role="dialog" aria-labelledby="mypayment_provider_debit_order_run_setupLabel" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <div class="col-md-12">
+                            <h4 class="card-title">New Debit Order Run Setup</h4>
+                        </div>
+                    </div>
+                    <div class="modal-body">
+                        <form id='form_payment_provider_debit_order_run_setup'>
+                            {hidden_input}
+                            <div class="col-md-12">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label" required for="payment_provider_id">Payment Provider</label>
+                                    <div class="col-md-9">
+                                        {selectbox_payment_provider}
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-12">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label" required for="run_start_day_of_month">Run Start Day</label>
+                                    <div class="col-md-9">
+                                        <input id="run_start_day_of_month" value="{run_start_day_of_month}" type="text" name="run_start_day_of_month" class="form-control" required='true'>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-12">
+                                <div class="form-group row">
+                                    <label class="col-md-3 col-form-label" required for="length_of_run_in_days">Run Length (in Days)</label>
+                                    <div class="col-md-9">
+                                        <input id="length_of_run_in_days" value="{length_of_run_in_days}" type="text" name="length_of_run_in_days" class="form-control" required='true'>
+                                    </div>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                    <div class="modal-footer">
+                        <button id='save_payment_provider_debit_order_run_setup' class="btn btn-primary">Save</button>
+                        <button class="btn btn-outline-primary payment_provider_debit_order_run_setup_back">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        javascript = """
+        <script src=''>
+        var form_id = '#form_payment_provider_debit_order_run_setup'
+        setFormValidation(form_id);
+        $('#save_payment_provider_debit_order_run_setup').click(function(){
+             var valid = FormIsValid(form_id);
+             if(valid){
+                var formserial = $(form_id).serialize();
+                $.post('/collections/save_payment_provider_debit_order_run_setup?', formserial, function(data){
+                    $.redirect('/collections/index');
+                    return false;
+                });
+             }
+        });
+        $('.payment_provider_debit_order_run_setup_back').click(function(){
+            $('#dialog_payment_provider_debit_order_run_setup').modal('hide');
+        });
+        $('#dialog_payment_provider_debit_order_run_setup').modal();
+        </script>
+     	"""
+        return html + javascript
+
+    @expose()
+    def save_payment_provider_debit_order_run_setup(self, *args, **kwargs):
+        usernow = request.identity.get('user', None)
+        payment_provider_debit_order_run_setup_id = kwargs.get('payment_provider_debit_order_run_setup_id', None)
+        if not payment_provider_debit_order_run_setup_id:
+            this = PaymentProviderDebitOrderRunSetup()
+            this.payment_provider_id = kwargs.get('payment_provider_id', None)
+            this.run_start_day_of_month = kwargs.get('run_start_day_of_month', None)
+            this.length_of_run_in_days = kwargs.get('length_of_run_in_days', None)
+            this.latest_before_bank_holiday = str_to_bool(kwargs.get('latest_before_bank_holiday', True))
+            this.added_by = usernow.id
+            DBSession.add(this)
+            DBSession.flush()
+        else:
+            this = PaymentProviderDebitOrderRunSetup.by_id(payment_provider_debit_order_run_setup_id)
+            if not this: return 'false'
+            this.payment_provider_id = kwargs.get('payment_provider_id', None)
+            this.run_start_day_of_month = kwargs.get('run_start_day_of_month', None)
+            this.length_of_run_in_days = kwargs.get('length_of_run_in_days', None)
+            this.latest_before_bank_holiday = str_to_bool(kwargs.get('latest_before_bank_holiday', True))
+            DBSession.flush()
+        return str(this.id)
+
+    @expose()
+    def get_debit_order_runs(self, *args, **kwargs):
+        html = self.get_debit_order_run_file_html(*args, **kwargs)
+        javascript = self.get_javascript_debit_order_run_file_onload()
+        return html + javascript
+
+    @expose()
+    def get_debit_order_run_file_html(self, *args, **kwargs):
+        dbase_query = DebitOrderRunFile.get_all('id')
+        outputlist = []
+        for item in dbase_query:
+            run = DebitOrderRun.by_id(item.debit_order_run_id)
+            if not run:
+                continue
+
+            setup = PaymentProviderDebitOrderRunSetup.by_id(run.payment_provider_debit_order_run_setup_id)
+            if not setup:
+                continue
+
+            prov = PaymentProvider.by_id(setup.payment_provider_id)
+            if not prov:
+                continue
+
+            org = EntityOrganisation.by_id(prov.entity_organisation_id)
+            if not org:
+                continue
+
+            file_type = TYPEUTIL.get_pretty_name('debit_order_run_file_type', item.debit_order_run_file_type_id)
+
+            name = f'({org.code}) {org.name}'
+            dates = f'{run.start_date} - {run.end_date}'
+            outputlist.append({
+                'debit_order_run_id' : f"<div class='edit debit_order_run_file_edit' debit_order_run_file_id='{item.id}'>{name}</div>",
+                'debit_order_run_dates' : dates,
+                'debit_order_run_file_type_id' : file_type,
+                'datetime_file_generated' : item.datetime_file_generated,
+                'datetime_file_received' : item.datetime_file_received,
+                'open': f"<div class='open_debit_order_run action_link' debit_order_run_id='{item.id}'>open</div>",
+                             })
+        dbcolumnlist=[
+                'debit_order_run_id',
+                'debit_order_run_dates',
+                'debit_order_run_file_type_id',
+                'datetime_file_generated',
+                'datetime_file_received',
+                'open',
+                    ]
+        theadlist=[
+                'Payment Provider',
+                'Run Dates',
+                'File Type',
+                'Generated',
+                'Received',
+                '',
+                ]
+        tdclasslist = [
+                '',
+                '',
+                '',
+                '',
+                '',
+                'text-right',
+                ]
+        htmltbl = build_html_table(outputlist, dbcolumnlist, theadlist, "debit_order_run_file_table", tdclasslist)
+        html = f"""
+        <div class="row d-flex">
+            <div class="col-md-6">
+                <h4 class="card-title">Debit_order_run_file</h4>
+            </div>
+            <div class="col-md-6 text-right">
+                <button id="create_new_debit_order_run_file" class="btn btn-primary ml-auto">Create New Debit_order_run_file</button>
+            </div>
+        </div>
+        <div class="row d-flex align-items-center">
+            <div class="col-md-4">
+                <input type="text" class="form-control search" name="searchphrase" placeholder="Search">
+            </div>
+            <div class="col-md-8">
+                <button class="btn btn-primary action_search">Search</button>
+                <button class="btn btn-primary">Reset</button>
+            </div>
+        </div>
+        <hr>
+        <div class="table-responsive">
+            {htmltbl}
+        </div>
+        """
+        return html
+
+    @expose()
+    def get_javascript_debit_order_run_file_onload(self, *args, **kwargs):
+        javascript = """
+        <script src=''>
+        $("#create_new_debit_order_run_file").click(function(){
+            $('#dialogdiv').load('/collections/get_modal_debit_order_run_file?', function(data){
+                return false;
+            });
+        });
+        $(".debit_order_run_file_edit").click(function(){
+            var kwargs = 'debit_order_run_file_id='+$(this).attr('debit_order_run_file_id');
+            $('#dialogdiv').load('/collections/get_modal_debit_order_run_file?', kwargs, function(data){
+                return false;
+            });
+        });
+        $(".open_debit_order_run").click(function(){
+            var kwargs = 'debit_order_run_id='+$(this).attr('debit_order_run_id');
+            $('#contentDiv').load('/collections/get_debit_order_run_content?', kwargs, function(data){
+                $('.nav-link').removeClass('active');
+                $('.nav-link:eq(3)').addClass('active');
+                return false;
+            });
+        });
+        </script>
+        """
+        return javascript
+
+    @expose()
+    def get_modal_debit_order_run_file(self, *args, **kwargs):
+        debit_order_run_file_id = kwargs.get('debit_order_run_file_id', None)
+        debit_order_run_file = None
+        hidden_input = ''
+        if debit_order_run_file_id:
+            debit_order_run_file = DebitOrderRunFile.by_id(debit_order_run_file_id)
+            hidden_input = get_hidden_input(**{'id': 'debit_order_run_file_id', 'value': debit_order_run_file_id})
+        debit_order_run_id = debit_order_run_file.debit_order_run_id if debit_order_run_file else ''
+        debit_order_run_file_type_id = debit_order_run_file.debit_order_run_file_type_id if debit_order_run_file else ''
+        datetime_file_generated = debit_order_run_file.datetime_file_generated if debit_order_run_file else ''
+        datetime_file_received = debit_order_run_file.datetime_file_received if debit_order_run_file else ''
+        file_name = debit_order_run_file.file_name if debit_order_run_file else ''
+        file_location = debit_order_run_file.file_location if debit_order_run_file else ''
+        html = f"""
+        <div class="modal fade" id="dialog_debit_order_run_file" tabindex="-1" role="dialog" aria-labelledby="mydebit_order_run_fileLabel" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <div class="col-md-6">
+                            <h4 class="card-title">New Debit_order_run_file</h4>
+                        </div>
+                    </div>
+                    <div class="modal-body">
+                        <form id='form_debit_order_run_file'>
+                        {hidden_input}
+                                <div class="col-md-6">
+					<div class="form-group row">
+						<label class="col-md-3 col-form-label" required for="debit_order_run_id">Debit_Order_Run_Id</label>
+						<div class="col-md-9">
+							<input id="debit_order_run_id" value="{debit_order_run_id}" type="text" name="debit_order_run_id" class="form-control" required='true'>
+						</div>
+					</div>
+				</div>
+                                <div class="col-md-6">
+					<div class="form-group row">
+						<label class="col-md-3 col-form-label" required for="debit_order_run_file_type_id">Debit_Order_Run_File_Type_Id</label>
+						<div class="col-md-9">
+							<input id="debit_order_run_file_type_id" value="{debit_order_run_file_type_id}" type="text" name="debit_order_run_file_type_id" class="form-control" required='true'>
+						</div>
+					</div>
+				</div>
+                                <div class="col-md-6">
+					<div class="form-group row">
+						<label class="col-md-3 col-form-label" required for="datetime_file_generated">Date_File_Generated</label>
+						<div class="col-md-9">
+							<input id="datetime_file_generated" value="{datetime_file_generated}" type="text" name="datetime_file_generated" class="form-control" required='true'>
+						</div>
+					</div>
+				</div>
+                                <div class="col-md-6">
+					<div class="form-group row">
+						<label class="col-md-3 col-form-label" required for="datetime_file_received">Date_File_Received</label>
+						<div class="col-md-9">
+							<input id="datetime_file_received" value="{datetime_file_received}" type="text" name="datetime_file_received" class="form-control" required='true'>
+						</div>
+					</div>
+				</div>
+                                <div class="col-md-6">
+					<div class="form-group row">
+						<label class="col-md-3 col-form-label" required for="file_name">File_Name</label>
+						<div class="col-md-9">
+							<input id="file_name" value="{file_name}" type="text" name="file_name" class="form-control" required='true'>
+						</div>
+					</div>
+				</div>
+                                <div class="col-md-6">
+					<div class="form-group row">
+						<label class="col-md-3 col-form-label" required for="file_location">File_Location</label>
+						<div class="col-md-9">
+							<input id="file_location" value="{file_location}" type="text" name="file_location" class="form-control" required='true'>
+						</div>
+					</div>
+				</div>
+                        </form>
+                    </div>
+                    <div class="modal-footer">
+                        <button id='save_debit_order_run_file' class="btn btn-primary">Save</button>
+                        <button class="btn btn-outline-primary debit_order_run_file_back">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        javascript = """
+        <script src=''>
+        var form_id = '#form_debit_order_run_file'
+        setFormValidation(form_id);
+        createDatepicker('#datetime_file_generated');
+        createDatepicker('#datetime_file_received');
+        $('#save_debit_order_run_file').click(function(){
+             var valid = FormIsValid(form_id);
+             if(valid){
+                var formserial = $(form_id).serialize();
+                $.post('/collections/save_debit_order_run_file?', formserial, function(data){
+                    $.redirect('/collections/index');
+                    return false;
+                });
+             }
+        });
+        $('.debit_order_run_file_back').click(function(){
+            $('#dialog_debit_order_run_file').modal('hide');
+        });
+        $('#dialog_debit_order_run_file').modal();
+        </script>
+     	"""
+        return html + javascript
+
+    @expose()
+    def save_debit_order_run_file(self, *args, **kwargs):
+        usernow = request.identity.get('user', None)
+        debit_order_run_file_id = kwargs.get('debit_order_run_file_id', None)
+        if not debit_order_run_file_id:
+            this = DebitOrderRunFile()
+            this.debit_order_run_id = kwargs.get('debit_order_run_id', None)
+            this.debit_order_run_file_type_id = kwargs.get('debit_order_run_file_type_id', None)
+            this.datetime_file_generated = kwargs.get('datetime_file_generated', None)
+            this.datetime_file_received = kwargs.get('datetime_file_received', None)
+            this.file_name = kwargs.get('file_name', None)
+            this.file_location = kwargs.get('file_location', None)
+            this.added_by = usernow.id
+            DBSession.add(this)
+            DBSession.flush()
+        else:
+            this = DebitOrderRunFile.by_id(debit_order_run_file_id)
+            if not this: return 'false'
+            this.debit_order_run_id = kwargs.get('debit_order_run_id', None)
+            this.debit_order_run_file_type_id = kwargs.get('debit_order_run_file_type_id', None)
+            this.datetime_file_generated = kwargs.get('datetime_file_generated', None)
+            this.datetime_file_received = kwargs.get('datetime_file_received', None)
+            this.file_name = kwargs.get('file_name', None)
+            this.file_location = kwargs.get('file_location', None)
+            DBSession.flush()
+        return str(this.id)
+
+    @expose()
+    def get_debit_order_run_content(self, *args, **kwargs):
+        html = ''
+        javascript = ''
+        return html + javascript

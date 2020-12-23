@@ -1,0 +1,386 @@
+#!/bin/python
+# -*- coding: utf-8 -*-
+import re
+import os
+import transaction
+
+from tg import request
+from rocket.model import *
+from rocket.lib.tg_utils import *
+from pkg_resources import resource_filename
+from rocket.lib.type_utils import TypeDictionary
+from rocket.lib.batch_import import ImportHandler
+
+TYPEUTIL = TypeDictionary()
+FILENAME = os.path.abspath(resource_filename('rocket', 'public'))
+PUBLIC_DIRNAME = os.path.join(FILENAME)
+EXCEL_DIRNAME = os.path.join(PUBLIC_DIRNAME, 'excel')
+
+__all__ = [ 'VoucherPurchaseImport', 'VoucherImportRecovery', ]
+
+class VoucherPurchaseImport(ImportHandler):
+
+    def __repr__(self):
+        return f'<VoucherPurchaseImport: filename={self.filename}>'
+
+    def __init__(self, *args, **kwargs):
+        super(VoucherImport, self).__init__(**kwargs)
+
+    def start_import(self, *args, **kwargs):
+        start = datetime.now()
+
+        self.new_batch_import_audit(f'Voucher import starting for {self.sane_filename}')
+
+        parse_result = self.run_parse()
+        if parse_result:
+            import_result = self.run_import()
+            if import_result:
+                self.run_complete()
+        self.new_batch_import_audit(f'Voucher import ending for {self.sane_filename}. Duration: {datetime.now() - start}')
+        return 'true'
+
+    def run_parse(self, *args, **kwargs):
+        start = datetime.now()
+        self.new_batch_import_audit(f'Parse starting for {self.sane_filename}')
+
+        rejected_count = 0
+        accepted_count = 0
+        usecols = [
+                "MSISDN",
+                "Product Code",
+                "",
+                ]
+        fileobject = self.get_file_from_pandas(usecols=usecols)
+
+        for i, row in fileobject.iterrows():
+
+            if not self.product_owner_id:
+                rejected_count += 1
+                self.new_batch_import_error(f'Missing product owner information for row {i+1}')
+                continue
+
+            result = self.confirm_parse_voucher(row)
+            if not result:
+                rejected_count += 1
+                self.new_batch_import_error(f'Missing voucher information for row {i+1}')
+                continue
+
+            mobile_number = row.get('MSISDN',None)
+            product_code = row.get('Product Code',None)
+            purchase_date = sane_date(row.get('Purchase Date (Ccyy-mm-dd)'))
+
+            product = Product.by_attr_first('code', product_code)
+            if not product:
+                rejected_count += 1
+                self.new_batch_import_error(f'Invalid Product Code for row {i+1}')
+                continue
+            
+            product_id = product.id
+            found = self.get_voucher_request(mobile_number=mobile_number, product_id=product_id)
+            if found:
+                rejected_count += 1
+                self.new_batch_import_error(f'Duplicate voucher request for row {i+1}')
+                continue
+
+            self.save_voucher_request(mobile_number, product_code, product_id, purchase_date)
+            #accepted_count += 1
+
+
+        self.new_batch_import_audit(f'Parse ending for {self.sane_filename}. Duration: {datetime.now() - start}')
+        self.update_batch_import({
+            'notes': '=>Parse', 
+            'total_count': fileobject.shape[0], 
+            'rejected_count': rejected_count, 
+            })
+        return True
+
+    def run_import(self, *args, **kwargs):
+        start = datetime.now()
+        self.delete_import_file()
+        self.new_batch_import_audit(f'Import starting for {self.sane_filename}')
+
+        pre_voucher_count = self.batch_import.pre_voucher_count 
+        rejected_count = self.batch_import.rejected_count 
+        accepted_count = self.batch_import.accepted_count 
+
+        requestlist = VoucherRequest.by_attr_all('batch_import_id', self.batch_import_id)
+
+        if not requestlist:
+            # There are no reques records to import
+            self.new_batch_import_audit(f'No request records found to import!')
+            self.new_batch_import_audit(f'Import ending for {self.sane_filename}. Duration: {datetime.now() - start}')
+
+            self.update_batch_import({
+                'notes': '=>Import', 
+                'pre_voucher_count': pre_voucher_count, 
+                'rejected_count': rejected_count, 
+                'accepted_count': accepted_count, 
+                'is_complete_load': True, 
+                'is_successful': True, 
+                })
+            return
+
+        for req in requestlist:
+
+            person, member = self.confirm_member_by_mobile_number(req.mobile_number)
+            if not member:
+                rejected_count += 1
+                self.new_batch_import_error(f'Person/Member record does not exist for Mobile Number {req.mobile_number}')
+                DBSession.delete(req)
+                continue
+
+            if member.is_deceased:
+                rejected_count += 1
+                self.new_batch_import_error(f'Member is deceased for Mobile Number {req.mobile_number}')
+                DBSession.delete(req)
+                continue
+
+            result = self.member_has_voucher(person.id, product_id, req.purchase_date)
+            if result:
+                rejected_count += 1
+                self.new_batch_import_error(f'Member has already purhcased voucher on this date for Mobile Number {req.mobile_number}')
+                DBSession.delete(req)
+                continue
+
+# Stackability is currently not on Om Swazi products at this timw.
+            # result = self.confirm_product_stack(member.id, product_id)
+            # if not result:
+            #     rejected_count += 1
+            #     self.new_batch_import_error(f'Maximum cover limit exceeded for Mobile Number {req.mobile_number}')
+            #     DBSession.delete(req)
+            #     continue
+
+            valid_age, fail_message = self.confirm_product_age(person.date_of_birth, product_id)
+            if not valid_age:
+                rejected_count += 1
+                self.new_batch_import_error(f'{fail_message} for Mobile Number {req.mobile_number}')
+                DBSession.delete(req)
+                continue
+
+$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+            result = COMMONORC.confirm_member_contract_batch_import(**{
+                'is_member' : False,
+                'group_id' : self.group_id,
+                'member_id' : member.id,
+                'product_id': req.product_id,
+                'beneficiary_id' : None,
+                'group_reference' : '',
+                'batch_import_id' : self.batch_import_id,
+                'import_type_id': ImportType.Voucher.value, })
+
+            if not result:
+                pre_voucher_count += 1
+                product = Product.by_id(product_id)
+
+$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+                POLICYORC.ensure_prevoucher(**{
+                    'member_id': member.id,
+                    'product_id': req.product_id,
+                    'purchase_date': req.purchase_date,
+                    'active_period': product.active_period,
+                    'period_type': product.product_type_id, })
+            else:
+                accepted_count += 1
+
+$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+                result = POLICYORC.voucher_product(**{
+                    'member_id': member.id,
+                    'product_id': req.product_id,
+                    'purchase_date': req.purchase_date,
+                    'group_id': self.group_id,
+                    'batch_import_id': self.batch_import_id,
+                    'is_benefit': False })
+            DBSession.delete(req)
+        DBSession.flush()
+
+        self.new_batch_import_audit(f'Import ending for {self.sane_filename}. Duration: {datetime.now() - start}')
+
+        self.update_batch_import({
+            'notes': '=>Import', 
+            'pre_voucher_count': pre_voucher_count, 
+            'rejected_count': rejected_count, 
+            'accepted_count': accepted_count, 
+            'is_complete_load': True, 
+            'is_successful': True, 
+            })
+
+$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+
+
+        return True
+
+    def run_complete(self, *args, **kwargs):
+        start = datetime.now()
+        self.new_batch_import_audit(f'Complete starting for {self.sane_filename}')
+        requestlist = VoucherRequest.by_batch_id(self.batch_import_id)
+        if requestlist:
+            len_requestlist = len([x for x in requestlist])
+            self.new_batch_import_error(f'{len_requestlist} VoucherRequests still exist.')
+
+        self.new_batch_import_audit(f'Complete ending for {self.sane_filename}. Duration: {datetime.now() - start}')
+
+        self.update_batch_import({
+            'notes': '=>Import', 
+            'pre_voucher_count': pre_voucher_count, 
+            'rejected_count': rejected_count, 
+            'accepted_count': accepted_count, 
+            'is_complete_load': True, 
+            'is_successful': True, 
+            })
+
+        this = BatchImport.by_id(self.batch_import_id)
+        this.notes = 'Start=>Parse=>Import=>Complete'
+        DBSession.flush()
+        transaction.commit()
+        self.new_batch_import_audit(f'Complete ending for {self.sane_filename}. Duration: {datetime.now() - start}')
+        return True
+
+    def confirm_parse_voucher(self, row, *args, **kwargs):
+        mobile_number = row.get('MobileNumber', None)
+        product_code = row.get('ProductCode', None)
+        purchase_date = sane_date(row.get('VoucherDate', None))
+        return all([mobile_number, product_code, purchase_date])
+
+    def get_voucher_request(self, mobile_number=None, product_id=None, *args, **kwargs):
+        if not mobile_number:
+            return None
+
+        if not product_id:
+            return None
+
+        return DBSession.query(VoucherRequest).\
+            filter(VoucherRequest.batch_import_id == self.batch_import_id).\
+            filter(VoucherRequest.mobile_number == mobile_number).\
+            filter(VoucherRequest.product_id == product_id).\
+            first()    
+
+    def save_voucher_request(self, mobile_number, product_code, product_id, purchase_date, *args, **kwargs):
+        this = VoucherRequest()
+        this.batch_import_id = self.batch_import_id
+        this.mobile_number = mobile_number
+        this.product_code = product_code
+        this.product_id = product_id
+        this.purchase_date = purchase_date
+        this.added_by = self.usernow.id
+        DBSession.add(this)
+        DBSession.flush()
+        return
+
+    def confirm_product(self, voucher_request, *args, **kwargs):
+        product = Product.by_code(voucher_request.product_code)
+        if not product: return False, None
+        return True, product.id
+
+# Stackability is currently not on Om Swazi products at this timw.
+    # def confirm_product_stack(self, member_id, product_id, *args, **kwargs):
+    #     product = Product.by_id(product_id)
+    #     if not product: return False
+    #     if product.is_stackable and product.stack_limit > 0 and product.product_class_id == ProductClass.Life_Voucher.value:
+    #         can_buy = POLICYORC.check_product_stack(**{ 'product_id' : product_id,
+    #                                                     'member_id' : member_id,
+    #                                                     'stack_limit' : product.stack_limit })
+    #         if not can_buy:
+    #             return False
+    #     return True
+
+$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+
+    def confirm_product_age(self, birthday, product_id, *args, **kwargs):
+        # product = Product.by_id(product_id)
+        # if not product:
+        #     return False, 'Product not found.'
+
+        benefit_list = DBSession.query(Benefit).\
+            filter(Benefit.product_id == product_id).\
+            filter(Benefit.bln_active == True).\
+            all()
+        if not benefit_list:
+            return False, 'Product benefits not found.'
+
+        principal_type_id = TYPEUTIL.get_id_of_name('benefit_insured_life_relationship_type','principal')
+        return_value = False
+
+        for benefit in benefit_list:
+            benefit_life_insured = DBSession.query(BenefitInsuredLife).\
+                filter(BenefitInsuredLife.benefit_insured_life_relationship_type_id == principal_type_id).\
+                filter(BenefitInsuredLife.bln_active == True).\
+                first()
+            if not benefit_life_insured:
+                continue
+    
+
+            if benefit_life_insured.minimum_age or benefit_life_insured.maximum_entry_age and not birthday:
+                continue
+
+            age_years = get_age_from_birthday_years(birthday)
+            if benefit_life_insured.minimum_age > 0 and (age_years > benefit_life_insured.minimum_age):
+                return_value = True
+                        
+            if benefit_life_insured.maximum_entry_age > 0 and (age_years < benefit_life_insured.maximum_entry_age):
+                return_value = True
+
+        if not return_value:
+            return return_value, 'Member does not meet the product age limitations.'
+        return return_value, 'Success.'
+
+class VoucherImportRecovery(VoucherImport):
+
+    def __repr__(self):
+        return f'<VoucherImportRecovery: filename={self.filename}>'
+
+    def __init__(self, *args, **kwargs):
+        self.batch_import_id = kwargs.get('batch_import_id', None)
+        batchimport = BatchImport.by_id(self.batch_import_id)
+        self.group_id = batchimport.group_id
+        self.filename = batchimport.filename
+        self.product_id = batchimport.product_id
+        self.import_type_id = batchimport.import_type_id
+        self.usernow = request.identity.get('user', {})
+        self.sane_filename = remove_hash_from_filename(self.filename)
+        self.accepted_count = batchimport.accepted_count
+        self.pre_voucher_count = batchimport.pre_voucher_count
+        self.rejected_count = batchimport.rejected_count
+        self.total_count = batchimport.total_count
+        self.restart_import()
+
+    def restart_import(self, *args, **kwargs):
+        start = datetime.now()
+        if not self.batch_import_id:
+            return False
+
+        batch_import = BatchImport.by_id(self.batch_import_id)
+        if not batch_import:
+            return False
+
+        if batch_import.is_complete_load and batch_import.is_complete_update:
+            batch_import.is_successful = True
+            DBSession.flush()
+            transaction.commit()
+            return True
+
+        self.new_batch_import_audit(f'Voucher import recovery started for {self.sane_filename}')
+        filepath = os.path.join(EXCEL_DIRNAME, self.filename)
+        if os.path.isfile(filepath):
+            parse_result = self.run_parse()
+            if not parse_result:
+                self.new_batch_import_audit(f'Voucher import recovery failed. (Parse) Duration: {datetime.now() - start}')
+                return False
+
+        if not batch_import.is_complete_load and batch_import.is_complete_update:
+            batch_import.is_complete_update = False
+
+        if not batch_import.is_complete_load:
+            import_result = self.run_import()
+            if not import_result:
+                self.new_batch_import_audit(f'Voucher import recovery failed. (Import) Duration: {datetime.now() - start}')
+                return False
+
+        batch_import = BatchImport.by_id(self.batch_import_id)
+        if not batch_import.is_complete_update:
+            complete_result = self.run_complete()
+            if not complete_result:
+                self.new_batch_import_audit(f'Voucher import recovery failed. (Complete]) Duration: {datetime.now() - start}')
+                return False
+
+        self.new_batch_import_audit(f'Voucher import recovery completed for {self.sane_filename}. Duration: {datetime.now() - start}')
+        return True

@@ -1,0 +1,91 @@
+#!/usr/bin/env python
+from fabric import Connection, Config
+from invoke import Responder
+import sys
+import os
+
+postfix = "rocketinsurtech.com"
+prefix_list = ['qagateway', 'qarocket']
+dbpop_prefix_list = ['qagateway', 'qarocket']
+ssh_dir = os.path.join(os.path.abspath(os.path.expanduser("~")), ".ssh")
+stack_dir = os.path.join(ssh_dir, 'stacks/rocket/dotxml/qa')
+gateway_key_filedict = {'key_filename':os.path.join(stack_dir, "core_gateway.pem")}
+rocket_key_filedict = {'key_filename':os.path.join(stack_dir, "core_rocket.pem")}
+
+dotxml_gateway_connection = Connection("developer@dotxml.duckdns.org", port="45678", connect_kwargs={"key_filename":f"{ssh_dir}/id_rsa"})
+
+def dbpop(targets=[]):
+    gateway_domain = f"{prefix_list[0]}.{postfix}"
+    gateway_connection = Connection(f"ubuntu@{gateway_domain}", gateway=dotxml_gateway_connection, connect_kwargs=gateway_key_filedict)
+
+    rocket_domain = f"{prefix_list[1]}.{postfix}"
+    rocket_connection = Connection(f"ubuntu@{rocket_domain}", gateway=dotxml_gateway_connection, connect_kwargs=rocket_key_filedict)
+    watchers = []
+
+    sudo_responder = Responder(pattern=r'\[sudo\] password:', response='\n')
+    watchers.append(sudo_responder)
+    ssh_responder = Responder(pattern=r"developer@dotxml.duckdns.org's password:", response='NotWolfNippleChips\n')
+    watchers.append(ssh_responder)
+    mysql_responder = Responder(pattern=r'Enter password:', response='developpass\n')
+    watchers.append(mysql_responder)
+
+    gateway_connection.sudo(f"systemctl stop nginx gunicorn", watchers=watchers, pty=True)
+    rocket_connection.sudo(f"systemctl stop nginx gunicorn", watchers=watchers, pty=True)
+
+    gateway_connection.run(f"cd /home/ubuntu/enviros/deployed_env/deployed_app && source fresca_pop", watchers=watchers, pty=True)
+
+    rocket_connection.run(f"cd /home/ubuntu/enviros/deployed_env/deployed_app && mysql -pdeveloppass -udeveloper rocketdb < rocketdbdump.sql", watchers=watchers, pty=True)
+
+    gateway_connection.sudo(f"systemctl start nginx gunicorn", watchers=watchers, pty=True)
+    rocket_connection.sudo(f"systemctl start nginx gunicorn", watchers=watchers, pty=True)
+
+def update(targets=[]):
+    gateway_domain = f"{prefix_list[0]}.{postfix}"
+    gateway_connection = Connection(f"ubuntu@{gateway_domain}", gateway=dotxml_gateway_connection, connect_kwargs=gateway_key_filedict)
+
+    rocket_domain = f"{prefix_list[1]}.{postfix}"
+    print(rocket_domain)
+    rocket_connection = Connection(f"ubuntu@{rocket_domain}", gateway=dotxml_gateway_connection, connect_kwargs=rocket_key_filedict)
+    watchers = []
+
+    sudo_responder = Responder(pattern=r'\[sudo\] password:', response='\n')
+    watchers.append(sudo_responder)
+    ssh_responder = Responder(pattern=r"developer@dotxml.duckdns.org's password:", response='NotWolfNippleChips\n')
+    watchers.append(ssh_responder)
+    mysql_responder = Responder(pattern=r'Enter password:', response='developpass\n')
+    watchers.append(mysql_responder)
+
+    gateway_connection.sudo("systemctl stop nginx", watchers=watchers, pty=True)
+    gateway_connection.sudo("systemctl stop gunicorn", watchers=watchers, pty=True)
+
+    rocket_connection.sudo("systemctl stop nginx", watchers=watchers, pty=True)
+    rocket_connection.sudo("systemctl stop gunicorn", watchers=watchers, pty=True)
+
+    #gateway_connection.run(f"cd /home/ubuntu/enviros/deployed_env/deployed_app && /home/ubuntu/enviros/deployed_env/bin/python fresca_update", watchers=watchers, pty=True)
+
+    rocket_connection.run(f"cd /home/ubuntu/enviros/deployed_env/deployed_app && hg pull", watchers=watchers, pty=True)
+    rocket_connection.run(f"cd /home/ubuntu/enviros/deployed_env/deployed_app && hg update --clean dotxml", watchers=watchers, pty=True)
+
+    rocket_connection.sudo("systemctl start gunicorn", watchers=watchers, pty=True)
+    rocket_connection.sudo("systemctl start nginx", watchers=watchers, pty=True)
+
+    gateway_connection.sudo("systemctl start gunicorn", watchers=watchers, pty=True)
+    gateway_connection.sudo("systemctl start nginx", watchers=watchers, pty=True)
+
+def main():
+    args = sys.argv
+    if len(args) < 2: 
+        print("Not enough arguments")
+        return False
+    arg0 = args[0]
+    command = args[1]
+    targets = args[2:]
+    if command == 'pop': func = dbpop
+    elif command == 'update': func = update
+    func()
+    return True
+
+if __name__ == "__main__":
+    main()
+    #EXAMPLE USAGE:
+    # python fresca.py update merchant

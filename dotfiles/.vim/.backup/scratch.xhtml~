@@ -1,0 +1,51 @@
+<div class="modal fade" id="dialog_new_transaction" tabindex="-1" role="dialog" aria-labelledby="mytransactionLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div class="col-md-6">
+                    <h4 class="card-title">New Transaction</h4>
+                </div>
+            </div>
+            <div class="modal-body">
+                <form id='form_new_transaction'>
+                    <div class="col-md-6">
+                        <div class="form-group row">
+                            <label class="col-md-3 col-form-label" required for="premium_due_id">Premium_Due_Id</label>
+                            <div class="col-md-9">
+                                <input id="premium_due_id" type="text" name="premium_due_id" class="form-control" required='true'>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="form-group row">
+                            <label class="col-md-3 col-form-label" required for="amount"> Amount</label>
+                            <div class="col-md-9">
+                                <input id="amount" type="text" name="amount" class="form-control" required='true'>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="form-group row">
+                            <label class="col-md-3 col-form-label" required for="transaction_state_type_id"> Transaction_State_Type_Id</label>
+                            <div class="col-md-9">
+                                <input id="transaction_state_type_id" type="text" name="transaction_state_type_id" class="form-control" required='true'>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="form-group row">
+                            <label class="col-md-3 col-form-label" required for="payment_received_type_id"> Payment_Received_Type_Id</label>
+                            <div class="col-md-9">
+                                <input id="payment_received_type_id" type="text" name="payment_received_type_id" class="form-control" required='true'>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button id='save_new_transaction' class="btn btn-primary">Save</button>
+                <button class="btn btn-outline-primary transaction_back">Cancel</button>
+            </div>
+        </div>
+    </div>
+</div>

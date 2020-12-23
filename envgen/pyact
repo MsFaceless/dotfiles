@@ -1,0 +1,20 @@
+#!/usr/bin/python3
+import os
+
+def find_bin():
+    target = "bin/activate"
+    depth = 0
+    loop = True
+    while loop and depth < 3:
+        depth += 1
+        try:
+            if os.stat(target):
+                return target
+                loop = False
+        except FileNotFoundError:
+            target = "../{0}".format(target)
+            continue
+
+if __name__ == "__main__":
+    ret_val = find_bin()
+    print(ret_val)

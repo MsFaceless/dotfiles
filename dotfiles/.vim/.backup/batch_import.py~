@@ -1,0 +1,326 @@
+#!/bin/python
+# -*- coding: utf-8 -*-
+import re
+import os
+import transaction
+import pandas as pd
+import datetime
+
+from tg import request
+
+from pkg_resources import resource_filename
+
+from rocket import model
+from rocket.lib.tg_utils import *
+from rocket.model import *
+# from rocket.model import BatchImport, DBSession, BatchImportProductOwner
+from rocket.lib.type_utils import TypeDictionary
+
+from sqlalchemy import create_engine
+from rocket.controllers.common import CommonController
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import scoped_session, sessionmaker
+
+COMMON = CommonController()
+TYPEUTIL = TypeDictionary()
+FILENAME = os.path.abspath(resource_filename('rocket', 'public'))
+PUBLIC_DIRNAME = os.path.join(FILENAME)
+EXCEL_DIRNAME = os.path.join(PUBLIC_DIRNAME, 'excel')
+
+__all__ = [ 'ImportHandler', ]
+
+class ImportHandler(object):
+
+    def __repr__(self):
+        return f'<ImportHandler: filename={self.filename}>'
+
+    def __init__(self, *args, **kwargs):
+
+        self.filename = kwargs.get('filename', None)
+        self.import_type_id = kwargs.get('import_type_id', None)
+        self.sane_filename = remove_hash_from_filename(self.filename)
+        self.user_id = kwargs.get('user_id', None)
+        if not self.user_id:
+            self.user_id = 1
+
+        self.batch_import_id = self.create_batch_import(**kwargs)
+        self.batch_import = BatchImport.by_id(self.batch_import_id)
+
+        self.product_owner_id = None
+        self.batch_import_product_owner = BatchImportProductOwner.by_attr_first('batch_import_id', self.batch_import_id)
+        if self.batch_import_product_owner:
+            self.product_owner_id = self.batch_import_product_owner.entity_org_product_owner_id
+
+        self.mobile_contact_type_id = TYPEUTIL.get_id_of_name('entity_contact_type', 'mobile')
+        self.default_language_id = self.get_default_language_id()
+        self.unknown_person_title_id = self.get_unknown_person_title_id()
+        self.default_gender_id = TYPEUTIL.get_id_of_name('entity_person_gender_type', 'unknown')
+        
+        self.null_date_string = '1900-01-01'
+        self.null_date_date = date(1900,1,1)
+        self.current_date = datetime.now().strftime("%Y-%m-%d")
+
+    def delete_import_file(self, *args, **kwargs):
+        filepath = os.path.join(EXCEL_DIRNAME, self.filename)
+        if os.path.isfile(filepath):
+            os.remove(filepath)
+
+    def get_my_batch_import_record(self, *args, **kwargs):
+        this = BatchImport.by_id(self.batch_import_id)
+        return this
+
+    def get_file_from_pandas(self, usecols=[], *args, **kwargs):
+        if not usecols:
+            return None
+        filepath = os.path.join(EXCEL_DIRNAME, self.filename)
+
+        column_types = {k:object for k in usecols}
+        if not os.path.isfile(filepath):
+            return None
+
+        start = datetime.now()
+        data = pd.read_excel(filepath, usecols=usecols, dtype=column_types, na_values=None)
+        data = data.replace({pd.np.nan: None})
+        data = data.replace({pd.np.NaN: None})
+
+        return data
+
+    def create_batch_import(self, *args, **kwargs):
+        if not self.filename:
+            return None
+
+        if not self.user_id:
+            return None
+
+        if not self.import_type_id:
+            return None
+
+        batch_import_id = kwargs.get('batch_import_id', None)
+
+        if batch_import_id:
+            return batch_import_id
+
+        this = BatchImport()
+        this.import_type_id = self.import_type_id
+        this.accepted_count = 0
+        this.rejected_count = 0
+        this.pre_voucher_count = 0
+        this.notes = "Start"
+        this.added_by = self.user_id
+        this.filename = self.sane_filename
+        DBSession.add(this)
+        DBSession.flush()
+        return this.id
+
+    def new_batch_import_audit(self, message=None, *args, **kwargs):
+        if not message:
+            return False
+
+        this = BatchImportAudit()
+        this.batch_import_id = self.batch_import_id
+        this.audit_date_time = datetime.now()
+        this.audit = message
+        this.added_by = self.user_id
+        DBSession.add(this)
+        DBSession.flush()
+
+    def new_batch_import_error(self, message=None, *args, **kwargs):
+        if not message:
+            return False
+
+        this = BatchImportError()
+        this.batch_import_id = self.batch_import_id
+        this.message = message
+        this.added_by = self.user_id
+        DBSession.add(this)
+        DBSession.flush()
+        return True
+
+    def update_batch_import(self, *args, **kwargs):
+        process_date_time = kwargs.get('process_date_time', None)
+        notes = kwargs.get('notes', None)
+        total_count = kwargs.get('total_count', None)
+        accepted_count = kwargs.get('accepted_count', None)
+        pre_voucher_count = kwargs.get('pre_voucher_count', None)
+        rejected_count = kwargs.get('rejected_count', None)
+        is_complete_load = kwargs.get('is_complete_load', False)
+        is_complete_update = kwargs.get('is_complete_update', False)
+        is_successful = kwargs.get('is_successful', False)
+
+        if process_date_time:
+            self.batch_import.process_date_time = process_date_time
+
+        if notes:
+            self.batch_import.notes += notes
+
+        if total_count:
+            self.batch_import.total_count = total_count
+
+        if accepted_count:
+            self.batch_import.accepted_count = accepted_count
+
+        if rejected_count:
+            self.batch_import.rejected_count = rejected_count
+
+        if pre_voucher_count:
+            self.batch_import.pre_voucher_count = pre_voucher_count
+
+        if is_complete_load:
+            self.batch_import.is_complete_load = is_complete_load
+
+        if is_complete_update:
+            self.batch_import.is_complete_update = is_complete_update
+
+        if is_successful:
+            self.batch_import.successful =  is_successful
+        DBSession.flush()
+        return
+
+#####################################################################################
+#############    non batch import specific central functions      ###################
+#####################################################################################
+
+    def confirm_member_by_mobile_number(self, mobile_number='', *args, **kwargs):
+        if not mobile_number:
+            return None, None
+
+        entity_contact = DBSession.query(EntityContact).\
+            filter(EntityContact.entity_contact_type_id == self.mobile_contact_type_id).\
+            filter(EntityContact.name == mobile_number).\
+            first()
+        if not entity_contact:
+            return None, None
+
+        person = DBSession.query(EntityPerson).\
+            filter(EntityPerson.entity_id == entity_contact.entity_id).\
+            first()
+        if not person:
+            # We need to create the person record with what we have... Basically a mobile number....
+            person = self.create_new_lead(mobile_number)
+
+        member = self.create_member(person.id)
+        return person, member
+
+    def create_member(self, person_id, *args, **kwargs):
+        member = DBSession.query(Member).\
+            filter(Member.person_id == person_id).\
+            first()
+        if not member:
+            # Create Member Record. Protective Code
+            member = Member()
+            member.person_id = person_id
+            member.register_date = datetime.now()
+            DBSession.add(member)
+            DBSession.flush()
+        return member
+
+    def get_unknown_person_title_id(self, *args, **kwargs):
+        title = DBSession.query(EntityPersonTitle).\
+            filter(EntityPersonTitle.title == 'unknown').\
+            first()
+        if not title:
+            title = EntityPersonTitle()
+            title.title = 'unknown'
+            title.description = 'Not Supplied'
+            title.added_by = self.user_id
+            DBSession.add(title)
+            DBSession.flush()
+        return title.id
+
+    def get_default_language_id(self, *args, **kwargs):
+        language = DBSession.query(Language).\
+            filter(Language.name == 'English').\
+            first()
+        if not language:
+            return 1
+        return language.id
+
+    def get_default_null_date(self, *args, **kwargs):
+        return datetime.date(1900, 11, 11)
+
+    def create_new_lead(self, mobile_number, *arg, **kwargs):
+        # CREATE THE NECESSARY LEAD TABLED HERE
+        # entity_id = self.create_entity()
+        # person = self.create_entity_person(mobile_number, entity_id)
+        # identity_id = self.create_entity_person_identity(mobile_number, person.id)
+        return
+
+    def member_has_voucher(self, person_id, product_id, purchase_date, *args, **kwargs):
+        # Check if this person has a policy for this product...
+        policy_life_insured_list = DBSession.query(PolicyBenefitInsuredLife).\
+            filter(PolicyBenefitInsuredLife.entity_person_id == person_id).\
+            all()
+        if not policy_life_insured_list:
+            return False
+
+        purchase_date_type_id = TYPEUTIL.get_id_of_name('policy_date_type', 'purchase_date')
+        valid_to_date_type_id = TYPEUTIL.get_id_of_name('policy_date_type', 'valid_to')
+        valid_from_date_type_id = TYPEUTIL.get_id_of_name('policy_date_type', 'valid_from')
+
+        for life_insured in policy_life_insured_list:
+            policy_benefit = DBSession.query(PolicyBenefit).\
+                filter(PolicyBenefit.id == life_insured.policy_benefit_id).\
+                first()
+            if not policy_benefit:
+                continue
+
+            policy = Policy.by_id(policy_benefit.policy.id)
+            if policy.product_id == policy_id:
+                policy_purchase_date = DBSession.query(PolicyDate).\
+                    filter(PolicyDate.policy_date_type_id == purchase_date_type_id).\
+                    filter(PolicyDate.date == purchase_date).\
+                    filter(PolicyDate.bln_active == True).\
+                    first()
+                if policy_purchase_date:
+                    return True
+        return False
+
+    def get_product_owner_id_by_code(self, code=None, *args, **kwargs):
+        if not code:
+            return None
+
+        entity_org = EntityOrganisation.by_attr_first('code', code)
+        if not entity_org:
+            return None
+
+        product_owner = EntityOrganisationProductOwner.by_attr_first('entity_organisation_id', entity_org.id)
+        if not product_owner:
+            return None
+        return product_owner.id
+
+    def get_client_id_by_code(self, code=None, *args, **kwargs):
+        if not code:
+            return None
+
+        entity_org = EntityOrganisation.by_attr_first('code', code)
+        if not entity_org:
+            return None
+
+        client = EntityOrganisationClient.by_attr_first('entity_organisation_id', entity_org.id)
+        if not client:
+            return None
+        return client.id
+
+    def get_language_id_by_name(self, name=None, *args, **kwargs):
+        if not name:
+            return None
+
+        language = Language.by_attr_first('name', name)
+        if not language:
+            return None
+        return language.id
+
+    def get_gender_id_by_name(self, name=None, *args, **kwargs):
+        if not name:
+            return None
+
+        gender = Gender.by_attr_first('name', name)
+        if not gender:
+            return None
+        return gender.id
+
+    def save_new_person(self, *args, **kwargs):
+        return COMMON.save_new_personobj(**kwargs)
+
+    def save_edit_person(self, *args, **kwargs):
+        return COMMON.save_edit_personobj(**kwargs)

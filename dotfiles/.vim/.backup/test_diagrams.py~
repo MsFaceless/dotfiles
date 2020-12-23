@@ -1,0 +1,5 @@
+#!/bin/python
+
+from diagrams import *
+
+print(dir(aws))
